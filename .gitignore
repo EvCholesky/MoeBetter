@@ -1,0 +1,6 @@
+*.ipch
+*.tlog
+*.o
+*.db
+*.exe
+cmade/*

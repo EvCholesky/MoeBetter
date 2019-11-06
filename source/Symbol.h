@@ -108,7 +108,7 @@ struct SymbolPath : public SymbolBase // tag = symp
 struct SymbolTable		// tag = symtab
 {
 protected:
-//	friend SymbolTable * PSymtabNew(Moe::Alloc *, SymbolTable *, const Moe::InString &, CUniqueTypeRegistry *, SUniqueNameSet *);
+	friend SymbolTable * PSymtabNew(Moe::Alloc *, SymbolTable *, const Moe::InString &, TypeRegistry *, UniqueNameSet *);
 
 							// protected constructor to force use of CWorkspace::PSymtabNew()
 							SymbolTable(

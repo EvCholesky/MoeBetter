@@ -61,6 +61,9 @@ enum ERRID
 	ERRID_MissingOperand			= 1025,
 	ERRID_MissingToken				= 1026,
 	ERRID_FeatureNotImplemented		= 1027,
+	ERRID_ExpectedExpression		= 1028,
+	ERRID_MissingIdentifier			= 1029,
+	ERRID_CStyle					= 1030,
 	ERRID_ParserMax					= 2000,
 
 	ERRID_TypeCheckMin				= ERRID_ParserMax,

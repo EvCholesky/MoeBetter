@@ -34,6 +34,21 @@ enum FEXP
 };
 MOE_DEFINE_GRF(GRFEXP, FEXP, u32);
 
+enum FARGLIST
+{
+	FARGLIST_None				= 0x0,
+	FARGLIST_AllowGenericValues = 0x1,
+
+	FARGLIST_All				= 0x1,
+};
+
+MOE_DEFINE_GRF(GRFARGLIST, FARGLIST, u32);
+
+STNode * PStnodParseExpression(ParseContext * pParctx, Lexer * pLex, GRFEXP grfexp = FEXP_None);
+STNode * PStnodParseLogicalOrExpression(ParseContext * pParctx, Lexer * pLex);
+STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex);
+
+
 const char * PChzFromPark(PARK park)
 {
 	static const char * s_mpParkPChz[] =
@@ -133,46 +148,164 @@ STEXK StexkFromPark(PARK park)
 		STEXK_None,		// PARK_StructDefinition,
 		STEXK_None,		// PARK_EnumConstant,
 		STEXK_None,		// PARK_VariadicArg,
-		STEXK_None,		// PARK_CompoundLiteral,	// array/struct literal
+		STEXK_Decl,		// PARK_CompoundLiteral,	// array/struct literal
 		STEXK_None,		// PARK_ArgumentLabel,
 		STEXK_None,		// PARK_GenericDecl,
 		STEXK_None,		// PARK_GenericStructSpec,		// 
 		STEXK_None,		// PARK_TypeArgument,			// raw type, specified to a generic instantiation SFoo(:int)
 		STEXK_None,		// PARK_BakedValue,
 	};
+
+	MOE_CASSERT(MOE_DIM(s_mpParkStexk) == PARK_Max, "missing PARK STEXK");
+
+	if ((park <= PARK_Nil) | (park >= PARK_Max))
+		return STEXK_Nil;
+
+	return s_mpParkStexk[park];
 }
 
-template <typename T>
-T * PSTNodeAlloc(Moe::Alloc * pAlloc, PARK park, Lexer * pLex, LexSpan lexsp)
+void PushSymbolTable(ParseContext * pParctx, SymbolTable * pSymtab)
 {
-	T * pStnod; 
-	switch (T::s_stexk)
+	pSymtab->m_pSymtabParent = pParctx->m_pSymtab;
+	pParctx->m_pSymtab = pSymtab;
+}
+
+SymbolTable * PSymtabPop(ParseContext * pParctx)
+{
+	SymbolTable * pSymtabPrev = pParctx->m_pSymtab;
+	if (MOE_FVERIFY(pSymtabPrev, "Pop symbol table underflow"))
 	{
-	case STEXK_None:
-		pStnod = MOE_NEW(pAlloc, T) T(t::s_stexk, park, lexsp, T::s_stexk);
-	default:
-		pStnod = MOE_NEW(pAlloc, T) T(park, lexsp);
+		pParctx->m_pSymtab = pSymtabPrev->m_pSymtabParent;
 	}
+	return pSymtabPrev;
+}
+
+SymbolTable * PSymtabNew(
+	Alloc * pAlloc,
+	SymbolTable * pSymtabParent,
+	const Moe::InString & istrNamespace,
+	TypeRegistry * pTyper,
+	UniqueNameSet * pUnsetTin)
+{
+	SymbolTable * pSymtabNew = MOE_NEW(pAlloc, SymbolTable) SymbolTable(istrNamespace, pAlloc, pTyper, pUnsetTin);
+	if (pSymtabParent)
+	{
+		pSymtabParent->AddManagedSymtab(pSymtabNew);
+	}
+
+	return pSymtabNew;
+}
+
+SymbolTable * PSymtabNew(Alloc * pAlloc, SymbolTable * pSymtabParent, const Moe::InString & istrNamespace)
+{
+	if (!MOE_FVERIFY(pSymtabParent, "Null parent passed into pSymtabNew, use other overload for root."))
+		return nullptr;
+
+	return PSymtabNew(pAlloc, pSymtabParent, istrNamespace, pSymtabParent->m_pTyper, pSymtabParent->m_pUnset);
+}
+#if 0
+// partial instantiation STEX creation
+template <typename T> struct StexAlloc	
+{ 
+	static T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+	{
+		return MOE_NEW(pAlloc, T) T(STEXK_None, park, lexsp);
+	}
+};
+
+template <> struct StexAlloc<STValue>
+{ 
+	static STValue * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+	{
+		return MOE_NEW(pAlloc, STValue) STValue(park, lexsp);
+	}
+};
+
+template <> struct StexAlloc<STDecl>
+{ 
+	static STDecl * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+	{
+		auto pStdecl = MOE_NEW(pAlloc, STDecl) STDecl(park, lexsp);
+		pStdecl->SetChildArray(&pStdecl->m_pStnodIdentifier, 3);
+		return pStdecl;
+	}
+};
+
+template <> struct StexAlloc<STProc>
+{ 
+	static STProc * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+	{
+		auto pStproc = MOE_NEW(pAlloc, STProc) STProc(park, lexsp);
+		pStproc->SetChildArray(&pStproc->m_pStnodName, 4);
+		return pStproc;
+	}
+};
+
+template <> struct StexAlloc<STStruct>
+{ 
+	static STStruct * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+	{
+		auto pStstruct = MOE_NEW(pAlloc, STStruct) STStruct(park, lexsp);
+		pStstruct->SetChildArray(&pStstruct->m_pStnodIdentifier, 4);
+		return pStstruct;
+	}
+};
+
+template <> struct StexAlloc<STOperator>
+{ 
+	static STOperator * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+	{
+		auto pStop = MOE_NEW(pAlloc, STOperator) STOperator(park, lexsp);
+		pStop->SetChildArray(&pStop->m_pStnodLhs, 2);
+		return pStop;
+	}
+};
+#else
+
+template <typename T> struct StexAlloc	
+{ 
+	static T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+	{
+		T * pStnod = MOE_NEW(pAlloc, T) T(park, lexsp);
+		pStnod->SetDefaultChildArray();
+		return pStnod;
+	}
+};
+
+template <> struct StexAlloc<STNode>
+{ 
+	static STNode * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+	{
+		return MOE_NEW(pAlloc, STNode) STNode(STEXK_None, park, lexsp);
+	}
+};
+#endif
+
+template <typename T>
+T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, Lexer * pLex, const LexSpan & lexsp)
+{
+	T * pStnod = StexAlloc<T>::PStnodAlloc(pAlloc, park, lexsp);
 
 	pStnod->m_tok = TOK(pLex->m_tok);
 	return pStnod;
-
-	/*
-	switch(T::s_stexk)
-	{
-	case STEXK_None:
-	case STEXK_For:
-	case STEXK_Decl:
-	case STEXK_Enum:
-	case STEXK_Struct:
-	case STEXK_Proc:
-	case STEXK_Expression:
-	case STEXK_Operator:
-	case STEXK_List:
-	}*/
 }
 
-void STNode::SetChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t cpStnodChild)
+
+STNode * STNode::PStnodChildSafe(int ipStnod)
+{
+	if (ipStnod < 0 || ipStnod >= m_cpStnodChild)
+		return nullptr;
+
+	return m_apStnodChild[ipStnod];
+}
+
+void STNode::SetChildArray(STNode ** apStnodChild, size_t cpStnodChild)
+{
+	m_apStnodChild = (STNode **)apStnodChild;
+	m_cpStnodChild = cpStnodChild;
+}
+
+void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t cpStnodChild)
 {
 	size_t cB = sizeof(STNode *) * cpStnodChild;
 	m_apStnodChild = (STNode **)pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(STNode *));
@@ -180,12 +313,17 @@ void STNode::SetChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t c
 	memcpy(m_apStnodChild, apStnodChild, cB);
 }
 
-void STNode::SetChildArray(Moe::Alloc * pAlloc, STNode * pStnodChild)
+void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode * pStnodChild)
 {
 	m_cpStnodChild = 1;
 	size_t cB = sizeof(STNode *) * m_cpStnodChild;
 	m_apStnodChild = (STNode **)pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(STNode *));
 	memcpy(m_apStnodChild, &pStnodChild, cB);
+}
+
+static inline bool FIsValidStnod(STNode * pStnod)
+{
+	return pStnod && pStnod->m_park != PARK_Error;
 }
 
 void SkipToToken(Lexer * pLex, TOK const * const aTok, int cTok, GRFLEXER grflexer)
@@ -288,8 +426,8 @@ STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex)
 		return nullptr;
 	}
 
-	STValue * pStval = PSTNodeAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, LexSpan(pLex));
-	pStval->SetValue(pLex->m_istr);
+	STValue * pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, LexSpan(pLex));
+	pStval->SetIstr(pLex->m_istr);
 	pStval->AssertValid();
 
 	if (istrIdent.m_pChz[0] == '#')
@@ -313,14 +451,63 @@ STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, const ch
 		return nullptr;
 	}
 
-	STValue * pStval = PSTNodeAlloc<STValue>(pParctx->m_pAlloc, PARK_ReservedWord, pLex, LexSpan(pLex));
-	pStval->SetValue(pLex->m_istr);
+	STValue * pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_ReservedWord, pLex, LexSpan(pLex));
+	pStval->SetIstr(pLex->m_istr);
 	pStval->AssertValid();
 	pStval->m_tok = TOK(pLex->m_tok);
 
 	TokNext(pLex);
 	return pStval;
 }
+
+Moe::InString IstrFromIdentifier(STNode * pStnod)
+{
+	if (pStnod->m_park == PARK_Identifier)
+	{
+		STValue * pStval = PStnodRtiCast<STValue*>(pStnod);
+		if (pStval)
+			return pStval->m_istr;
+	}
+
+	return Moe::InString();
+}
+
+STNode * PStnodParseExpressionList(
+	ParseContext * pParctx,
+	Lexer * pLex,
+	GRFEXP grfexp)
+{
+	LexSpan lexsp(pLex);
+
+	STNode * pStnodExp = PStnodParseExpression(pParctx, pLex, grfexp);
+	STNode * pStnodList = nullptr;
+
+	if (pStnodExp)
+	{
+		pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ExpressionList, pLex, lexsp);
+
+		CDynAry<STNode *> arypStnod(pParctx->m_pAlloc, BK_Parse);
+		arypStnod.Append(pStnodExp);
+
+		while (FConsumeToken(pLex, TOK(',')))
+		{
+			pStnodExp = PStnodParseExpression(pParctx, pLex, grfexp);
+
+			if (!pStnodExp)
+			{
+				EmitError(pParctx, LexSpan(pLex), ERRID_ExpectedExpression, "Expected expression before %s", PChzCurrentToken(pLex));
+				break;
+			}
+			arypStnod.Append(pStnodExp);
+		}
+
+		pStnodList->SetChildArray(arypStnod.A(), arypStnod.C());
+	}
+
+	return pStnodList;
+}
+
+
 
 STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 {
@@ -334,31 +521,67 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 			}
 		case TOK_Identifier:
 			{
-				auto pStval = PStvalParseIdentifier(pParctx, pLex);
-
-				if (FConsumeToken(pLex, TOK_ColonColon))
+				STValue * pStval;
+				if (pLex->m_istr == RWord::g_pChzTrue)
 				{
-#if 1
-					EWC_ASSERT(false, "Generic typespec shorthand is WIP");
-#else
-					SLexerLocation lexloc(pLex);
-					CSTNode * pStnodSpec = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
-
-					pStnodSpec->m_tok = TOK_ColonColon;
-					pStnodSpec->m_park = PARK_GenericTypeSpec;
-
-					pStnodSpec->IAppendChild(pStnod);
-					do
-					{
-						auto pStnodTin = PStnodParseTypeSpecifier(pParctx, pLex, "generic specifier", FPDECL_None);
-						pStnodSpec->IAppendChild(pStnodTin);
-					} while (FConsumeToken(pLex, TOK(',')));
-
-					return pStnodSpec;
-#endif
+					pStval = PStvalParseReservedWord(pParctx, pLex);
+					//pStval->SetU64(true);
 				}
-					return pStnod;
+				else if (pLex->m_istr == RWord::g_pChzFalse)
+				{
+					pStval = PStvalParseReservedWord(pParctx, pLex);
+					//pStval->SetU64(false);
+				}
+				else if (pLex->m_istr == RWord::g_pChzNull)
+				{
+					pStval = PStvalParseReservedWord(pParctx, pLex);
+					//pStval->SetU64(u32(0));
+				}
+				else if (pLex->m_istr == RWord::g_pChzFileDirective)
+				{
+					pStval = PStvalParseReservedWord(pParctx, pLex);
+
+					auto pStvalChild = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, pStval->m_lexsp);
+					pStvalChild->SetIstr(pStval->m_lexsp.m_istrFilename);
+				}
+				else if (pLex->m_istr == RWord::g_pChzLineDirective)
+				{
+					pStval = PStvalParseReservedWord(pParctx, pLex);
+
+					LexLookup lexlook(pParctx->m_pWork, pStval);
+
+					auto pStvalChild = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, pStval->m_lexsp);
+					pStvalChild->SetS64(lexlook.m_iLine);
+				}
+				else
+				{
+					pStval = PStvalParseIdentifier(pParctx, pLex);
+
+					if (FConsumeToken(pLex, TOK_ColonColon))
+					{
+#if 1
+						MOE_ASSERT(false, "Generic typespec shorthand is WIP");
+#else
+						SLexerLocation lexloc(pLex);
+						CSTNode * pStnodSpec = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
+
+						pStnodSpec->m_tok = TOK_ColonColon;
+						pStnodSpec->m_park = PARK_GenericTypeSpec;
+
+						pStnodSpec->IAppendChild(pStnod);
+						do
+						{
+							auto pStnodTin = PStnodParseTypeSpecifier(pParctx, pLex, "generic specifier", FPDECL_None);
+							pStnodSpec->IAppendChild(pStnodTin);
+						} while (FConsumeToken(pLex, TOK(',')));
+
+						return pStnodSpec;
+#endif
+					}
+				}
+				return pStval;
 			}
+			/*
 		case TOK_ReservedWord:
 			{
 				RWORD rword = RwordLookup(pLex);
@@ -432,92 +655,77 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 
 				TokNext(pLex);
 				return pStnod;
-			}
+			}*/
 		case TOK_Literal:
 			{
 				// NOTE - Negative literals don't exist until the type checking phase folds in the unary '-' operator
 
-				SLexerLocation lexloc(pLex);
-				CSTNode * pStnod = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
-
-				pStnod->m_tok = TOK(pLex->m_tok);
-				pStnod->m_park = PARK_Literal;
-
-				CSTValue * pStval = EWC_NEW(pParctx->m_pAlloc, CSTValue) CSTValue();
-				pStval->m_str = pLex->m_str;
-				pStval->m_litkLex = pLex->m_litk;
+				auto pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, LexSpan(pLex));
 
 				if (pLex->m_litk == LITK_Float)
 				{
-					SetFloatValue(pStval, pLex->m_g);
+					pStval->SetF64(pLex->m_g);
 				}
 				else if (pLex->m_litk == LITK_String)
 				{
-					pStval->m_stvalk = STVALK_String;
+					pStval->SetIstr(pLex->m_istr);
 				}
 				else if (pLex->m_litk == LITK_Char)
 				{
-					SetUnsignedIntValue(pStval, pLex->m_n);
+					pStval->SetS64(pLex->m_n);
 				}
 				else
 				{
-					SetUnsignedIntValue(pStval, pLex->m_n);
+					pStval->SetU64(pLex->m_n);
 				}
 
-				pStnod->m_pStval = pStval;
-
 				TokNext(pLex);
-				return pStnod;
+				return pStval;
 			} 
 		case TOK(':'): // struct literal
 		case TOK('{'): // array literals
 			{
-				SLexerLocation lexloc(pLex);
-
-				CSTNode * pStnodType = nullptr;
+				LexSpan lexsp(pLex);
+				STNode * pStnodType = nullptr;
 
 				if (pLex->m_tok == TOK(':'))
 				{
 					// parse type specifier
 					TokNext(pLex); // consume ':'
 					
+#ifdef MOEB_LATER
 					pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "compound literal", FPDECL_AllowBakedTypes | FPDECL_AllowBakedValues);
+#endif
 
-					if (!pStnodType)
+					if (!FIsValidStnod(pStnodType))
 					{
-						ParseError(pParctx, &lexloc, ERRID_TypeSpecParseFail, "expected type specification following ':'");
-						return nullptr;
+						EmitError(pParctx, lexsp, ERRID_TypeSpecParseFail, "expected type specification following ':'");
+						return pStnodType;
 					}
 				}
 
 				if (FConsumeToken(pLex, TOK('{')))
 				{
-					CSTNode * pStnodLit = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
-					pStnodLit->m_tok = TOK(pLex->m_tok);
-					pStnodLit->m_park = PARK_CompoundLiteral;
-
 					// We're using a decl here... may need a custom structure
-					auto pStdecl = pStnodLit->PStmapEnsure<CSTDecl>(pParctx->m_pAlloc);
+					auto pStdeclLit = PStnodAlloc<STDecl>(pParctx->m_pAlloc, PARK_CompoundLiteral, pLex, lexsp);
 
-					pStdecl->m_iStnodType = pStnodLit->IAppendChild(pStnodType);
+					pStdeclLit->m_pStnodType = pStnodType;
 
-					CSTNode * pStnodValues = PStnodParseExpressionList(pParctx, pLex, FEXP_AllowLiteralMemberLabel);
-					pStdecl->m_iStnodInit = pStnodLit->IAppendChild(pStnodValues);
+					STNode * pStnodValues = PStnodParseExpressionList(pParctx, pLex, FEXP_AllowLiteralMemberLabel);
+					pStdeclLit->m_pStnodInit = pStnodValues;
 
 					FExpect(pParctx, pLex, TOK('}'), "while parsing struct/array literal");
-					return pStnodLit;
+					return pStdeclLit;
 				}
 
-
-				CSTNode * pStnodArg = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
+				auto pStnodArg = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_TypeArgument, pLex, lexsp);
 				pStnodArg->m_tok = TOK(':');
-				pStnodArg->m_park = PARK_TypeArgument;
-				pStnodArg->IAppendChild(pStnodType);
+				pStnodArg->CopyChildArray(pParctx->m_pAlloc, pStnodType);
 
-
-				auto pTinType = pParctx->m_pSymtab->PTinBuiltin(CSymbolTable::s_strType);
-				pStnodArg->m_pTin = pTinType;
-				EWC_ASSERT(pStnodType, "expected type spec");
+				// MOEB PORT - whats this?
+				//auto pTinType = pParctx->m_pSymtab->PTinBuiltin(CSymbolTable::s_strType);
+				//pStnodArg->m_pTin = pTinType;
+				MOE_ASSERT(pStnodType, "expected type spec");
 
 				return pStnodArg;
 
@@ -526,7 +734,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 			{
 				TokNext(pLex); // consume '('
 
-				CSTNode * pStnodReturn = PStnodParseExpression(pParctx, pLex);
+				STNode * pStnodReturn = PStnodParseExpression(pParctx, pLex);
 				FExpect(pParctx, pLex, TOK(')'));
 				return pStnodReturn;
 			}
@@ -534,6 +742,85 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 		default: return nullptr;
 	}
 }
+
+//void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, STNode * pStnodArgList, GRFARGLIST grfarglist = FARGLIST_None)
+void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> * parypStnodArgList, GRFARGLIST grfarglist = FARGLIST_None)
+{
+	while (1)
+	{
+		STNode * pStnodLabel = nullptr;
+		const char * pChzLabel = "error";
+		STNode * pStnodBaked = nullptr;
+#ifdef MOEB_LATER
+		if (grfarglist.FIsSet(FARGLIST_AllowGenericValues))
+		{
+			pStnodBaked = PStnodParseBakedConstant(pParctx, pLex, PARK_Decl);
+		}
+#endif
+
+		if (pStnodBaked)
+		{
+			parypStnodArgList->Append(pStnodBaked);
+			//pStnodArgList->IAppendChild(pStnodBaked);
+		}
+		else
+		{
+			CFixAry<STNode *, 2> arypStnodLabel;
+			if (pLex->m_tok == TOK_Label)
+			{
+				TokNext(pLex);
+
+				pStnodLabel = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ArgumentLabel, pLex, LexSpan(pLex));
+				pStnodLabel->m_tok = TOK_Label;
+
+				STNode * pStnodIdent = PStvalParseIdentifier(pParctx, pLex);
+				if (!pStnodIdent)
+				{
+					EmitError(pParctx, LexSpan(pLex), ERRID_MissingLabel, "Argument label did not specify an argument name");
+				}
+				else
+				{
+					pChzLabel = IstrFromIdentifier(pStnodIdent).m_pChz;
+					arypStnodLabel.Append(pStnodIdent);
+					//pStnodLabel->CopyChildArray(pParctx->m_pAlloc, pStnodIdent);
+				}
+
+				if (FConsumeToken(pLex, TOK('=')))
+				{
+					EmitError(pParctx, LexSpan(pLex), ERRID_UnexpectedToken, "Labeled arguments do not require an assignment operator");
+				}
+			}
+
+			STNode * pStnodArg = PStnodParseLogicalOrExpression(pParctx, pLex);
+			if (pStnodLabel)
+			{
+				if (!pStnodArg)
+				{
+					STNode * pStnodIdent = pStnodLabel->PStnodChildSafe(0);
+					EmitError(pParctx, LexSpan(pLex), ERRID_ExpectedExpression, 
+						"Labeled argument '%s' does not specify a value", IstrFromIdentifier(pStnodIdent).m_pChz);
+				}
+				else
+				{
+					arypStnodLabel.Append(pStnodArg);
+					pStnodLabel->CopyChildArray(pParctx->m_pAlloc, arypStnodLabel.A(), arypStnodLabel.C());
+					//pStnodLabel->IAppendChild(pStnodArg);
+					pStnodArg = pStnodLabel;
+				}
+			}
+
+			//pStnodArgList->IAppendChild(pStnodArg);
+			parypStnodArgList->Append(pStnodArg);
+
+			if ((pStnodArg == nullptr))
+				break;
+		}
+
+		if (!FConsumeToken(pLex, TOK(',')))
+			break;
+	}
+}
+
 
 STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 {
@@ -551,75 +838,80 @@ STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 		case TOK('['):		// [ expression ]
 			{
 				LexSpan lexsp(pLex);
-				TokNext(pLex); // consume '('
 
-				STNode * pStnodArray = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
-				pStnodArray->m_tok = TOK(pLex->m_tok);
-				pStnodArray->m_park = PARK_ArrayElement;
-				pStnodArray->IAppendChild(pStnod);
+				// BB - Need to push a 'bail out' context... in case of error walk to next ']'
+				TokNext(pLex); // consume '['
+
+				auto pStnodArray = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ArrayElement, pLex, lexsp);
 
 				STNode * pStnodElement = PStnodParseExpression(pParctx, pLex);
-				pStnodArray->IAppendChild(pStnodElement);
+
+				STNode * apStnod[] = {pStnod, pStnodElement};
+				pStnodArray->CopyChildArray(pParctx->m_pAlloc, apStnod, MOE_DIM(apStnod));
 
 				pStnod = pStnodArray;
 				FExpect(pParctx, pLex, TOK(']'));
 			} break;
 		case TOK('('):		// ( )
 			{				// ( ArgumentExpressionList )
-				LexerLocation lexloc(pLex);
+				LexSpan lexsp(pLex);
 				TokNext(pLex); // consume '('
 
 				STNode * pStnodIdent = nullptr;
 				if (pStnod->m_park == PARK_Identifier)
 				{
 					// clear out the identifier's type info
+					// MOEB PORT - but why??? 
 					pStnod->m_pTin = nullptr;
 					pStnodIdent = pStnod;
 				}
 
-				STNode * pStnodArgList = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
-				pStnodArgList->m_tok = TOK(pLex->m_tok);
-				pStnodArgList->m_park = PARK_ProcedureCall;
-				pStnodArgList->IAppendChild(pStnod);
-				pStnod = pStnodArgList;
+				auto pStnodCall = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ProcedureCall, pLex, lexsp);
+				//STNode * pStnodArgList = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
+				//pStnodArgList->m_tok = TOK(pLex->m_tok);
+				//pStnodArgList->m_park = PARK_ProcedureCall;
+				CDynAry<STNode *> arypStnodArg(pParctx->m_pAlloc, BK_Parse);
+				arypStnodArg.Append(pStnod);
+
+				pStnod = pStnodCall;
 
 				// parsing this with LogicalAndOrExpression even though ISO c uses assignmentExpression
 				//  need to change this if we expect assignments to return the assigned value (x := a = b; )
 
-				ParseArgumentList(pParctx, pLex, pStnod);
+				ParseArgumentList(pParctx, pLex, &arypStnodArg);
+				pStnod->CopyChildArray(pParctx->m_pAlloc, arypStnodArg.A(), arypStnodArg.C());
 
 				FExpect(
 					pParctx,
 					pLex,
 					TOK(')'),
 					"while parsing procedure call '%s'", 
-					pStnodIdent ? StrFromIdentifier(pStnodIdent).PCoz() : "unknown");
+					pStnodIdent ? IstrFromIdentifier(pStnodIdent).m_pChz : "unknown");
 			} break;
 		case TOK_Arrow:
 			{ 
-				EmitError(pParctx->m_pWork->m_pErrman, LexSpan(pLex), ERRID_UnknownError, 
-					"c-style member dereference '->' is not required, use '.'");
+				EmitError(pParctx, LexSpan(pLex), ERRID_CStyle, "c-style member dereference '->' is not required, use '.'");
 
 			} // fallthrough
 		case TOK('.'):		// . identifier
 			{
-				TokNext(pLex); // consume '.'
-				LexerLocation lexloc(pLex);
+				LexSpan lexsp(pLex);
 
+				TokNext(pLex); // consume '.'
 				TOK tokPrev = TOK(pLex->m_tok);	
-				STNode * pStnodIdent = StnodParseIdentifier(pParctx, pLex);
+
+				STNode * pStnodIdent = PStvalParseIdentifier(pParctx, pLex);
 				if (!pStnodIdent)
 				{
-					ParseError(pParctx, pLex, "Expected identifier after '.' before %s", PCozFromTok(tokPrev));
+					EmitError(pParctx, lexsp, ERRID_MissingIdentifier, "Expected identifier after '.' before %s", PChzFromTok(tokPrev));
 				}
 				else
 				{
-					CSTNode * pStnodMember = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
-					pStnodMember->m_tok = tokPrev;
-					pStnodMember->m_park = PARK_MemberLookup;
-					pStnodMember->IAppendChild(pStnod);
-					pStnodMember->IAppendChild(pStnodIdent);
-					pStnod = pStnodMember;
+					auto pStop = PStnodAlloc<STOperator>(pParctx->m_pAlloc, PARK_MemberLookup, pLex, lexsp);
+					pStop->m_tok = TOK('.');
+					pStop->m_pStnodLhs = pStnod;
+					pStop->m_pStnodRhs = pStnodIdent;
+					pStnod = pStop;
 				}
 			} break;
 		case TOK_PlusPlus:
@@ -630,12 +922,10 @@ STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 				TOK tokPrev = TOK(pLex->m_tok);	
 				TokNext(pLex); // consume '++' or '--'
 
-				CSTNode * pStnodUnary = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
-				pStnodUnary->m_tok = tokPrev;
-				pStnodUnary->m_park = PARK_PostfixUnaryOp;
-				pStnodUnary->IAppendChild(pStnod);
+				auto pStop = PStnodAlloc<STOperator>(pParctx->m_pAlloc, PARK_MemberLookup, pLex, lexsp);
+				pStop->m_pStnodLhs = pStnod;
 
-				pStnod = pStnodUnary;
+				pStnod = pStop;
 			} break;
 		default: return pStnod;
 		}
@@ -709,13 +999,13 @@ STNode * PStnodParseUnaryExpression(ParseContext * pParctx, Lexer * pLex)
 				return nullptr;
 			}
 
-			STNode * pStnodUnary = PSTNodeAlloc<STNode>(pParctx->m_pAlloc, PARK_UnaryOp, pLex, lexsp);
+			STOperator * pStop = PStnodAlloc<STOperator>(pParctx->m_pAlloc, PARK_UnaryOp, pLex, lexsp);
 			//CSTNode * pStnodUnary = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
 			//pStnodUnary->m_park = PARK_UnaryOp;
-			pStnodUnary->m_tok = tokPrev;
-			pStnodUnary->SetChildArray(pParctx->m_pAlloc, pStnodExp);
+			pStop->m_tok = tokPrev;
+			pStop->m_pStnodLhs = pStnodExp;
 
-			return pStnodUnary;
+			return pStop;
 		}
 	default: break;
 	}
@@ -733,24 +1023,20 @@ STNode * PStnodParseCastExpression(ParseContext * pParctx, Lexer * pLex)
 
 	TokNext(pLex);
 
-	pStnodCast * pStdecl = PSTNodeAlloc<STDecl>(pParctx->m_pAlloc, PARK_Cast, pLex, LexSpan(pLex))
+	auto pStdecl = PStnodAlloc<STDecl>(pParctx->m_pAlloc, PARK_Cast, pLex, LexSpan(pLex));
 	//auto pStdecl = pStnodCast->PStmapEnsure<CSTDecl>(pParctx->m_pAlloc);
 
-	if (rword == RWORD_Cast)
-	{
-		FExpect(pParctx, pLex, TOK('('));
+	FExpect(pParctx, pLex, TOK('('));
 
-		//auto pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "cast", FPDECL_None);
-		pStdecl->m_pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "cast", FPDECL_None);
-		//pStdecl->m_iStnodType = pStnodCast->IAppendChild(pStnodType);
+#ifdef MOEB_LATER
+	//auto pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "cast", FPDECL_None);
+	pStdecl->m_pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "cast", FPDECL_None);
+	//pStdecl->m_iStnodType = pStnodCast->IAppendChild(pStnodType);
+#endif
 
-		FExpect(pParctx, pLex, TOK(')'));
-	}
+	FExpect(pParctx, pLex, TOK(')'));
 
 	pStdecl->m_pStnodInit = PStnodParseCastExpression(pParctx, pLex);
-	if (!pStnodCast)
-		return pStnodChild;
-
 	//pStdecl->m_pStnodInit = pStnodCast->IAppendChild(pStnodChild);
 
 	if (pStdecl->m_pStnodInit == nullptr)
@@ -781,12 +1067,12 @@ STNode * PStnodHandleExpressionRHS(
 		return pStnodLhs;
 	}
 
-	STNode * pStnodExp = PSTNodeAlloc<STOperator>(pParctx->m_pAlloc, parkExpression, pLex, LexSpan(pLex));
+	STNode * pStnodExp = PStnodAlloc<STOperator>(pParctx->m_pAlloc, parkExpression, pLex, LexSpan(pLex));
 	//STNode * pStnodExp = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
 	pStnodExp->m_tok = tokExpression;
 
 	STNode * apStnod[] = {pStnodLhs, pStnodRhs};
-	pStnodExp->SetChildArray(pParctx->m_pAlloc, apStnod, MOE_DIM(apStnod));
+	pStnodExp->CopyChildArray(pParctx->m_pAlloc, apStnod, MOE_DIM(apStnod));
 	return pStnodExp;
 }
 
@@ -979,52 +1265,46 @@ STNode * PStnodParseAssignmentExpression(ParseContext * pParctx, Lexer * pLex)
 
 STNode * PStnodParseExpression(ParseContext * pParctx, Lexer * pLex, GRFEXP grfexp)
 {
-	Lexer lexStart = *pLex;
+	Lexer pLexStart = *pLex;
 
-	STNode * pStvalLabel = nullptr;
-
+	STNode * pStnodLabelIdent = nullptr;
+//	CDynAry<STNode *> arypStnodLabel(pParctx->m_pAlloc, BK_Parse);
 	if (pLex->m_tok == TOK_Label && grfexp.FIsSet(FEXP_AllowLiteralMemberLabel))
 	{
 		TokNext(pLex);
 
-		//pStnodLabel = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
-		auto pStvalLabel = PSTNodeAlloc<STValue>(pParctx->m_pAlloc, PARK_ArgumentLabel, pLex, LexSpan(pLex));
-		pStvalLabel->m_tok = TOK_Label;
-
-		auto pStvalIdent = PStvalParseIdentifier(pParctx, pLex);
-		if (!pStvalIdent)
+		pStnodLabelIdent = PStvalParseIdentifier(pParctx, pLex);
+		if (!pStnodLabelIdent)
 		{
 			EmitError(pParctx, LexSpan(pLex), ERRID_MissingLabel, "Argument label did not specify an argument name");
 		}
-		else
-		{
-			pStvalLabel->SetChildArray(pParctx->m_pAlloc, pStvalIdent);
-		}
-
-		pStvalLabel->AssertValid();
 	}
 
 	STNode * pStnodExp = PStnodParseAssignmentExpression(pParctx, pLex);
 	if (!pStnodExp)
 	{
-		*pLex = lexStart;
-		if (pStvalLabel)
+		*pLex = pLexStart;
+		if (pStnodLabelIdent)
 		{
-			STNode * pStnodIdent = pStvalLabel->PStnodChildSafe(0);
-			EmitError(pParctx, LexSpan(pLex), ERRID_MissingLabel, "Labeled expression '%s' does not specify a value", StrFromIdentifier(pStnodIdent).PCoz());
+			EmitError(pParctx, LexSpan(pLex), ERRID_ExpectedExpression, "Labeled expression '%s' does not specify a value", IstrFromIdentifier(pStnodLabelIdent).m_pChz);
 
-			pParctx->m_pAlloc->MOE_DELETE(pStvalLabel);
+			pParctx->m_pAlloc->MOE_DELETE(pStnodLabelIdent);
+			pStnodLabelIdent = nullptr;
 		}
 		return nullptr;
 	}
 
-	if (pStnodLabel)
+	STValue * pStvalLabel = nullptr;
+	if (pStnodLabelIdent)
 	{
-		pStnodLabel->IAppendChild(pStnodExp);
-		pStnodExp = pStnodLabel;
-	}
+		auto pStvalLabel = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_ArgumentLabel, pLex, LexSpan(pLex));
+		pStvalLabel->m_tok = TOK_Label;
 
-	// TODO: handle Expression > AssignmentExpression , AssignmentExpression
+		STNode * apStnod[] = {pStnodLabelIdent, pStnodExp};
+		pStvalLabel->CopyChildArray(pParctx->m_pAlloc, apStnod, MOE_DIM(apStnod));
+
+		pStnodExp = pStvalLabel;
+	}
 
 	return pStnodExp;
 }
@@ -1039,9 +1319,9 @@ STNode * PStnodParseJumpStatement(ParseContext * pParctx, Lexer * pLex)
 		STNode * pStnod = PStvalParseReservedWord(pParctx, pLex);
 		if (pLex->m_tok == TOK_Identifier)
 		{
-			STValue * pStlit = PSTNodeAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, LexSpan(pLex));
+			STValue * pStlit = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, LexSpan(pLex));
 			pStlit->m_istr = pLex->m_istr;
-			pStnod->SetChildArray(pParctx->m_pAlloc, pStlit);
+			pStnod->CopyChildArray(pParctx->m_pAlloc, pStlit);
 			TokNext(pLex);
 		}
 
@@ -1056,7 +1336,7 @@ STNode * PStnodParseJumpStatement(ParseContext * pParctx, Lexer * pLex)
 			if (!FIsEndOfStatement(pLex))
 			{
 				STNode * pStnodExp = PStnodParseExpression(pParctx, pLex);
-				pStnodReturn->SetChildArray(pParctx->m_pAlloc, pStnodExp);
+				pStnodReturn->CopyChildArray(pParctx->m_pAlloc, pStnodExp);
 			}
 		}
 
@@ -1065,6 +1345,70 @@ STNode * PStnodParseJumpStatement(ParseContext * pParctx, Lexer * pLex)
 	}
 
 	return nullptr;
+}
+
+STNode * PStnodParseExpressionStatement(ParseContext * pParctx, Lexer * pLex)
+{
+	if (FConsumeToken(pLex, TOK(';')))
+	{
+		// return empty statement
+
+		auto pStnodEmpty = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_Nop, pLex, LexSpan(pLex));
+		return pStnodEmpty;
+	}
+
+	STNode * pStnod = PStnodParseExpression(pParctx, pLex);
+	if (pStnod)
+	{
+		ExpectEndOfStatement(pParctx, pLex);
+	}
+	return pStnod;
+}
+
+STNode * PStnodParseCompoundStatement(ParseContext * pParctx, Lexer * pLex, SymbolTable * pSymtab)
+{
+	STNode * pStnodList = nullptr;
+
+	if (FConsumeToken(pLex, TOK('{')))
+	{
+		CDynAry<STNode *> arypStnod(pParctx->m_pAlloc, BK_Parse);
+		pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_List, pLex, LexSpan(pLex));
+		if (!pSymtab)
+		{
+			pSymtab = PSymtabNew(pParctx->m_pAlloc, pParctx->m_pSymtab, "anon");
+		}
+
+		pStnodList->m_pSymtab = pSymtab;
+		PushSymbolTable(pParctx, pSymtab);
+
+		while (pLex->m_tok != TOK('}'))
+		{
+			STNode * pStnod = PStnodParseStatement(pParctx, pLex);
+			if (!pStnod)
+				break;
+
+			if (pStnod->m_grfstnod.FIsAnySet(FSTNOD_EntryPoint))
+			{
+				// Note - move the lexLoc for this entry to be the lexloc for the block so nested
+				//  functions appear at the beginning of the containing scope (yuck!)
+				pStnod->m_lexsp = pStnodList->m_lexsp;
+
+				pParctx->m_pWork->AppendEntry(pStnod, pParctx->m_pSymtab);
+			}
+			else 
+			{
+				arypStnod.Append(pStnod);
+			}
+		}
+
+		pStnodList->CopyChildArray(pParctx->m_pAlloc, arypStnod.A(), arypStnod.C());
+
+		SymbolTable * pSymtabPop = PSymtabPop(pParctx);
+		MOE_ASSERT(pSymtab == pSymtabPop, "CSymbol table push/pop mismatch (list)");
+		FExpect(pParctx, pLex, TOK('}'));
+	}
+
+	return pStnodList;
 }
 
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
@@ -1076,11 +1420,11 @@ STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 	// Note - Declarations and definition checks need to come first because they peek ahead to see 
 	//  if an identifier has ::, : or :=
 
+#ifdef MOEB_LATER 
 	pStnod = PStnodParseDecl(pParctx, pLex);
 	if (pStnod)
 		return pStnod;
 
-#ifdef MOEB_LATER 
 	pStnod = PStnodParseDefinition(pParctx, pLex);
 	if (pStnod)
 		return pStnod;

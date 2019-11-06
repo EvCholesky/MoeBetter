@@ -79,3 +79,13 @@ struct Workspace	// tag = work
 
 	File *				PFileEnsure(const char * pChzFile, FILEK filek);
 };
+
+struct LexLookup // tag = lexlook
+{
+					LexLookup(Workspace * pWork, const LexSpan & pLexsp);
+					LexLookup(Workspace * pWork, STNode * pStnod);
+
+	Moe::InString	m_istrFilename;
+	s32				m_iLine;
+	s32				m_iCodepoint;
+};

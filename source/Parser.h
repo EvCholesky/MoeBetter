@@ -96,7 +96,7 @@ enum STEXK // Syntax Tree EXtension Kind
 	STEXK_Proc,
 	STEXK_Value,		// New, move pStval here?
 	STEXK_Operator,     // New, move pOptype here?
-	STEXK_List,         // no subtype, variable list of children
+	//STEXK_List,         // no subtype, variable list of children
 
 	MOE_MAX_MIN_NIL(STEXK)
 };
@@ -138,12 +138,36 @@ enum FSTNOD
 };
 MOE_DEFINE_GRF(GRFSTNOD, FSTNOD, u16);
 
+#define MOE_STNOD_NO_CHILDREN() \
+	void SetDefaultChildArray() { ; } \
+
+#define MOE_STNOD_CHILD2(N1, N2) \
+	STNode *N1, *N2; \
+	void SetDefaultChildArray() { SetChildArray(&N1, 2); } \
+
+#define MOE_STNOD_CHILD3(N1, N2, N3) \
+	STNode *N1, *N2, *N3; \
+	void SetDefaultChildArray() { SetChildArray(&N1, 3); } \
+
+#define MOE_STNOD_CHILD4(N1, N2, N3, N4) \
+	STNode *N1, *N2, *N3, *N4; \
+	void SetDefaultChildArray() { SetChildArray(&N1, 4); } \
+
+#define MOE_STNOD_CHILD5(N1, N2, N3, N4, N5) \
+	STNode *N1, *N2, *N3, *N4, *N5; \
+	void SetDefaultChildArray() { SetChildArray(&N1, 5); } \
+	static const int s_cpStnodChild = 6
+
+#define MOE_STNOD_CHILD6(N1, N2, N3, N4, N5, N6) \
+	STNode *N1, *N2, *N3, *N4, *N5, *N6; \
+	void SetDefaultChildArray() { SetChildArray(&N1, 6); } \
+	static const int s_cpStnodChild = 6
 
 // Slimmed down AST
 struct STNode // tag = stnod
 {
 public:
-							STNode(STEXK stexk, PARK park, const LexSpan & lexsp, STEXK stexkStatic = STEXK_None)
+							STNode(STEXK stexk, PARK park, const LexSpan & lexsp)
 							:m_tok(TOK_Nil)
 							,m_park(park)
 							,m_strees(STREES_Parsed)
@@ -156,24 +180,25 @@ public:
 							,m_apStnodChild(nullptr)
 								{ MOE_ASSERT(StexkFromPark(park) == stexk, "park/stexk mismatch"); }
 
+	STNode *				PStnodChildSafe(int ipStnod);
+	void					SetChildArray(STNode ** apStnodChild, size_t cpStnodChild);
+	void					CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t cpStnodChild);
+	void					CopyChildArray(Moe::Alloc * pAlloc, STNode * apStnodChild);
+
 	TOK						m_tok;		
 	PARK					m_park;		
 	STREES					m_strees;	
 	GRFSTNOD				m_grfstnod;
 
-	LexSpan			    m_lexsp;	// lexer handles for begin/end
+	LexSpan					m_lexsp;	// lexer handles for begin/end
 											//CSTValue *			m_pStval;		// can this get moved into CSTExExpression - need to stop using it for RWORD
 											//CSTIdentifier *		m_pStident;		// pull it from the source
 											//SSyntaxTreeMap *		m_pStmap;       // moved into STEX classes
 	STypeInfo *				m_pTin;
-	//SOpTypes *			m_pOptype;
 	SymbolTable *			m_pSymtab;
 	SSymbolBase *			m_pSymbase;
 
-	void					SetChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t cpStnodChild);
-	void					SetChildArray(Moe::Alloc * pAlloc, STNode * apStnodChild);
-
-	//Moe::CDynAry<CSTNode *>	m_arypStnodChild;
+	// Child nodes are embedded in STNode derived with a fixed child layout 
 	size_t                  m_cpStnodChild;
 	STNode **				m_apStnodChild;
 };
@@ -181,7 +206,7 @@ public:
 template <typename T>
 T PStnodRtiCast(STNode * pStnod)
 {
-	if (pStnod && pStnod->m_stexk == Moe::SStripPointer<T>::Type::s_stexk)
+	if (pStnod && StexkFromPark(pStnod->m_park) == Moe::SStripPointer<T>::Type::s_stexk)
 		return (T)pStnod;
 	return nullptr;
 }
@@ -219,10 +244,7 @@ public:
 				,m_pStnodParentScope(nullptr)
 					{ ; }
 
-	STNode *   m_pStnodName;
-	STNode *   m_pStnodParameterList;
-	STNode *   m_pStnodReturnType;
-	STNode *   m_pStnodParentScope;
+	MOE_STNOD_CHILD4(m_pStnodName, m_pStnodParameterList, m_pStnodReturnType, m_pStnodParentScope);
 	GRFSTPROC   m_grfstproc;
 
 	void AssertValid();
@@ -245,12 +267,7 @@ public:
 				,m_pStnodIncrement(nullptr)
 					{ ; }
 
-	STNode *   m_pStnodDecl;
-	STNode *   m_pStnodIterator;       // lsh iterator if not a decl
-	STNode *   m_pStnodInit;           // rhs init if not a decl
-	STNode *   m_pStnodBody;
-	STNode *   m_pStnodPredicate;
-	STNode *   m_pStnodIncrement;
+	MOE_STNOD_CHILD6(m_pStnodDecl, m_pStnodIterator, m_pStnodInit, m_pStnodBody, m_pStnodPredicate, m_pStnodIncrement);
 
 	void AssertValid();
 };
@@ -269,11 +286,9 @@ public:
 					,m_pStnodInit(nullptr)
 						{ ; }
 
-	STNode *       m_pStnodIdentifier;
-	STNode *       m_pStnodType;
-	STNode *       m_pStnodInit;
-	// TODO: how to handle variable set of child decls, new decl list PARK?
+	MOE_STNOD_CHILD3(m_pStnodIdentifier, m_pStnodType, m_pStnodInit);
 
+	// TODO: how to handle variable set of child decls, new decl list PARK?
 	void AssertValid();
 };
 
@@ -294,9 +309,7 @@ struct STEnum : public STNode
 						,m_pTinenum(nullptr)
 							{ ; }
 
-	STNode *           m_pStnodIdentifier;
-	STNode *           m_pStnodType;
-	STNode *           m_pStnodConstantList;
+	MOE_STNOD_CHILD3(m_pStnodIdentifier, m_pStnodType, m_pStnodConstantList);
 
 	ENUMK               m_enumk;
 	size_t              m_cConstantExplicit;
@@ -314,7 +327,13 @@ struct STStruct : public STNode
 
 						STStruct(PARK park, const LexSpan & lexsp)
 						:STNode(s_stexk, park, lexsp)
+						,m_pStnodIdentifier(nullptr)
+						,m_pStnodParameterList(nullptr)
+						,m_pStnodBakedParameterList(nullptr)
+						,m_pStnodDeclList(nullptr)
 							{ ; }
+
+	MOE_STNOD_CHILD4(m_pStnodIdentifier, m_pStnodParameterList, m_pStnodBakedParameterList, m_pStnodDeclList);
 
 	void AssertValid();
 };
@@ -367,22 +386,22 @@ struct STValue : public STNode // tag = stval
 
 	STVALK              m_stvalk;
 
-	void				SetValue(Moe::InString& istr)
+	void				SetIstr(Moe::InString& istr)
 							{
 								m_istr = istr;
 								m_stvalk = STVALK_String;
 							}
-	void				SetValue(f64 g)
+	void				SetF64(f64 g)
 							{
 								m_g = g;
 								m_stvalk = STVALK_Float;
 							}
-	void				SetValue(u64 n)
+	void				SetU64(u64 n)
 							{
 								m_nUnsigned = n;
 								m_stvalk = STVALK_UnsignedInt;
 							}
-	void				SetValue(s64 n)
+	void				SetS64(s64 n)
 							{
 								m_nSigned = n;
 								m_stvalk = STVALK_SignedInt;
@@ -395,6 +414,8 @@ struct STValue : public STNode // tag = stval
 		Moe::InString		m_istr;
 	};
 
+	MOE_STNOD_NO_CHILDREN();
+
 	void AssertValid();
 };
 
@@ -405,9 +426,12 @@ struct STOperator : public STNode // tag = stop
 						STOperator(PARK park, const LexSpan & lexsp)
 						:STNode(s_stexk, park, lexsp)
 						,m_optype()
+						,m_pStnodLhs(nullptr)
+						,m_pStnodRhs(nullptr)
 							{ ; }
 
 	OpTypes 			m_optype;
+	MOE_STNOD_CHILD2(m_pStnodLhs, m_pStnodRhs);
 
 	void AssertValid();
 };

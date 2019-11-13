@@ -32,6 +32,7 @@ static int TokSetTokinf(Lexer * pLex, TOK tok, const char * pChStart, const char
 	pLex->m_pChParse = pChEnd + 1;
 
 	pLex->m_litk = LITK_Nil;
+	pLex->m_grfnum = FNUM_None;
 	return 1;
 }
 
@@ -79,18 +80,38 @@ const char * PChzFromRword(RWORD rword)
 }
 */
 
+bool FIsReservedWord(Moe::InString istr)
+{
+	#define RW(x) RWord::g_pChz##x,
+	#define STR(x)
+	static const char * s_apChzRword[] =
+	{
+		RESERVED_WORD_LIST	
+	};
+	#undef STR
+	#undef RW
+
+	for (int ipChz = 0; ipChz < MOE_DIM(s_apChzRword); ++ipChz)
+	{
+		if (s_apChzRword[ipChz] == istr.m_pChz)
+			return true;
+	}
+	return false;
+}
+
 static int FIsWhitespace(int ch)
 {
    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\f';
 }
 
 // copy suffixes at the end of a number into the working string
-static int TokParseSuffixes(Lexer * pLex, TOK tok, LITK litk, const char * pChzStart, const char * pChzCur)
+static int TokParseSuffixes(Lexer * pLex, TOK tok, LITK litk, GRFNUM grfnum, const char * pChzStart, const char * pChzCur)
 {
 	pLex->m_istr = Moe::InString();
 
 	int tokReturn = TokSetTokinf(pLex, tok, pChzStart, pChzCur-1);
 	pLex->m_litk = litk;
+	pLex->m_grfnum = grfnum;
 	return tokReturn;
 }
 
@@ -201,7 +222,7 @@ static int TokParseString(Lexer * pLex, const char * pChz)
 	}
 
 	*pChOut = 0;
-	pLex->m_istr = Moe::IstrFromPCh(pLex->m_aChScratch, pChOut - pLex->m_aChScratch);
+	pLex->m_istr = IstrInternCopy(pLex->m_aChScratch, pChOut - pLex->m_aChScratch);
 
 	int tok = TokSetTokinf(pLex, TOK_Literal, pChzStart, pChz);
 	pLex->m_litk = LITK_String;
@@ -271,7 +292,7 @@ static int TokLexHereString(Lexer * pLex, const char * pChz)
 
 	// we've found a match!
 
-	pLex->m_istr = Moe::IstrFromPCh(pChzStart, pChzLine - pChzStart);
+	pLex->m_istr = IstrInternCopy(pChzStart, pChzLine - pChzStart);
 
 	int tok = TokSetTokinf(pLex, TOK_Literal, pChzStart, pChz);
 	pLex->m_litk = LITK_String;
@@ -384,7 +405,7 @@ int TokNext(Lexer * pLex)
 						| (pChz[iCh] == '_')
 						| (u8(pChz[iCh]) >= 128));
 				pChzScratch[iCh] = '\0';
-				pLex->m_istr = Moe::InString(pChzScratch);
+				pLex->m_istr = IstrInternCopy(pChzScratch);
 
 #if 0 // not handling reserved word as a different token, just an identifier 
 				bool fIsReservedWord = FIsReservedWord(pLex->m_istr);
@@ -562,7 +583,7 @@ int TokNext(Lexer * pLex)
 					#endif
 					if (pChzNext == pChz+2)
 						return TokSetTokinf(pLex, TOK_ParseError, pChz-2, pChz-1);
-					return TokParseSuffixes(pLex, TOK_Literal, LITK_Integer, pChz, pChzNext);
+					return TokParseSuffixes(pLex, TOK_Literal, LITK_Numeric, FNUM_None, pChz, pChzNext);
 				}
 			}
 
@@ -583,7 +604,7 @@ int TokNext(Lexer * pLex)
 					pLex->m_g = GParse(pChz, &pChzNext);
 					#endif
 
-					int tok = TokParseSuffixes(pLex, TOK_Literal, LITK_Float, pChz, pChzNext);
+					int tok = TokParseSuffixes(pLex, TOK_Literal, LITK_Numeric, FNUM_IsFloat, pChz, pChzNext);
 					return tok;
 				}
 			}
@@ -606,7 +627,7 @@ int TokNext(Lexer * pLex)
 		    pLex->m_n = n;
 		    #endif
 
-		    return TokParseSuffixes(pLex, TOK_Literal, LITK_Integer, pChz, pChzNext);
+		    return TokParseSuffixes(pLex, TOK_Literal, LITK_Numeric, FNUM_None, pChz, pChzNext);
 		 }
 		 goto single_char;
 	}
@@ -626,6 +647,7 @@ void InitLexer(Lexer * pLex, const char * pCoInput, const char * pCoInputEnd, ch
 	pLex->m_n = 0;
 	pLex->m_g = 0;
 	pLex->m_litk = LITK_Nil;
+	pLex->m_grfnum = FNUM_None;
 }
 
 /*
@@ -703,7 +725,7 @@ Moe::InString StrUnexpectedToken(Lexer * pLex)
 	{
 		return pLex->m_istr;
 	}
-	return Moe::InString(PChzCurrentToken(pLex));
+	return IstrInternCopy(PChzCurrentToken(pLex));
 }
 
 #define LEXER_TEST
@@ -743,13 +765,13 @@ void AssertMatches(
 				"lexed string doesn't match expected value");
 		}
 
-		bool fIsIntLiteral = lex.m_tok == TOK_Literal && lex.m_litk == LITK_Integer;
+		bool fIsIntLiteral = lex.m_tok == TOK_Literal && lex.m_litk == LITK_Numeric && !lex.m_grfnum.FIsSet(FNUM_IsFloat);
 		if (aN && fIsIntLiteral)
 		{
 			MOE_ASSERT(lex.m_n == aN[iTok], "integer literal value doesn't match expected"); 
 		}
 
-		bool fIsFloatLiteral = lex.m_tok == TOK_Literal && lex.m_litk == LITK_Float;
+		bool fIsFloatLiteral = lex.m_tok == TOK_Literal && lex.m_litk == LITK_Numeric && lex.m_grfnum.FIsSet(FNUM_IsFloat);;
 		if (aG && fIsFloatLiteral)
 		{
 			MOE_ASSERT(lex.m_g == aG[iTok], "float literal value doesn't match expected"); 
@@ -822,13 +844,13 @@ bool FTestLexing()
 								TOK_Literal, TOK(','),
 								TOK_Literal, TOK_Literal,
 								TOK_Nil };
-	const LITK s_aLitk[] = {	LITK_Float, LITK_Nil,
-								LITK_Integer, LITK_Nil,
-										LITK_Float, LITK_Nil,
-										LITK_Nil, LITK_Integer, LITK_Nil,
-										LITK_Integer, LITK_Nil,
-										LITK_Float,
-										LITK_Float
+	const LITK s_aLitk[] = {	LITK_Numeric, LITK_Nil,
+								LITK_Numeric, LITK_Nil,
+										LITK_Numeric, LITK_Nil,
+										LITK_Nil, LITK_Numeric, LITK_Nil,
+										LITK_Numeric, LITK_Nil,
+										LITK_Numeric,
+										LITK_Numeric
 									};
 										
 	const int s_aNNum[] = {0,	  0, 5, 0, 0,   0, 0, 1, 0, 65535, 0, 0,        0};	// negative integer literal comes through as two tokens

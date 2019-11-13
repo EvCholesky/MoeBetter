@@ -17,23 +17,57 @@
 
 #pragma once
 
+#include "MoeTypes.h"
+
+u32 HvFromPBFVN(const void * pV, size_t cB);
+u32 HvConcatPBFVN(u32 hv, const void * pV, size_t cB);
+u32 HvFromPChzLowercaseFVN(const char * pV, size_t cB);
+
 namespace Moe
 {
 	class StringTable;
 
 	const char * PChzIntern(const char * pChz);
+	const char * PChzInternCopy(const char * pChz);
+
+	inline u32		HvFromPChz(const char * pChz, size_t cB = 0)
+						{
+							if (!pChz)
+								return 0;
+							if (cB == 0)
+								cB = CBChz(pChz)-1;
+
+							return HvFromPBFVN(pChz, cB);
+						}
+
+	inline u32		HvConcatPChz(u32 hv, const char * pChz, size_t cB = 0)
+						{
+							if (!pChz)
+								return hv;
+							if (cB == 0)
+								cB = CBChz(pChz)-1;
+
+							return HvConcatPBFVN(hv, pChz, cB);
+						}
+
+	inline u32		HvFromPChzLowercase(const char * pChz, size_t cB = 0)
+						{
+							if (!pChz)
+								return 0;
+							if (cB == 0)
+								cB = CBChz(pChz)-1;
+
+							return HvFromPChzLowercaseFVN(pChz, cB);
+						}
 
 	// Interned string class 
 
 	struct InString	// tag = istr
 	{
+		// force users to explicitly intern pointer or copy and intern
 						InString()
 						:m_pChz(nullptr)
 							{ ; }
-
-						InString(const char * pChz)
-						:m_pChz(nullptr)
-							{ m_pChz = PChzIntern(pChz); }
 
 		bool			operator==(const char * pChzOther) const
 							{ return m_pChz == pChzOther; }
@@ -65,7 +99,19 @@ namespace Moe
 							{ return Moe::CCodepoint(m_pChz); }
 
 		const char *	m_pChz;
+
 	};
 
-	InString	IstrFromPCh(const char * pChzBegin, size_t cB);
-}
+	inline HV HvExtract(const Moe::InString & istr)
+	{
+		return HvFromP(istr.m_pChz);
+	}
+
+	void StaticInitStrings(Alloc * pAlloc);
+	void StaticShutdownStrings(Alloc * pAlloc);
+
+} // namespace Moe
+
+
+Moe::InString IstrIntern(const char * pChz);
+Moe::InString IstrInternCopy(const char * pChz, size_t cB = 0);

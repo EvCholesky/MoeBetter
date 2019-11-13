@@ -1,8 +1,15 @@
 #pragma once
 
 #include "Error.h"
+#include "MoeHash.h"
+#include "MoeString.h"
 #include "MoeTypes.h"
 
+struct Lexer;
+struct ParseContext;
+struct STNode;
+struct SymbolTable;
+struct TypeRegistry;
 struct Workspace;
 struct DIFile;
 
@@ -19,9 +26,48 @@ enum FUNT	// Flag UNit Tests
 	GRFUNT_DefaultTest      = FUNT_ImplicitProc | FUNT_ResolveAllSymbols,
 };
 
-struct MoeQuery // tag = mq
+MOE_DEFINE_GRF(GRFUNT, FUNT, u32)
+
+enum OPTLEVEL
 {
+	OPTLEVEL_Debug,
+	OPTLEVEL_Release,
 };
+
+enum TARGETOS
+{
+	TARGETOS_Nil = -1,
+	TARGETOS_Windows,
+};
+
+struct UniqueNameSet // tag = unset
+{
+							UniqueNameSet(Moe::Alloc * pAlloc, Moe::BK bk, u32 cCapacityStarting = 32)
+							:m_hashHvNUnique(pAlloc, bk, cCapacityStarting)
+								{ ; }
+	void					Clear(u32 cCapacity)
+								{ m_hashHvNUnique.Clear(cCapacity); }
+
+	Moe::CHash<HV, u32>		m_hashHvNUnique;		// map for generating unique strings
+};
+
+extern void GenerateUniqueName(UniqueNameSet * pUnset, const char * pChzIn, char * pChzOut, size_t cBOutMax);
+
+struct WorkspaceEntry // tag = entry
+{
+							WorkspaceEntry()
+							:m_pStnod(nullptr)
+							,m_pSymtab(nullptr)
+							,m_fHideDebugString(false)
+								{ ; }
+
+	STNode *				m_pStnod;
+	SymbolTable *		 	m_pSymtab;	// symbol table for this entry, local symbols for lambdas 
+
+	bool					m_fHideDebugString;	// don't print during WriteDebugStringForEntries()
+};
+
+typedef Moe::CBlockList<WorkspaceEntry, 128> BlockListEntry;
 
 struct Workspace	// tag = work
 {
@@ -69,23 +115,61 @@ struct Workspace	// tag = work
 		FILEK			m_filek;
 		FILES			m_files;
 
-		s32				m_dBWarm;		// byte delta for warm start (previous lookup)
-		s32				m_iLineWarm;	// warm start line	
-		s32				m_iColumnWarm;	// warm start col
+		s64				m_dBWarm;		// byte delta for warm start (previous lookup)
+		s64				m_iLineWarm;	// warm start line	
+		s64				m_iColumnWarm;	// warm start col
 	};
+
+						Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman);
 
 	char *				PChzLoadFile(const Moe::InString & istrFilename, Moe::Alloc * pAlloc);
 	void				AppendEntry(STNode * pStnod, SymbolTable * pSymtab);
 
 	File *				PFileEnsure(const char * pChzFile, FILEK filek);
+	File *				PFileLookup(const char * pChzFile, FILEK filek);
+	Moe::CHash<HV, int> * 
+						PHashHvIPFile(FILEK filek);
+
+	Moe::Alloc *						m_pAlloc;
+	ParseContext *						m_pParctx;
+	BlockListEntry 						m_blistEntry;
+	Moe::CDynAry<WorkspaceEntry *> 		m_arypEntryChecked;		// order in which entry points were successfully type checked
+
+	typedef Moe::CHash<HV, int> HashHvIPFile;
+	Moe::CHash<HV, int> *				m_mpFilekPHashHvIPFile[FILEK_Max];
+	Moe::CDynAry<File *> 				m_arypFile;
+	const char *						m_pChzObjectFilename;
+
+	SymbolTable *						m_pSymtab;				// top level symbols
+	TypeRegistry *						m_pTyper;
+	UniqueNameSet						m_unset;
+	UniqueNameSet						m_unsetTin;				// unique names used by types
+
+	ErrorManager *						m_pErrman;
+	size_t								m_cbFreePrev;
+
+	TARGETOS							m_targetos;
+	OPTLEVEL							m_optlevel;
+	GRFUNT								m_grfunt;
 };
+
+void BeginWorkspace(Workspace * pWork);
+void BeginParse(Workspace * pWork, Lexer * pLex, const char * pChzIn, const char * pChzFilename = nullptr);
+void EndParse(Workspace * pWork, Lexer * pLex);
+void EndWorkspace(Workspace * pWork);
 
 struct LexLookup // tag = lexlook
 {
+					LexLookup()
+					:m_istrFilename()
+					,m_iLine(0)
+					,m_iCodepoint(0)
+						{ ; }
+
 					LexLookup(Workspace * pWork, const LexSpan & pLexsp);
 					LexLookup(Workspace * pWork, STNode * pStnod);
 
 	Moe::InString	m_istrFilename;
-	s32				m_iLine;
-	s32				m_iCodepoint;
+	s64				m_iLine;
+	s64				m_iCodepoint;
 };

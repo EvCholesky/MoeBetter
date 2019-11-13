@@ -14,13 +14,21 @@
 | OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 #pragma once
 
+#include "Lexer.h"
 #include "MoeArray.h"
 #include "MoeTypes.h"
 
-struct Stnode;
+struct ErrorManager;
+struct STNode;
 struct TypeInfo;
 struct TypeRegistry;
 struct UniqueNameSet;
+struct Workspace;
+
+namespace Moe
+{
+	struct InString;
+}
 
 enum FSYM		// SYMbol flags
 {
@@ -81,7 +89,6 @@ struct SymbolBase // tag = symbase
 
 struct Symbol : public SymbolBase	// tag = sym
 {
-
 	GRFSYM					m_grfsym;
 	SYMDEP					m_symdep;
 	Moe::InString			m_istrName;
@@ -118,8 +125,8 @@ protected:
 								UniqueNameSet * pUnset)
 							:m_istrNamespace(istrNamespace)
 							,m_pAlloc(pAlloc)
-							,m_hashHvPSym(pAlloc, Moe::BK_Symbol)
-							,m_hashHvPTinBuiltIn(pAlloc, Moe::BK_Symbol)
+							,m_hashIstrPSym(pAlloc, Moe::BK_Symbol)
+							,m_hashIstrPTinBuiltIn(pAlloc, Moe::BK_Symbol)
 							,m_arypTinManaged(pAlloc, Moe::BK_Symbol)
 							,m_arypGenmapManaged(pAlloc, Moe::BK_Symbol)
 							,m_arypSymGenerics(pAlloc, Moe::BK_Symbol)	
@@ -143,7 +150,6 @@ public:
 							,m_grfsymlook(FSYMLOOK_Default)
 								{ ; }
 
-
 							SymbolIterator(
 								SymbolTable * pSymtab,
 								const Moe::InString & istr,
@@ -156,7 +162,7 @@ public:
 
 		SymbolTable *		m_pSymtab;
 		Symbol *			m_pSym;
-		LexSpan			m_lexspan;
+		LexSpan				m_lexspan;
 		GRFSYMLOOK			m_grfsymlook;
 	};
 
@@ -226,30 +232,29 @@ public:
 
 	void					PrintDump();
 
-	static void				StaticStringInit();
-	static void				StaticStringShutdown();
+	Moe::InString						m_istrNamespace;		// unique name for this symbol table's scope
+	Moe::Alloc *						m_pAlloc;
+	Moe::CHash<Moe::InString, Symbol *>	m_hashIstrPSym;			// All the symbols defined within this scope, a full lookup requires
+																//  walking up the parent list
+	Moe::CHash<Moe::InString, TypeInfo *>	
+										m_hashIstrPTinBuiltIn;	// Builtin Types declared in this scope
 
-	Moe::InString					m_istrNamespace;		// unique name for this symbol table's scope
-	Moe::Alloc *					m_pAlloc;
-	Moe::CHash<HV, Symbol *>		m_hashHvPSym;			// All the symbols defined within this scope, a full lookup requires
-															//  walking up the parent list
-	Moe::CHash<HV, TypeInfo *>		m_hashHvPTinBuiltIn;	// Builtin Types declared in this scope
-
-	Moe::CDynAry<TypeInfo *>		m_arypTinManaged;		// all type info structs that need to be deleted.
-	Moe::CDynAry<GenericMap *>		m_arypGenmapManaged;	// generic mappings used by instantiated generic structs
-	Moe::CDynAry<Symbol *>			m_arypSymGenerics;		// symbol copies for generics, not mapped to an identifier
-	Moe::CDynAry<SUsing>			m_aryUsing;				// symbol tables with members pushed into this table's scope
-	Moe::CDynAry<SymbolTable *>		m_arypSymtabUsedBy;		// symbol tables that refer to this one via a using statement
-	TypeRegistry *					m_pTyper;				// hashes to find unique type instances
-	UniqueNameSet *					m_pUnset;				// set of unique names for implict names (created during parse)
+	Moe::CDynAry<TypeInfo *>			m_arypTinManaged;		// all type info structs that need to be deleted.
+	Moe::CDynAry<GenericMap *>			m_arypGenmapManaged;	// generic mappings used by instantiated generic structs
+	Moe::CDynAry<Symbol *>				m_arypSymGenerics;		// symbol copies for generics, not mapped to an identifier
+	Moe::CDynAry<SUsing>				m_aryUsing;				// symbol tables with members pushed into this table's scope
+	Moe::CDynAry<SymbolTable *>			m_arypSymtabUsedBy;		// symbol tables that refer to this one via a using statement
+	TypeRegistry *						m_pTyper;				// hashes to find unique type instances
+	UniqueNameSet *						m_pUnset;				// set of unique names for implict names (created during parse)
 	Moe::CDynAry<TypeInfoLiteral *>	
-									m_mpLitkArypTinlit[LITK_Max];
+										m_mpLitkArypTinlit[LITK_Max];
 
-	SymbolTable *					m_pSymtabParent;
+	SymbolTable *						m_pSymtabParent;
 
-	SymbolTable *					m_pSymtabNextManaged;	// next table in the global list
-	s32								m_iNestingDepth;					
+	SymbolTable *						m_pSymtabNextManaged;	// next table in the global list
+	s32									m_iNestingDepth;					
 	//SCOPID							m_scopid;				// unique table id, for unique type strings
-	u64								m_nVisitId;				// id to check if this table has been visited during collision check
+	u64									m_nVisitId;				// id to check if this table has been visited during collision check
 };
 
+SymbolTable * PSymtabNew(Moe::Alloc * pAlloc, SymbolTable * pSymtabParent, const Moe::InString & istrNamespace);

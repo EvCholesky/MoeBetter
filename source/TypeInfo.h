@@ -18,6 +18,7 @@
 #include "BigMath.h"
 #include "MoeArray.h"
 #include "MoeHash.h"
+#include "MoeString.h"
 
 // Uniqueness notes
 // Types should be unique from creation, don't create types until we have enough info to ensure uniqueness.
@@ -27,6 +28,12 @@
 struct GenericMap;
 struct STNode;
 struct TypeInfoProcedure;
+
+enum SCOPID : s32
+{
+	SCOPID_Min = 0,
+	SCOPID_Nil = -1,
+};
 
 #define BUILT_IN_TYPE_LIST \
 		BLTIN(Char) STR(char)	\
@@ -45,7 +52,18 @@ struct TypeInfoProcedure;
 		BLTIN(U32) STR(u32)	\
 		BLTIN(U64) STR(u64)	\
 		BLTIN(F32) STR(f32)	\
-		BLTIN(F64) STR(f64)	
+		BLTIN(F64) STR(f64)	\
+		BLTIN(String) STR(string)	
+
+
+#define BLTIN(x) extern const char * g_pChz##x;
+#define STR(x)
+namespace BuiltIn
+{
+	BUILT_IN_TYPE_LIST	
+}
+#undef STR
+#undef BLTIN
 
 enum TINK : s8
 {
@@ -66,8 +84,8 @@ enum TINK : s8
 
 	TINK_ForwardDecl= TINK_ReflectedMax,	// Type info added for resolving pointers to self during the type-check phase.
 	TINK_Literal,							// literal that hasn't been resolved to a specific type yet
-	TINK_Generic,
-	TINK_Flag,						// Type for enum flag assignments; no specialized type info
+	TINK_Anchor,							// type for generic anchors that haven't been substituted
+	TINK_Flag,								// Type for enum flag assignments; no specialized type info
 
 	MOE_MAX_MIN_NIL(TINK)
 };
@@ -142,19 +160,29 @@ T PTinDerivedCast(TypeInfo * pTin)
 	return (T)pTin;
 }
 
+enum FNUM
+{
+	FNUM_IsSigned	= 0x1,
+	FNUM_IsFloat	= 0x2,			// canonical type is unique, derived from the generic root type and is only parameterized by canonical types
+
+	FNUM_None		= 0x0,
+	FNUM_All		= 0x3
+};
+
+MOE_DEFINE_GRF(GRFNUM, FNUM, u8);
+
 struct TypeInfoNumeric : public TypeInfo // tag = tinn
 {
 	static const TINK s_tink = TINK_Numeric;
 
-			TypeInfoNumeric(const Moe::InString & istrName, u32 cBit, bool fSigned, bool fIsFloat)
+			TypeInfoNumeric(const Moe::InString & istrName, u32 cBit, GRFNUM grfnum)
 			:TypeInfo(istrName, s_tink)
 			,m_cBit(cBit)
-			,m_fIsSigned(fSigned)
+			,m_grfnum(grfnum)
 				{ ; }
 
 	u32		m_cBit;
-	bool	m_fIsSigned;
-	bool	m_fIsFloat;
+	GRFNUM	m_grfnum;
 };
 
 struct TypeInfoPointer : public TypeInfo	// tag = tinptr
@@ -162,7 +190,7 @@ struct TypeInfoPointer : public TypeInfo	// tag = tinptr
 	static const TINK s_tink = TINK_Pointer;
 
 						TypeInfoPointer()
-						:TypeInfo("", s_tink)
+						:TypeInfo(IstrIntern(""), s_tink)
 						,m_pTin(nullptr)
 						,m_fIsImplicitRef(false)
 							{ ; }
@@ -205,7 +233,7 @@ struct TypeInfoQualifier : public TypeInfo // tag == tinqual
 	static const TINK s_tink = TINK_Qualifier;
 
 						TypeInfoQualifier(GRFQUALK grfqualk)
-						:TypeInfo("", s_tink)
+						:TypeInfo(IstrIntern(""), s_tink)
 						,m_grfqualk(grfqualk)
 							{ ; }
 
@@ -271,11 +299,11 @@ enum FTINPROC
 };
 MOE_DEFINE_GRF(GRFTINPROC, FTINPROC, u8);
 
-struct STypeInfoProcedure : public TypeInfo	// tag = 	tinproc
+struct TypeInfoProcedure : public TypeInfo	// tag = 	tinproc
 {
 	static const TINK s_tink = TINK_Procedure;
 
-						STypeInfoProcedure(const Moe::InString & istrName)
+						TypeInfoProcedure(const Moe::InString & istrName)
 						:TypeInfo(istrName, s_tink)
 						,m_istrMangled()
 						,m_pStnodDefinition(nullptr)
@@ -307,10 +335,21 @@ struct STypeInfoProcedure : public TypeInfo	// tag = 	tinproc
 	CALLCONV					m_callconv;
 };
 
+struct TypeInfoAnchor : public TypeInfo // tag = tinanc
+{
+	static const TINK s_tink = TINK_Anchor;
+						TypeInfoAnchor(const Moe::InString & istrName)
+						:TypeInfo(istrName, s_tink)
+						,m_pStnodDefinition(nullptr)
+							{ ; }
+
+	STNode *			m_pStnodDefinition;
+};
+
+
 enum LITK
 {
-	LITK_Integer,
-	LITK_Float,
+	LITK_Numeric,
 	LITK_Char,
 	LITK_String,
 	LITK_Bool,
@@ -322,29 +361,23 @@ enum LITK
 	MOE_MAX_MIN_NIL(LITK)
 };
 
-enum LITSIGN
-{
-	LITSIGN_Unsigned,
-	LITSIGN_Signed
-};
-
 struct LiteralType	// litty
 {
 			LiteralType()
 			:m_litk(LITK_Nil)
 			,m_cBit(-1)
-			,m_fIsSigned(true)
+			,m_grfnum(FNUM_IsSigned)
 				{ ; }
 
-			LiteralType(LITK litk, LITSIGN litsign = LITSIGN_Signed, s8 cBit = -1)
+			LiteralType(LITK litk, s8 cBit = -1, GRFNUM grfnum = FNUM_IsSigned)
 			:m_litk(litk)
 			,m_cBit(cBit)
-			,m_fIsSigned(litsign == LITSIGN_Signed)
+			,m_grfnum(grfnum)
 				{ ; }
 
 	LITK	m_litk;
 	s8		m_cBit;
-	bool	m_fIsSigned;
+	GRFNUM	m_grfnum;
 };
 
 // NOTE: just documenting a subtle relationship: The AST stores a literal value and is enough to determine 
@@ -356,7 +389,7 @@ struct TypeInfoLiteral : public TypeInfo // tag = tinlit
 	static const TINK s_tink = TINK_Literal;
 
 						TypeInfoLiteral()
-						:TypeInfo("", s_tink)
+						:TypeInfo(IstrIntern(""), s_tink)
 						,m_c(-1)
 						,m_pTinSource(nullptr)
 						,m_fIsFinalized(false)
@@ -484,7 +517,7 @@ struct TypeInfoArray : public TypeInfo	// tag = tinary
 	static const TINK s_tink = TINK_Array;
 
 					TypeInfoArray()
-					:TypeInfo("", s_tink)
+					:TypeInfo(IstrIntern(""), s_tink)
 					,m_pTin(nullptr)
 					,m_pTinstructImplicit(nullptr)
 					,m_c(0)
@@ -511,12 +544,12 @@ struct TypeRegistry // tag treg
 
 	void					Clear();
 	TypeInfo *				PTinMakeUnique(TypeInfo * pTin);
-	//SCOPID					ScopidAlloc()
-	//							{ m_scopidNext = SCOPID(m_scopidNext + 1); return m_scopidNext; }
+	SCOPID					ScopidAlloc()
+								{ m_scopidNext = SCOPID(m_scopidNext + 1); return m_scopidNext; }
 
 	Moe::Alloc *						m_pAlloc;
-	Moe::CHash<u64, TypeInfo *>		m_hashHvPTinUnique;
-	//SCOPID								m_scopidNext;		// global id for symbol tables, used in for unique types strings
+	Moe::CHash<u64, TypeInfo *>			m_hashHvPTinUnique;
+	SCOPID								m_scopidNext;		// global id for symbol tables, used in for unique types strings
 };
 
 struct OpTypes // tag = optype

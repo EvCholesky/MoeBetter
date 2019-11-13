@@ -520,7 +520,7 @@ public:
 						size_t c = cSize;
 						if (c > m_cMax) 
 						{
-							size_t cNew = ewcMax(m_cMax * 2, c); 
+							size_t cNew = moeMax(m_cMax * 2, c); 
 							Resize(cNew);
 						}
 					}

@@ -274,7 +274,7 @@ public:
 					{
 						if (m_cUsed >= m_cCapacity)
 						{
-							int cCapacityNew = ewcMax<u32>(32, m_cCapacity * 2);
+							int cCapacityNew = moeMax<u32>(32, m_cCapacity * 2);
 							Grow(cCapacityNew);
 						}
 
@@ -332,14 +332,14 @@ public:
 						}
 
 						MOE_ASSERT(false, "CHash overflow");
-						return INSRESj_Error;
+						return INRES_Error;
 					}
 
 	INRES		InresEnsureKeyAndValue(K key, V value)
 					{
 						if (m_cUsed >= m_cCapacity)
 						{
-							int cCapacityNew = ewcMax<u32>(32, m_cCapacity * 2);
+							int cCapacityNew = moeMax<u32>(32, m_cCapacity * 2);
 							Grow(cCapacityNew);
 						}
 

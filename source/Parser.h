@@ -25,9 +25,9 @@
 
 struct MoeQuery;
 struct SymbolTable;
-struct SSymbolBase;
-struct STypeInfo;
-struct STypeInfoEnum;
+struct SymbolBase;
+struct TypeInfo;
+struct TypeInfoEnum;
 struct Workspace;
 
 enum PARK : s8 // PARse Kind
@@ -120,6 +120,21 @@ enum STREES : s8
 	MOE_MAX_MIN_NIL(STREES)
 };
 
+enum FDBGSTR // DeBuG STRing Flags
+{
+	FDBGSTR_Name				= 0x1,
+	FDBGSTR_Type				= 0x2,
+	FDBGSTR_LiteralSize			= 0x4,
+	FDBGSTR_UseSizedNumerics	= 0x8, // resolve type aliasing for simple integers - should this be all type aliasing?
+	FDBGSTR_NoWhitespace		= 0x10,
+	FDBGSTR_Values				= 0x20,
+	FDBGSTR_ShowStructArgs		= 0x40,
+
+	FDBGSTR_None				= 0x0,
+	FDBGSTR_All					= 0x3F,
+};
+MOE_DEFINE_GRF(GRFDBGSTR, FDBGSTR, u32);
+
 enum FSTNOD
 {
 	FSTNOD_EntryPoint			= 0x1,	// this should be inserted as a top level entry point, not in place (local function)
@@ -180,10 +195,14 @@ public:
 							,m_apStnodChild(nullptr)
 								{ MOE_ASSERT(StexkFromPark(park) == stexk, "park/stexk mismatch"); }
 
+	STNode *				PStnodChild(int ipStnod)
+								{ return m_apStnodChild[ipStnod]; }
 	STNode *				PStnodChildSafe(int ipStnod);
 	void					SetChildArray(STNode ** apStnodChild, size_t cpStnodChild);
 	void					CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t cpStnodChild);
 	void					CopyChildArray(Moe::Alloc * pAlloc, STNode * apStnodChild);
+
+	void					AssertValid();
 
 	TOK						m_tok;		
 	PARK					m_park;		
@@ -194,14 +213,18 @@ public:
 											//CSTValue *			m_pStval;		// can this get moved into CSTExExpression - need to stop using it for RWORD
 											//CSTIdentifier *		m_pStident;		// pull it from the source
 											//SSyntaxTreeMap *		m_pStmap;       // moved into STEX classes
-	STypeInfo *				m_pTin;
+	TypeInfo *				m_pTin;
 	SymbolTable *			m_pSymtab;
-	SSymbolBase *			m_pSymbase;
+	SymbolBase *			m_pSymbase;
 
 	// Child nodes are embedded in STNode derived with a fixed child layout 
 	size_t                  m_cpStnodChild;
 	STNode **				m_apStnodChild;
 };
+
+Moe::InString IstrFromIdentifier(STNode * pStnod);
+Moe::InString IstrFromTypeInfo(TypeInfo * pTin);
+Moe::InString IstrFromStnod(STNode * pStnod);
 
 template <typename T>
 T PStnodRtiCast(STNode * pStnod)
@@ -281,11 +304,15 @@ public:
 
 					STDecl(PARK park, const LexSpan & lexsp)
 					:STNode(s_stexk, park, lexsp)
+					,m_fIsBakedConstant(false)
+					,m_fHasUsingPrefix(false)
 					,m_pStnodIdentifier(nullptr)
 					,m_pStnodType(nullptr)
 					,m_pStnodInit(nullptr)
 						{ ; }
 
+	bool			m_fIsBakedConstant;
+	bool			m_fHasUsingPrefix;
 	MOE_STNOD_CHILD3(m_pStnodIdentifier, m_pStnodType, m_pStnodInit);
 
 	// TODO: how to handle variable set of child decls, new decl list PARK?
@@ -314,7 +341,7 @@ struct STEnum : public STNode
 	ENUMK               m_enumk;
 	size_t              m_cConstantExplicit;
 	size_t              m_cConstantImplicit;
-	STypeInfoEnum *     m_pTinenum;     // why is this here? not just m_pTin?
+	TypeInfoEnum *		m_pTinenum;     // why is this here? not just m_pTin?
 
 	void AssertValid();
 };

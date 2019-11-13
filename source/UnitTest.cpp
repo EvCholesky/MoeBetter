@@ -14,6 +14,7 @@
 | OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 
+#if MOEB_LATER
 #include "UnitTest.h"
 
 #include "Error.h"
@@ -1394,4 +1395,5 @@ bool FUnitTestFile(CWorkspace * pWork, const char * pChzFilenameIn, unsigned grf
 	ParseAndTestMoetestFile(pAlloc, pWork->m_pErrman, &lex, grfcompile);
 	return !pWork->m_pErrman->FHasErrors();
 }
-		
+
+#endif // MOEB_LATER	

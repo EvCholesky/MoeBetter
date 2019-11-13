@@ -1,90 +1,63 @@
+/* Copyright (C) 2019 Evan Christensen
+|
+| Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated 
+| documentation files (the "Software"), to deal in the Software without restriction, including without limitation the 
+| rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit 
+| persons to whom the Software is furnished to do so, subject to the following conditions:
+| 
+| The above copyright notice and this permission notice shall be included in all copies or substantial portions of the 
+| Software.
+| 
+| THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE 
+| WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+| COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR 
+| OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
-#include <EwcArray.h>
+#include "Request.h"
 
-enum REQK // REQuest Kind
+namespace Moe
 {
-	REQK_FindSymbol,		// lookup a symbol by name
-	REQK_FindAst,			// lookup an ast
-	REQK_FindTypeInfo,		// find type info (from symbol)
-	REQK_FindDefinition,	// where was this instance defined
-	REQK_FindReferences,	// where was this symbol referenced
-	REQK_ListMembers,		// what are the members for this struct
-	REQK_BytecodeEntry,		// bytecode entry to run a given procedure
-	REQK_CodegenResult,		// object file?
 
-	/* requests should be desired results not processes needed to return generate those results
-    REQK_BuildAst,			// lex and parse a source file
-    REQK_TypeCheckSymbol,	
-    REQK_CodegenBytecode,	
-    REQK_CodegenNative,
-	*/
-};
-
-// indices
-enum REQPARMK
+Compilation::Compilation(Moe::Alloc * pAlloc)
+:m_aryRqsrc(pAlloc, BK_Request)
+,m_aryRq(pAlloc, BK_Request)
+,m_arypRqres(pAlloc, BK_Request)
 {
-	REQPARMK_SymbolPath,
-	REQPARMK_SourceLocation,
-};
+}
 
-struct ReqSymbolPath // tag = rqsympath
+void RequestSymbol(Request * pRq, RQK rqk, Moe::InString istrSymbolPath)
 {
-	CString		m_strSymPath;
-};
+	pRq->m_rqk = rqk;
+	pRq->m_istrPath = istrSymbolPath;
+}
 
-struct ReqSourceLocation // tag = rqsrcloc
+void RequestLocation(Request * pRq, RQK rqk, Moe::InString istrFilename, s32 iLine, s32 iCodepoint)
 {
-	CString		m_strFilename;
-	s32			m_iLine;
-	s32			m_iCodepoint;
-};
+	pRq->m_rqk = rqk;
+	pRq->m_istrPath = istrFilename;
+	pRq->m_iLine = iLine;
+	pRq->m_iCodepoint = iCodepoint;
+}
 
-struct RequestParm // tag = rqparam
+void AddRequest(Compilation * pComp, Request * pRq)
 {
-	REQPARMK	m_reqparmk;
-	union
-	{
-		ReqSymbolPath		m_rqsympath;
-		ReqSourceLocation	m_rqsrcloc;
-	};
-};
+	pComp->m_aryRq.Append(*pRq);
+}
 
-// lookup by symbol path string:		math.vec2.m_x
-// lookup by source location			array.moe:12,2
-
-struct RequestResult // tag = rqresult
+void AddSourceFile(Compilation * pComp, const char * pChzFilename)
 {
-};
+	auto pRqsrc = pComp->m_aryRqsrc.AppendNew();
+	pRqsrc->m_rqsrck = RQSRCK_Filename;
+	pRqsrc->m_istr = pChzFilename;
+}
 
-struct Request // tag = rq
+int CRqresServiceRequest(Workspace * pWork, Compilation * pComp)
 {
-	REQK					m_reqk;
-	RequestParm				m_rqparm;
-};
+	return 0;
+}
 
-struct Compilation 
+void PrintResult(Compilation * pComp, int iRqres, char * aCh, size_t cChMax)
 {
-	void AddRequest(Request * rq);
-	void ServiceRequest(CDynAry<RequestResult> * paryRqresult);
-};
+}
 
-/*
-struct SReqEntry    // tag = reqent
-{
-    REQENTK     m_reqentk;
-    CString     m_strName;
-};
-
-struct SCompilation // tag = comp
-{
-    EWC::CDynAry<SReqEntry *>       m_arypReqent;
-    EWC::CDynAry<SReqAST *>         m_aryReqast;
-    SReqSymTable *                  m_pSymtabGlobal;
-};
-
-void CompileSource(const char * pChzFilename, SCompilation * pComp);
-void RequestCompilation(SCompilation * pComp, REQK reqk);
-
-SReqSymbol * PReqsymLookup(const char * pChzName);
-SReqEntry * PReqentTypeOf(SReqSymbol * pReqsym);
-*/
+}

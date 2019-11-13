@@ -136,7 +136,8 @@ struct ErrorManager	//  // tag = errman
 {
 				ErrorManager(Moe::Alloc * pAlloc);
 
-	void		SetWorkspace(Workspace * pWork);
+	void		SetWorkspace(Workspace * pWork)
+					{ m_pWork = pWork; }
 
 	void		AddChildErrors(const ErrorManager * pErrmanOther)
 					{

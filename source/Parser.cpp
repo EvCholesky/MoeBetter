@@ -1,4 +1,5 @@
 #include "Error.h"
+#include "Generics.inl"
 #include "Parser.h"
 #include "Workspace.h"
 
@@ -48,6 +49,30 @@ STNode * PStnodParseExpression(ParseContext * pParctx, Lexer * pLex, GRFEXP grfe
 STNode * PStnodParseLogicalOrExpression(ParseContext * pParctx, Lexer * pLex);
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex);
 
+static int g_nSymtabVisitId = 1; // visit index used by symbol table collision walks
+
+const char * PChzFromLitk(LITK litk)
+{
+	static const char * s_mpLitkPChz[] =
+	{
+		"Numeric",
+		"Char",
+		"String",
+		"Bool",
+		"Null",
+		"Enum",
+		"Compound",
+		"Pointer",
+	};
+	MOE_CASSERT(MOE_DIM(s_mpLitkPChz) == LITK_Max, "missing LITK string");
+	if (litk == LITK_Nil)
+		return "Nil";
+
+	if ((litk < LITK_Nil) | (litk >= LITK_Max))
+		return "Unknown LITK";
+
+	return s_mpLitkPChz[litk];
+}
 
 const char * PChzFromPark(PARK park)
 {
@@ -107,6 +132,39 @@ const char * PChzFromPark(PARK park)
 	return s_mpParkPChz[park];
 }
 
+const char * PChzFromQualk(QUALK qualk)
+{
+	static const char * s_mpQualkPChz[] =
+	{
+		"const",
+		"inarg",
+	};
+	MOE_CASSERT(MOE_DIM(s_mpQualkPChz) == QUALK_Max, "missing QUALK string");
+	if (qualk == QUALK_Nil)
+		return "Nil";
+
+	if ((qualk < QUALK_Nil) | (qualk >= QUALK_Max))
+		return "Unknown QUALK";
+
+	return s_mpQualkPChz[qualk];
+}
+
+
+void AppendFlagNames(Moe::StringBuffer * pStrbuf, GRFQUALK grfqualk, const char * pChzSpacer)
+{
+	const char * pChzSpacerCur = "";
+	for (int qualk = QUALK_Min; qualk < QUALK_Max; ++qualk)
+	{
+		if (grfqualk.FIsSet(0x1 << qualk))
+		{
+			AppendChz(pStrbuf, pChzSpacerCur);
+			AppendChz(pStrbuf, PChzFromQualk((QUALK)qualk));
+			pChzSpacerCur = pChzSpacer;
+		}
+	}
+}
+
+
 STEXK StexkFromPark(PARK park)
 {
 	static const STEXK s_mpParkStexk[] = 
@@ -164,6 +222,345 @@ STEXK StexkFromPark(PARK park)
 	return s_mpParkStexk[park];
 }
 
+void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFDBGSTR grfdbgstr = FDBGSTR_None)
+{
+	if (pTin == nullptr)
+	{
+		switch (park)
+		{
+		case PARK_ExpressionList:
+		case PARK_List:				AppendChz(pStrbuf, "{}");		return;
+		case PARK_Identifier:		AppendChz(pStrbuf, "Ident");	return;
+		case PARK_ParameterList:	AppendChz(pStrbuf, "Params");	return; 
+		case PARK_VariadicArg:		AppendChz(pStrbuf, "..");		return;
+		case PARK_Nop:				AppendChz(pStrbuf, "Nop");		return;
+		case PARK_Uninitializer:	AppendChz(pStrbuf, "---");		return;
+		case PARK_AssignmentOp:		AppendChz(pStrbuf, "=");		return;
+		case PARK_ConstantDecl:		AppendChz(pStrbuf, "constdecl");return;
+		case PARK_Decl:				AppendChz(pStrbuf, "decl");		return;
+		case PARK_ArrayDecl:		AppendChz(pStrbuf, "arydecl");	return;
+		default:					AppendChz(pStrbuf, "unk");		return;
+		}
+	}
+
+	switch (pTin->m_tink)
+	{
+	case TINK_Qualifier:
+		{
+			auto pTinqual = (TypeInfoQualifier *)pTin;
+			const char * pChzSpacer = (grfdbgstr.FIsSet(FDBGSTR_NoWhitespace)) ? "." : " ";
+			AppendFlagNames(pStrbuf, pTinqual->m_grfqualk, pChzSpacer);
+			AppendChz(pStrbuf, pChzSpacer);
+			PrintTypeInfo(pStrbuf, pTinqual->m_pTin, park, grfdbgstr);
+			return;
+		} break;
+	case TINK_Pointer:		
+		{
+			auto pTinptr = (TypeInfoPointer*)pTin;
+			AppendChz(pStrbuf, PChzFromTok(TOK_Reference));
+			PrintTypeInfo(pStrbuf, pTinptr->m_pTin, park, grfdbgstr);
+			return;
+		}
+	case TINK_Array:
+		{
+			TypeInfoArray * pTinary = (TypeInfoArray*)pTin;
+
+			switch (pTinary->m_aryk)
+			{
+			case ARYK_Fixed:		FormatChz(pStrbuf, "[%d]", pTinary->m_c);	break;
+			case ARYK_Dynamic:		AppendChz(pStrbuf, "[..]");					break;
+			case ARYK_Reference:	AppendChz(pStrbuf, "[]");					break;
+			default: 
+				MOE_ASSERT(false, "Unhandled ARYK");
+				break;
+			}
+
+			PrintTypeInfo(pStrbuf, pTinary->m_pTin, park, grfdbgstr);
+			return;
+		}
+
+	case TINK_Literal:		
+		{
+			auto pTinlit = (TypeInfoLiteral *)pTin;
+
+			if (pTinlit->m_litty.m_litk == LITK_Enum)
+			{
+				PrintTypeInfo(pStrbuf, pTinlit->m_pTinSource, PARK_Nil, grfdbgstr);
+				AppendChz(pStrbuf, " ");
+			}
+			else if (!grfdbgstr.FIsSet(FDBGSTR_LiteralSize))
+			{
+				AppendChz(pStrbuf, PChzFromLitk(pTinlit->m_litty.m_litk));
+				AppendChz(pStrbuf, " ");
+
+				if (pTinlit->m_litty.m_litk == LITK_Compound && pTinlit->m_pTinSource)
+				{
+					AppendChz(pStrbuf, "(");
+					PrintTypeInfo(pStrbuf, pTinlit->m_pTinSource, PARK_Nil, grfdbgstr);
+					AppendChz(pStrbuf, ")");
+				}
+			}
+			
+			AppendChz(pStrbuf, "Literal");
+			return;
+		}
+	case TINK_Anchor:
+		{
+			auto pTinanc = (TypeInfoAnchor *)pTin;
+			FormatChz(pStrbuf, "$%s", pTinanc->m_istrName.m_pChz);
+			return;	
+		}
+    case TINK_Procedure:
+		{
+			auto pTinproc = (TypeInfoProcedure *)pTin;
+			FormatChz(pStrbuf, "%s(", pTin->m_istrName.m_pChz);
+
+			size_t cpTin = pTinproc->m_arypTinParams.C();
+			size_t cCommas = (pTinproc->FHasVarArgs()) ? cpTin : cpTin - 1;
+			for (size_t ipTin = 0; ipTin < cpTin; ++ipTin)
+			{
+				PrintTypeInfo(pStrbuf, pTinproc->m_arypTinParams[ipTin], PARK_Nil, grfdbgstr);
+
+				if (ipTin < cCommas)
+				{
+					AppendChz(pStrbuf, ", ");
+				}
+			}
+
+			if (pTinproc->FHasVarArgs())
+			{
+				AppendChz(pStrbuf, "..");
+			}
+
+			AppendChz(pStrbuf, ")->");
+
+			cpTin = pTinproc->m_arypTinReturns.C();
+			for (size_t ipTin = 0; ipTin < cpTin; ++ipTin)
+			{
+				PrintTypeInfo(pStrbuf, pTinproc->m_arypTinReturns[ipTin], PARK_Nil, grfdbgstr);
+			}
+
+			if (pTinproc->m_grftinproc.FIsSet(FTINPROC_IsForeign))
+			{
+				AppendChz(pStrbuf, " #foreign");
+			}
+
+			return;
+		}
+    case TINK_Struct:
+		{
+			FormatChz(pStrbuf, "%s", pTin->m_istrName.m_pChz);
+
+			auto pTinstruct = (TypeInfoStruct *)pTin;
+			if (pTinstruct->m_pGenmap)
+			{
+				PrintGenmapAnchors(pStrbuf, pTinstruct->m_pGenmap);
+			}
+			else if (pTinstruct->FHasGenericParams() && grfdbgstr.FIsSet(FDBGSTR_ShowStructArgs))
+			{
+				auto pStnodStruct = pTinstruct->m_pStnodStruct;
+				STStruct * pStstruct = nullptr;
+
+				if (pStnodStruct)
+				{
+					pStstruct = PStnodRtiCast<STStruct *>(pStnodStruct);
+				}
+
+				if (MOE_FVERIFY(pStstruct && pStstruct->m_pStnodParameterList, "expected parameter list"))
+				{
+					auto pStnodParameterList = pStstruct->m_pStnodParameterList;
+					size_t cpStnodParam = pStnodParameterList->m_cpStnodChild;
+					const char * pChzSeparate = "(";
+					const char * pChzClose = ")";
+					for (int ipStnodParam = 0; ipStnodParam < cpStnodParam; ++ipStnodParam)
+					{
+						auto pStnodParam = pStnodParameterList->PStnodChild(ipStnodParam);
+						auto pStdecl = PStnodRtiCast<STDecl *>(pStnodParam);
+						if (!pStdecl)
+							continue;
+	
+						FormatChz(pStrbuf, "%s", pChzSeparate);
+						pChzSeparate = ", ";
+						pChzClose = ")";
+						if (pStdecl->m_pStnodIdentifier)
+						{
+							auto istrIdent = IstrFromIdentifier(pStdecl->m_pStnodIdentifier);
+							FormatChz(pStrbuf, "$%s ", istrIdent.m_pChz);
+						}
+
+						if (pStdecl->m_pStnodType)
+						{
+							auto istrType = IstrFromTypeInfo(pStdecl->m_pStnodType->m_pTin);
+							FormatChz(pStrbuf, ":%s", istrType.m_pChz);
+						}
+					}
+					AppendChz(pStrbuf, pChzClose);
+				}
+			}
+
+			return;
+		}
+    case TINK_Enum:
+		{
+			FormatChz(pStrbuf, "%s_enum", pTin->m_istrName.m_pChz);
+			return;
+		}
+	case TINK_Numeric:
+		{
+			if (!grfdbgstr.FIsSet(FDBGSTR_UseSizedNumerics))
+			{
+				AppendChz(pStrbuf, pTin->m_istrName.m_pChz);
+				return;
+			}
+
+			// print out the size resolved type (rather than any type aliases - ie. int)
+			auto pTinn = (TypeInfoNumeric *)pTin;
+			char chSigned;
+			if (pTinn->m_grfnum.FIsSet(FNUM_IsFloat))
+			{
+				chSigned = 'f';
+			}
+			else
+			{
+				chSigned = (pTinn->m_grfnum.FIsAnySet(FNUM_IsSigned)) ? 's' : 'u';
+			}
+
+			switch(pTinn->m_cBit)
+			{
+			case 8:		FormatChz(pStrbuf, "%c8", chSigned);	break;
+			case 16:	FormatChz(pStrbuf, "%c16", chSigned);	break;
+			case 32:	FormatChz(pStrbuf, "%c32", chSigned);	break;
+			case 64:	FormatChz(pStrbuf, "%c64", chSigned);	break;
+			default: MOE_ASSERT(false, "unknown numeric size");
+			}
+
+			return;
+		}
+    case TINK_Bool:			// fall through ...
+    case TINK_Flag:			// fall through ...
+    case TINK_Void:			// fall through ...
+    case TINK_Null:			// fall through ...
+    case TINK_Any:			// fall through ...
+    case TINK_Type:			// fall through ...
+		AppendChz(pStrbuf, pTin->m_istrName.m_pChz);
+		break;
+	default:
+		MOE_ASSERT(false, "unhandled TINK in PrintTypeInfo");
+		return;
+	}
+}
+
+
+void PrintLiteral(Moe::StringBuffer * pStrbuf, STNode * pStnodLit)
+{
+	auto pStvalLit = PStnodRtiCast<STValue * >(pStnodLit);
+	if (!MOE_FVERIFY(pStnodLit->m_park == PARK_Literal && pStvalLit, "bad literal in PrintLiteral"))
+		return;
+
+	switch (pStvalLit->m_stvalk)
+	{
+	case STVALK_String:			FormatChz(pStrbuf, "\"%s\"", pStvalLit->m_istr.m_pChz);			return;
+	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStvalLit->m_nUnsigned);				return;
+	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStvalLit->m_nSigned);				return;
+	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStvalLit->m_g);						return;
+	case STVALK_ReservedWord:	FormatChz(pStrbuf, "%s", pStvalLit->m_istr.m_pChz);				return;
+	default:
+		MOE_ASSERT(false, "unknown literal %s", PChzFromTok(pStnodLit->m_tok));
+		return;
+	}
+}
+
+void PrintStnodName(Moe::StringBuffer * pStrbuf, STNode * pStnod)
+{
+	if (!pStnod)
+	{
+		AppendChz(pStrbuf, "null");
+		return;
+	}
+
+	switch (pStnod->m_park)
+	{
+	case PARK_Identifier:			FormatChz(pStrbuf, "%s", IstrFromIdentifier(pStnod).m_pChz);	return;
+	case PARK_ReservedWord:			FormatChz(pStrbuf, "%s", IstrFromIdentifier(pStnod).m_pChz);	return;
+	case PARK_Nop:					AppendChz(pStrbuf, "nop");										return;
+	case PARK_Literal:				
+		{
+			PrintLiteral(pStrbuf, pStnod);
+			return;
+		}
+	case PARK_AdditiveOp:		    FormatChz(pStrbuf, "%s", PChzFromTok(pStnod->m_tok));				return;
+	case PARK_MultiplicativeOp:	    FormatChz(pStrbuf, "%s", PChzFromTok(pStnod->m_tok));				return;
+	case PARK_ShiftOp:			    FormatChz(pStrbuf, "%s", PChzFromTok(pStnod->m_tok));				return;
+	case PARK_RelationalOp:		    FormatChz(pStrbuf, "%s", PChzFromTok(pStnod->m_tok));				return;
+	case PARK_LogicalAndOrOp:	    FormatChz(pStrbuf, "%s", PChzFromTok(pStnod->m_tok));				return;
+	case PARK_UnaryOp:			    FormatChz(pStrbuf, "unary[%s]", PChzFromTok(pStnod->m_tok));		return;
+	case PARK_PostfixUnaryOp:		FormatChz(pStrbuf, "postUnary[%s]", PChzFromTok(pStnod->m_tok));	return;
+	case PARK_AssignmentOp:		    FormatChz(pStrbuf, "%s", PChzFromTok(pStnod->m_tok));				return;
+	case PARK_ArrayElement:		    AppendChz(pStrbuf, "elem");					return;
+	case PARK_MemberLookup:		    AppendChz(pStrbuf, "member");				return;
+	case PARK_ProcedureCall:		AppendChz(pStrbuf, "procCall");				return;
+	case PARK_SpecializedStruct:	AppendChz(pStrbuf, "specStruct");			return;
+	case PARK_ExpressionList:
+	case PARK_List:				    AppendChz(pStrbuf, "{}");					return;
+	case PARK_ParameterList:	    AppendChz(pStrbuf, "params");				return;
+	case PARK_If:				    AppendChz(pStrbuf, "if");					return;
+	case PARK_Else:				    AppendChz(pStrbuf, "else");					return;
+	case PARK_ArrayDecl:		    AppendChz(pStrbuf, "[]");					return;
+	case PARK_ProcedureReferenceDecl:
+									AppendChz(pStrbuf, "procref");				return;
+	case PARK_Uninitializer:		AppendChz(pStrbuf, "---");					return;
+	case PARK_ReferenceDecl:		AppendChz(pStrbuf, "ptr");					return;
+#ifdef MOEB_LATER
+	case PARK_QualifierDecl:		AppendChz(pStrbuf, PChzFromRword(pStnod->m_pStval->m_rword));	return;
+#endif
+	case PARK_Decl:					AppendChz(pStrbuf, "decl");					return;
+	case PARK_Typedef:				AppendChz(pStrbuf, "typedef");				return;
+	case PARK_ConstantDecl:			AppendChz(pStrbuf, "const");				return;
+	case PARK_ProcedureDefinition:	AppendChz(pStrbuf, "func");					return;
+	case PARK_EnumDefinition:		AppendChz(pStrbuf, "enum");					return;
+	case PARK_StructDefinition:		AppendChz(pStrbuf, "struct");				return;
+	case PARK_EnumConstant:			AppendChz(pStrbuf, "enumConst");			return;
+	case PARK_VariadicArg:			AppendChz(pStrbuf, "..");					return;
+	case PARK_CompoundLiteral:		AppendChz(pStrbuf, "compLit");				return;
+	case PARK_Cast:					AppendChz(pStrbuf, "cast");					return;
+	case PARK_ArgumentLabel:		AppendChz(pStrbuf, "`"); 					return;
+	case PARK_GenericDecl:			AppendChz(pStrbuf, "gendecl"); 				return;
+	case PARK_GenericStructSpec:	AppendChz(pStrbuf, "genstruct");			return;
+	case PARK_TypeArgument:			AppendChz(pStrbuf, "typearg");				return;
+	case PARK_Error:
+	default:						AppendChz(pStrbuf, "error");				return;
+	}
+}
+
+InString IstrFromTypeInfo(TypeInfo * pTin)
+{
+	if (!pTin)
+	{
+		return IstrIntern("null");
+	}
+
+	char aCh[1024];
+	Moe::StringBuffer strbuf(aCh, MOE_DIM(aCh));
+
+	PrintTypeInfo(&strbuf, pTin, PARK_Nil);
+	return IstrInternCopy(aCh);
+}
+
+InString IstrFromStnod(STNode * pStnod)
+{
+	if (!pStnod)
+	{
+		return IstrIntern("null");
+	}
+
+	char aCh[1024];
+	Moe::StringBuffer strbuf(aCh, MOE_DIM(aCh));
+
+	PrintStnodName(&strbuf, pStnod);
+	return IstrInternCopy(aCh);
+}
+
+
 void PushSymbolTable(ParseContext * pParctx, SymbolTable * pSymtab)
 {
 	pSymtab->m_pSymtabParent = pParctx->m_pSymtab;
@@ -203,6 +600,425 @@ SymbolTable * PSymtabNew(Alloc * pAlloc, SymbolTable * pSymtabParent, const Moe:
 
 	return PSymtabNew(pAlloc, pSymtabParent, istrNamespace, pSymtabParent->m_pTyper, pSymtabParent->m_pUnset);
 }
+
+SymbolTable::SUsing::~SUsing()
+{
+	auto pAlloc = m_hashHvPSymp.PAlloc();
+	CHash<HV, SymbolPath *>::CIterator iterPSymp(&m_hashHvPSymp);
+	while (SymbolPath ** ppSymp = iterPSymp.Next())
+	{
+		pAlloc->MOE_DELETE(*ppSymp);
+	}
+}
+
+SymbolTable::~SymbolTable()
+{
+	CHash<Moe::InString, Symbol *>::CIterator iterPSym(&m_hashIstrPSym);
+	while (Symbol ** ppSym = iterPSym.Next())
+	{
+		Symbol * pSym = *ppSym;
+		while (pSym)
+		{
+			Symbol * pSymDelete = pSym;
+			pSym = pSym->m_pSymPrev;
+
+			m_pAlloc->MOE_DELETE(pSymDelete);
+		}
+
+		*ppSym = nullptr;
+	}
+
+	for (Symbol ** ppSym = m_arypSymGenerics.A(); ppSym != m_arypSymGenerics.PMac(); ++ppSym)
+	{
+		m_pAlloc->MOE_DELETE(*ppSym);
+	}
+
+#ifdef MOEB_LATER
+	CHash<HV, STypeInfoForwardDecl *>::CIterator iterPTinfwd(&m_hashHvPTinfwd);
+	while (TypeInfoForwardDecl ** ppTinfwd = iterPTinfwd.Next())
+	{
+		MOE_ASSERT((*ppTinfwd)->m_arypTinReferences.C() == 0, "unresolved forward declarations");
+	}
+#endif
+
+	for (TypeInfo ** ppTin = m_arypTinManaged.A(); ppTin != m_arypTinManaged.PMac(); ++ppTin)
+	{
+		DeleteTypeInfo(m_pAlloc, *ppTin);
+		*ppTin = nullptr;
+	}
+}
+
+enum SYMCOLLIS 
+{
+	SYMCOLLIS_SymbolName,
+	SYMCOLLIS_CyclicUsing,
+
+	MOE_MAX_MIN_NIL(SYMCOLLIS)
+};
+
+enum SYMCCK		// SYMbol Collision Check Kind
+{
+	SYMCCK_Entry,
+	SYMCCK_UsedBy,	// walking symbol tables that use the entry table
+	SYMCCK_Uses,	// walking symtabs that the entry table uses
+};
+
+SYMCOLLIS SymcollisCheck(
+	SymbolTable * pSymtab,
+	const Moe::InString * pIstrMin,
+	const Moe::InString * pIstrMax,
+	u64 nVisitId,
+	FSHADOW fshadow,
+	STNode ** ppStnodCollision, 
+	SYMCCK symcck = SYMCCK_Entry,
+	SymbolTable * pSymtabUser = nullptr)
+{
+	if (pSymtab->m_nVisitId == nVisitId)
+	{
+		*ppStnodCollision = nullptr;
+		return SYMCOLLIS_CyclicUsing;
+	}
+	pSymtab->m_nVisitId = nVisitId;
+
+	SYMCOLLIS symcollis = SYMCOLLIS_Nil;
+	if (fshadow == FSHADOW_NoShadowing)
+	{
+		for (const InString * pIstr = pIstrMin; pIstr != pIstrMax; ++pIstr)
+		{
+			Symbol ** ppSym = pSymtab->m_hashIstrPSym.Lookup(*pIstr);
+			if (ppSym)
+			{
+				*ppStnodCollision = (*ppSym)->m_pStnodDefinition;
+				symcollis = SYMCOLLIS_SymbolName;
+				break;
+			}
+		}
+	}
+
+	// We need to check all of the symbol tables 'derived' from the one that started our recursive check, but not
+	//   tables derived from the symtabs we are using. Also we need to make sure we don't recurse back up the symtab path 
+	//   that brought us here.
+	if (symcck != SYMCCK_Uses )
+	{
+		auto ppSymtabMax = pSymtab->m_arypSymtabUsedBy.PMac();
+		for (auto ppSymtabIt = pSymtab->m_arypSymtabUsedBy.A(); ppSymtabIt != ppSymtabMax; ++ppSymtabIt)
+		{
+			auto pSymtabUsedBy = *ppSymtabIt;
+			symcollis = moeMax(symcollis, SymcollisCheck(pSymtabUsedBy, pIstrMin, pIstrMax, nVisitId, FSHADOW_NoShadowing, ppStnodCollision, SYMCCK_UsedBy, pSymtab));
+			if (symcollis == SYMCOLLIS_CyclicUsing)
+				return symcollis;
+		}
+	}
+
+	auto pUsingMax = pSymtab->m_aryUsing.PMac();
+	for (auto pUsingIt = pSymtab->m_aryUsing.A(); pUsingIt != pUsingMax; ++pUsingIt)
+	{
+		if (pUsingIt->m_pSymtab == pSymtabUser)
+			continue;
+
+		symcollis = moeMax(symcollis, SymcollisCheck(pUsingIt->m_pSymtab, pIstrMin, pIstrMax, nVisitId, FSHADOW_NoShadowing, ppStnodCollision, SYMCCK_Uses));
+		if (symcollis == SYMCOLLIS_CyclicUsing)
+			return symcollis;
+	}
+
+	return symcollis;
+}
+
+
+ERRID ErridCheckSymbolCollision(
+	ErrorManager * pErrman,
+	const LexSpan & lexsp,
+	const char * pChzContext,
+	SymbolTable * pSymtabContext,
+	const Moe::InString * pIstrMin,
+	const Moe::InString * pIstrMax,
+	FSHADOW fshadow,
+	u64 nVisitId)
+{
+	STNode * pStnodCollision = nullptr;
+	auto symcollis = SymcollisCheck(pSymtabContext, pIstrMin, pIstrMax, nVisitId, fshadow, &pStnodCollision);
+	if (symcollis != SYMCOLLIS_Nil)
+	{
+		//s32 iLine = 0;
+		//s32 iCol = 0;
+		//const char * pChzFilename = "unknown";
+		LexLookup lexlook;
+		const char * pChzSymName = "";
+		if (pStnodCollision)
+		{
+			lexlook = LexLookup(pErrman->m_pWork, pStnodCollision->m_lexsp);
+			//CalculateLinePosition(pErrman->m_pWork, &pStnodCollision->m_lexloc, &iLine, &iCol);
+			//pChzFilename = pStnodCollision->m_lexloc.m_strFilename.PCoz();
+
+			if (pStnodCollision->m_pSymbase && pStnodCollision->m_pSymbase->m_symk == SYMK_Symbol)
+			{
+				pChzSymName = ((Symbol *)pStnodCollision->m_pSymbase)->m_istrName.m_pChz;
+			}
+		}
+
+		switch (symcollis)
+		{
+		case SYMCOLLIS_SymbolName: EmitError(pErrman, lexsp, ERRID_UsingStatementCollision, 
+										"%s shadows symbol name '%s' at %s(%d, %d)", 
+										pChzContext,
+										pChzSymName,
+										lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint);
+									return ERRID_UsingStatementCollision;
+		case SYMCOLLIS_CyclicUsing: EmitError(pErrman, lexsp, ERRID_UsingStatementCycle, 
+										"%s causes using statement cycle at %s(%d, %d)", 
+										pChzContext,
+										lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint);
+									return ERRID_UsingStatementCycle;
+		}
+	}
+	return ERRID_Nil;
+}
+
+Symbol * SymbolTable::PSymNewUnmanaged(const InString & istrName, STNode * pStnodDefinition, GRFSYM grfsym)
+{
+	auto pSym = MOE_NEW(m_pAlloc, Symbol) Symbol;
+	pSym->m_symk = SYMK_Symbol;
+	pSym->m_symdep = SYMDEP_Nil;
+
+	pSym->m_aryPSymReferencedBy.SetAlloc(m_pAlloc, BK_Dependency, 4);
+	pSym->m_aryPSymHasRefTo.SetAlloc(m_pAlloc, BK_Dependency, 4);
+
+	pSym->m_istrName = istrName;
+	pSym->m_pStnodDefinition = pStnodDefinition;
+	pSym->m_grfsym = grfsym;
+	//pSym->m_pTin = nullptr;
+	pSym->m_pSymPrev = nullptr;
+	return pSym;
+}
+
+Symbol * SymbolTable::PSymEnsure(
+	ErrorManager * pErrman,
+	const InString & istrName,
+	STNode * pStnodDefinition,
+	GRFSYM grfsym,
+	FSHADOW fshadow)
+{
+	LexSpan lexsp;
+	if (pStnodDefinition)
+		lexsp = pStnodDefinition->m_lexsp;
+
+	(void) ErridCheckSymbolCollision(
+		pErrman, 
+		lexsp,
+		istrName.m_pChz,
+		this,
+		&istrName, &istrName + 1,
+		fshadow,
+		++g_nSymtabVisitId);	// BB - not threadsafe
+
+	Symbol * pSymPrev = nullptr;
+	Symbol * pSym = nullptr;
+	Symbol ** ppSym = m_hashIstrPSym.Lookup(istrName);
+	if (ppSym)
+	{
+		pSym = *ppSym;
+		if (pSym->m_pStnodDefinition != pStnodDefinition)
+		{
+			pSymPrev = pSym;
+			pSym = nullptr;
+
+			if (fshadow != FSHADOW_ShadowingAllowed)
+			{
+				LexLookup lexlook;
+				if (pSymPrev->m_pStnodDefinition)
+				{
+					lexlook = LexLookup(pErrman->m_pWork, pSymPrev->m_pStnodDefinition->m_lexsp);
+				}
+
+				EmitError(pErrman, lexsp, ERRID_ShadowedDefine, "%s symbol shadows previous type definition at %s(%d, %d)", 
+					istrName.m_pChz,
+					lexlook.m_istrFilename.m_pChz,
+					lexlook.m_iLine,
+					lexlook.m_iCodepoint);
+			}
+		}
+	}
+	
+	if (!pSym)
+	{
+		pSym = PSymNewUnmanaged(istrName, pStnodDefinition, grfsym);
+		(void) m_hashIstrPSym.InresEnsureKeyAndValue(istrName, pSym);
+	}
+
+	pSym->m_pSymPrev = pSymPrev;
+	return pSym;
+}
+
+
+TypeInfo * SymbolTable::PTinBuiltin(const Moe::InString & istr)
+{
+	TypeInfo ** ppTin = m_hashIstrPTinBuiltIn.Lookup(istr);
+	if (ppTin)
+		return *ppTin;
+
+	return nullptr;
+
+	/* // pre-MOEB we looked these up by symbol->m_pTin 
+	if (inres == INRES_Inserted)
+	LexSpan lexsp;
+	auto pSym = PSymLookup(istr, lexsp);
+	if (pSym)
+		return pSym->m_pTin;
+	return nullptr;
+	*/
+}
+
+void SymbolTable::AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo * pTin, GRFSYM grfsym)
+{
+	// NOTE: This function is for built-in types without a lexical order, so we shouldn't be calling it on an ordered table
+	MOE_ASSERT(m_iNestingDepth == 0, "Cannot add built-in types to ordered symbol table.");
+
+	m_arypTinManaged.Append(pTin);
+	const InString & istrName = pTin->m_istrName;
+	if (!MOE_FVERIFY(!istrName.FIsEmpty(), "registering unnamed type"))
+		return;
+
+	TypeInfo ** ppTinValue = nullptr;
+	INRES inres = m_hashIstrPTinBuiltIn.InresEnsureKey(istrName, &ppTinValue);
+	if (inres == INRES_Inserted)
+	{
+		*ppTinValue = pTin;
+
+		auto pSym = PSymEnsure(pErrman, istrName, nullptr, FSYM_IsBuiltIn | FSYM_IsType | FSYM_VisibleWhenNested | grfsym.m_raw);
+		//pSym->m_pTin = pTin;
+	}
+	else
+	{
+		LexSpan lexsp = (pLex) ? LexSpan(pLex) : LexSpan();
+		EmitError(pErrman, lexsp, ERRID_ShadowedDefine, "Two types encountered with same name (%s)", istrName.m_pChz);
+	}
+}
+
+
+void AddSimpleBuiltInType(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, TINK tink, GRFSYM grfsym = FSYM_None)
+{
+	InString istrName = IstrIntern(pChzName);
+	TypeInfo * pTin = MOE_NEW(pSymtab->m_pAlloc, TypeInfo) TypeInfo(
+																istrName,
+																tink);
+
+	pSymtab->AddBuiltInType(pWork->m_pErrman, nullptr, pTin, grfsym);
+}
+
+void AddBuiltInNumeric(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, u32 cBit, GRFNUM grfnum)
+{
+	InString istrName = IstrIntern(pChzName);
+	TypeInfoNumeric * pTinn = MOE_NEW(pSymtab->m_pAlloc, TypeInfoNumeric) TypeInfoNumeric(
+																				istrName,
+																				cBit,
+																				grfnum);
+	pSymtab->AddBuiltInType(pWork->m_pErrman, nullptr, pTinn);
+}
+
+void AddBuiltInAlias(Workspace * pWork, SymbolTable * pSymtab, const char * pChzNameNew, const char * pChzNameOld)
+{
+	InString istrNameNew = IstrIntern(pChzNameNew);
+	InString istrNameOld = IstrIntern(pChzNameOld);
+	TypeInfo *	pTinOld = pSymtab->PTinBuiltin(istrNameOld);
+
+	if (MOE_FVERIFY(pTinOld, "bad built in alias") &&
+		MOE_FVERIFY(pTinOld->m_tink == TINK_Numeric, "unsupported built-in alias type"))
+	{
+		auto pTinnOld = PTinDerivedCast<TypeInfoNumeric *>(pTinOld);
+		auto pTinnNew = MOE_NEW(pSymtab->m_pAlloc, TypeInfoNumeric) 
+							TypeInfoNumeric( istrNameNew, pTinnOld->m_cBit, pTinnOld->m_grfnum);
+
+		pTinnNew->m_pTinUnaliased = (pTinOld->m_pTinUnaliased) ? pTinOld->m_pTinUnaliased : pTinOld;
+		pSymtab->AddBuiltInType(pWork->m_pErrman, nullptr, pTinnNew);
+	}
+}
+
+void AddBuiltInLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, LITK litk, s8 cBit, GRFNUM grfnum)
+{
+	InString istrName = IstrIntern(pChzName);
+	TypeInfoLiteral * pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+	pTinlit->m_istrName = istrName;
+	pSymtab->AddBuiltInType(nullptr, nullptr, pTinlit);
+
+	pTinlit->m_litty.m_litk = litk;
+	pTinlit->m_litty.m_cBit = cBit;
+	pTinlit->m_litty.m_grfnum = grfnum;
+	pTinlit->m_fIsFinalized = true;
+
+	Moe::CDynAry<TypeInfoLiteral *> * paryPTinlit = &pSymtab->m_mpLitkArypTinlit[litk];
+	if (!paryPTinlit->m_pAlloc)
+	{
+		paryPTinlit->SetAlloc(pSymtab->m_pAlloc, Moe::BK_Parse, 8);
+	}
+	paryPTinlit->Append(pTinlit);
+}
+
+
+void SymbolTable::AddBuiltInSymbols(Workspace * pWork)
+{
+	AddSimpleBuiltInType(pWork, this, BuiltIn::g_pChzBool, TINK_Bool);
+	AddSimpleBuiltInType(pWork, this, "_flag", TINK_Flag, FSYM_InternalUseOnly);
+	AddSimpleBuiltInType(pWork, this, "void", TINK_Void);
+	AddSimpleBuiltInType(pWork, this, BuiltIn::g_pChzString, TINK_Type);
+
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU8, 8, FNUM_None);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU16, 16, FNUM_None);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU32, 32, FNUM_None);
+	//AddBuiltInNumeric(pWork, this, "char", 32, FNUM_None);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU64, 64, FNUM_None);
+
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS8, 8, FNUM_IsSigned);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS16, 16, FNUM_IsSigned);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS32, 32, FNUM_IsSigned);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS64, 64, FNUM_IsSigned);
+
+	// BB - This is wrong, it should be based on a runtime parameter for the TARGET's word size, not the compiler's word size
+#if MOE_X64
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzInt, "s64");
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzUint, "u64");
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzSSize, "s64");
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzUSize, "u64");
+#else
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzInt, "s32");
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzUint, "u32");
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzSsize, "s32");
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzUsize, "u32");
+#endif
+
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzF32, 32, FNUM_IsSigned | FNUM_IsFloat);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzF64, 64, FNUM_IsSigned | FNUM_IsFloat);
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzFloat, "f32");
+	//AddBuiltInAlias(pWork, this, BuiltIn::g_pChzDouble, "f64");
+
+	AddBuiltInLiteral(pWork, this, "__bool_Literal", LITK_Bool, 8, FNUM_None);
+	AddBuiltInLiteral(pWork, this, "__u8_Literal", LITK_Numeric, 8, FNUM_None);
+	AddBuiltInLiteral(pWork, this, "__u16_Literal", LITK_Numeric, 16, FNUM_None);
+	AddBuiltInLiteral(pWork, this, "__u32_Literal", LITK_Numeric, 32, FNUM_None);
+	AddBuiltInLiteral(pWork, this, "__u64_Literal", LITK_Numeric, 64, FNUM_None);
+	AddBuiltInLiteral(pWork, this, "__s8_Literal", LITK_Numeric, 8, FNUM_IsSigned);
+	AddBuiltInLiteral(pWork, this, "__s16_Literal", LITK_Numeric, 16, FNUM_IsSigned);
+	AddBuiltInLiteral(pWork, this, "__s32_Literal", LITK_Numeric, 32, FNUM_IsSigned);
+	AddBuiltInLiteral(pWork, this, "__s64_Literal", LITK_Numeric, 64, FNUM_IsSigned);
+	AddBuiltInLiteral(pWork, this, "__f32_Literal", LITK_Numeric, 32, FNUM_IsSigned | FNUM_IsFloat);
+	AddBuiltInLiteral(pWork, this, "__f64_Literal", LITK_Numeric, 64, FNUM_IsSigned | FNUM_IsFloat);
+	AddBuiltInLiteral(pWork, this, "__string_Literal", LITK_String, -1, FNUM_IsSigned);
+	AddBuiltInLiteral(pWork, this, "__char_Literal", LITK_Char, 32, FNUM_IsSigned);
+	AddBuiltInLiteral(pWork, this, "__void_Literal", LITK_Null, -1, FNUM_None);
+}
+
+void DeleteTypeInfo(Alloc * pAlloc, TypeInfo * pTin)
+{
+	pAlloc->MOE_DELETE(pTin);
+}
+
+void SymbolTable::AddManagedSymtab(SymbolTable * pSymtab)
+{
+	MOE_ASSERT(pSymtab->m_pSymtabNextManaged == nullptr, "trying to add managed symtab");
+
+	pSymtab->m_pSymtabNextManaged = m_pSymtabNextManaged;
+	m_pSymtabNextManaged = pSymtab;
+}
+
 #if 0
 // partial instantiation STEX creation
 template <typename T> struct StexAlloc	
@@ -319,6 +1135,61 @@ void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode * pStnodChild)
 	size_t cB = sizeof(STNode *) * m_cpStnodChild;
 	m_apStnodChild = (STNode **)pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(STNode *));
 	memcpy(m_apStnodChild, &pStnodChild, cB);
+}
+
+void STNode::AssertValid()
+{
+	STEXK stexk = StexkFromPark(m_park);
+
+	switch (stexk)
+	{
+	case STEXK_None:												break;
+	case STEXK_For:			((STFor*)this)->AssertValid();			break;
+	case STEXK_Decl:		((STDecl*)this)->AssertValid();			break;
+	case STEXK_Enum:		((STEnum*)this)->AssertValid();			break;
+	case STEXK_Struct:		((STStruct*)this)->AssertValid();		break;
+	case STEXK_Proc:		((STProc*)this)->AssertValid();			break;
+	case STEXK_Value:		((STValue*)this)->AssertValid();		break;
+	case STEXK_Operator:	((STOperator*)this)->AssertValid();		break;
+	default:
+		MOE_ASSERT(false, "missing assert valid for STNode type");
+		break;
+	}
+}
+
+void STFor::AssertValid()
+{
+	MOE_ASSERT(StexkFromPark(m_park) == STEXK_For, "bad park mapping");
+}
+
+void STDecl::AssertValid()
+{
+	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Decl, "bad park mapping");
+}
+
+void STEnum::AssertValid()
+{
+	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Enum, "bad park mapping");
+}
+
+void STStruct::AssertValid()
+{
+	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Struct, "bad park mapping");
+}
+
+void STProc::AssertValid()
+{
+	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Proc, "bad park mapping");
+}
+
+void STValue::AssertValid()
+{
+	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Value, "bad park mapping");
+}
+
+void STOperator::AssertValid()
+{
+	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Operator, "bad park mapping");
 }
 
 static inline bool FIsValidStnod(STNode * pStnod)
@@ -563,7 +1434,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 						MOE_ASSERT(false, "Generic typespec shorthand is WIP");
 #else
 						SLexerLocation lexloc(pLex);
-						CSTNode * pStnodSpec = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
+						CSTNode * pStnodSpec = MOE_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
 
 						pStnodSpec->m_tok = TOK_ColonColon;
 						pStnodSpec->m_park = PARK_GenericTypeSpec;
@@ -600,12 +1471,12 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 					return nullptr;
 
 				SLexerLocation lexloc(pLex);
-				CSTNode * pStnod = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
+				CSTNode * pStnod = MOE_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
 
 				pStnod->m_tok = TOK(pLex->m_tok);
 				pStnod->m_park = PARK_Literal;
 
-				CSTValue * pStval = EWC_NEW(pParctx->m_pAlloc, CSTValue) CSTValue();
+				CSTValue * pStval = MOE_NEW(pParctx->m_pAlloc, CSTValue) CSTValue();
 				pStval->m_stvalk = STVALK_ReservedWord;
 				pStval->m_rword = rword;
 				pStnod->m_pTin = nullptr;
@@ -662,11 +1533,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 
 				auto pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, LexSpan(pLex));
 
-				if (pLex->m_litk == LITK_Float)
-				{
-					pStval->SetF64(pLex->m_g);
-				}
-				else if (pLex->m_litk == LITK_String)
+				if (pLex->m_litk == LITK_String)
 				{
 					pStval->SetIstr(pLex->m_istr);
 				}
@@ -676,7 +1543,16 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 				}
 				else
 				{
-					pStval->SetU64(pLex->m_n);
+					MOE_ASSERT(pLex->m_litk == LITK_Numeric, "unknown literal kind");
+
+					if (pLex->m_grfnum.FIsSet(FNUM_IsFloat))
+					{
+						pStval->SetF64(pLex->m_g);
+					}
+					else
+					{
+						pStval->SetU64(pLex->m_n);
+					}
 				}
 
 				TokNext(pLex);
@@ -867,7 +1743,7 @@ STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 				}
 
 				auto pStnodCall = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ProcedureCall, pLex, lexsp);
-				//STNode * pStnodArgList = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
+				//STNode * pStnodArgList = MOE_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
 				//pStnodArgList->m_tok = TOK(pLex->m_tok);
 				//pStnodArgList->m_park = PARK_ProcedureCall;
 				CDynAry<STNode *> arypStnodArg(pParctx->m_pAlloc, BK_Parse);
@@ -1000,7 +1876,7 @@ STNode * PStnodParseUnaryExpression(ParseContext * pParctx, Lexer * pLex)
 			}
 
 			STOperator * pStop = PStnodAlloc<STOperator>(pParctx->m_pAlloc, PARK_UnaryOp, pLex, lexsp);
-			//CSTNode * pStnodUnary = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
+			//CSTNode * pStnodUnary = MOE_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
 			//pStnodUnary->m_park = PARK_UnaryOp;
 			pStop->m_tok = tokPrev;
 			pStop->m_pStnodLhs = pStnodExp;
@@ -1068,7 +1944,7 @@ STNode * PStnodHandleExpressionRHS(
 	}
 
 	STNode * pStnodExp = PStnodAlloc<STOperator>(pParctx->m_pAlloc, parkExpression, pLex, LexSpan(pLex));
-	//STNode * pStnodExp = EWC_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
+	//STNode * pStnodExp = MOE_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
 	pStnodExp->m_tok = tokExpression;
 
 	STNode * apStnod[] = {pStnodLhs, pStnodRhs};
@@ -1375,7 +2251,7 @@ STNode * PStnodParseCompoundStatement(ParseContext * pParctx, Lexer * pLex, Symb
 		pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_List, pLex, LexSpan(pLex));
 		if (!pSymtab)
 		{
-			pSymtab = PSymtabNew(pParctx->m_pAlloc, pParctx->m_pSymtab, "anon");
+			pSymtab = PSymtabNew(pParctx->m_pAlloc, pParctx->m_pSymtab, IstrIntern("anon"));
 		}
 
 		pStnodList->m_pSymtab = pSymtab;

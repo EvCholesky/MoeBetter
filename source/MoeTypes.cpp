@@ -9,8 +9,8 @@
 
 #ifdef MOE_TRACK_ALLOCATION
 #include "MoeString.h"
-#include "EwcArray.h"
-#include "EwcHash.h"
+#include "MoeArray.h"
+#include "MoeHash.h"
 #endif
 
 namespace Moe
@@ -21,7 +21,7 @@ bool	Alloc::s_fProgramIsShutdown = false;
 
 
 
-class AllocTracker //tag=altrac
+struct AllocTracker //tag=altrac
 {
 public:
 #ifdef MOE_TRACK_ALLOCATION
@@ -64,11 +64,11 @@ public:
 				*pHv = hv;
 
 				int * piEntry;
-				if (m_hashHvIentry.FinsEnsureKey(hv, &piEntry) == FINS_AlreadyExisted)
+				if (m_hashHvIentry.InresEnsureKey(hv, &piEntry) == INRES_AlreadyExisted)
 				{
 					SEntry * pEntry = &m_aryEntry[*piEntry];
 					pEntry->m_cB += cB;
-					pEntry->m_cBHighwater = ewcMax(pEntry->m_cBHighwater, pEntry->m_cB);
+					pEntry->m_cBHighwater = moeMax(pEntry->m_cBHighwater, pEntry->m_cB);
 					MOE_ASSERT(pEntry->m_cLine == cLine, "line mismatch in TrackAlloc");
 					MOE_ASSERT(pEntry->m_bk == bk, "Block kind mismatch in TrackAlloc");
 					++pEntry->m_cAllocations;
@@ -131,8 +131,8 @@ public:
 
 #ifdef MOE_TRACK_ALLOCATION
 	// BB - replace with indexed set
-	EWC::CDynAry<SEntry>	m_aryEntry;
-	EWC::CHash<HV, int>		m_hashHvIentry;
+	Moe::CDynAry<SEntry>	m_aryEntry;
+	Moe::CHash<HV, int>		m_hashHvIentry;
 #endif // MOE_TRACK_ALLOCATION
 };
 
@@ -267,7 +267,7 @@ void EnsureTerminated(StringBuffer * pStrbuf, char ch)
 	if (pStrbuf->m_cBMax <= 0)
 		return;
 
-	iB = ewcMin(iB, pStrbuf->m_cBMax -1);
+	iB = moeMin(iB, pStrbuf->m_cBMax -1);
 
 	auto pChzEnd = &pStrbuf->m_pChzBegin[iB];
 	auto pChzBackup = pChzEnd; // - 1;	// skip the spot our terminator will go
@@ -525,7 +525,7 @@ void StringEditBuffer::PrependCh(const char * pChz, size_t cB)
 	size_t cBPrefix = m_pChzBegin - m_pChzMin;
 	if (cBPrefix < cCh)
 	{
-		Resize(cCh + s_cChPrefixPad, ewcMax<size_t>(s_cChPrefixPad, CB()), m_pChzMax - m_pChzAppend);
+		Resize(cCh + s_cChPrefixPad, moeMax<size_t>(s_cChPrefixPad, CB()), m_pChzMax - m_pChzAppend);
 	}
 
 	m_pChzBegin -= cCh;
@@ -543,7 +543,7 @@ void StringEditBuffer::AppendCh(const char * pChz, size_t cB)
 	size_t cBAvail = m_pChzMax - m_pChzAppend;
 	if (cBAvail < cB) // +1 for null terminator
 	{
-		Resize(s_cChPrefixPad, ewcMax<size_t>(s_cChPrefixPad, CB()), cB + s_cChPrefixPad);
+		Resize(s_cChPrefixPad, moeMax<size_t>(s_cChPrefixPad, CB()), cB + s_cChPrefixPad);
 	}
 
 	CopyAB(pChz, m_pChzAppend, cB);
@@ -600,7 +600,7 @@ void StringEditBuffer::Resize(size_t cBPrefix, size_t cBUsed, size_t cBPostfix)
 	
 	if (pChzBeginOld)
 	{
-		cBOld = ewcMin<size_t>(cBOld, cBUsed);
+		cBOld = moeMin<size_t>(cBOld, cBUsed);
 		CopyAB(pChzBeginOld, m_pChzBegin, cBOld);
 
 		m_pChzAppend = m_pChzBegin + (cBOld -1); // -1 to point at the null terminator.

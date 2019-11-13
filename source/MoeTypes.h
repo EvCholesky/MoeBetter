@@ -510,11 +510,11 @@ inline const char * PChzVerifyAscii(const char * pChz)
 
 // Min/Max/Clamp
 
-template <typename T> T ewcMin(T a, T b)						{ return a < b ? a : b; }
-template <typename T> T ewcMax(T a, T b)						{ return a > b ? a : b; }
-template <typename T> T ewcClamp(T value, T min, T max)			{ return ewcMin(ewcMax(value, min), max); }
-template <typename T> T ewcLerp(T a, T b, f32 gLerp)			{ return a + (b - a) * gLerp; }
-template <typename T> void ewcSwap(T & a, T & b)				{ T temp = a; a = b; b = temp; }
+template <typename T> T moeMin(T a, T b)						{ return a < b ? a : b; }
+template <typename T> T moeMax(T a, T b)						{ return a > b ? a : b; }
+template <typename T> T moeClamp(T value, T min, T max)			{ return moeMin(moeMax(value, min), max); }
+template <typename T> T moeLerp(T a, T b, f32 gLerp)			{ return a + (b - a) * gLerp; }
+template <typename T> void moeSwap(T & a, T & b)				{ T temp = a; a = b; b = temp; }
 
  // system time
 
@@ -522,7 +522,7 @@ typedef f64 Syst;
 
 inline Syst SystInvalid()										{ return -1.0f; }
 inline bool FIsSystValid(Syst syst)								{ return syst >= 0.0f; }
-inline Syst SystMax(Syst systA, Syst systB) 					{ return ewcMax(systA, systB); }
+inline Syst SystMax(Syst systA, Syst systB) 					{ return moeMax(systA, systB); }
 
 // reflect types
 
@@ -538,7 +538,7 @@ enum BK // block kind
 	BK_Workspace,
 	BK_WorkspaceVal,
 	BK_WorkspaceFile,
-	BK_UniqueTypeRegistry,
+	BK_TypeRegistry,
 	BK_Parse,
 	BK_TypeCheck,
 	BK_TypeCheckProcmatch,
@@ -560,6 +560,7 @@ enum BK // block kind
 	BK_ByteCodeCreator,
 	BK_ByteCodeTest,
 	BK_ForeignFunctions,
+	BK_Request,
 };
 
 #define MOE_ALLOC(numBytes, alignment) 			AllocImpl(numBytes, alignment, __FILE__, __LINE__)
@@ -854,7 +855,7 @@ inline u32		HvFromAB(const void * aB, size_t cB)
 						return HvFromPBFVN(aB, cB);
 					}
 
-inline u32		HvFromP(void * pV)
+inline u32		HvFromP(const void * pV)
 					{
 						return HvFromAB(&pV, sizeof(pV));
 					}

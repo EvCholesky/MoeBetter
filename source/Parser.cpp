@@ -1,6 +1,7 @@
 #include "Error.h"
 #include "Generics.inl"
 #include "Parser.h"
+#include "Request.h"
 #include "Workspace.h"
 
 #include <cstdarg>
@@ -45,11 +46,76 @@ enum FARGLIST
 
 MOE_DEFINE_GRF(GRFARGLIST, FARGLIST, u32);
 
+void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> * parypStnodArgList, GRFARGLIST grfarglist = FARGLIST_None);
 STNode * PStnodParseExpression(ParseContext * pParctx, Lexer * pLex, GRFEXP grfexp = FEXP_None);
 STNode * PStnodParseLogicalOrExpression(ParseContext * pParctx, Lexer * pLex);
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex);
+STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex);
 
 static int g_nSymtabVisitId = 1; // visit index used by symbol table collision walks
+
+struct ParkInfo // tag = parkinfo
+{
+	STEXK			m_stexk;
+	const char *	m_pChzAbbrev;
+	const char *	m_pChzLong;
+};
+
+static ParkInfo s_mpParkParkinfo[] =
+{
+	{ STEXK_None,		"err", "Error" },
+	{ STEXK_Value,		"ident", "Identifier" },
+	{ STEXK_Value,		"rword", "Reserved Word" },
+	{ STEXK_None,		"nop", "Nop" },
+	{ STEXK_Value,		"lit",	"Literal" },
+	{ STEXK_Operator,	"addOp", "Additive Operator" },
+	{ STEXK_Operator,	"mulOp", "Multiplicative Operator" },
+	{ STEXK_Operator,	"shiftOp", "Shift Operator" },
+	{ STEXK_Operator,	"relOp", "Relational Operator" },
+	{ STEXK_Operator,	"logicOp", "LogicalAndOr Operator" },
+	{ STEXK_Operator,	"assignOp", "Assignment Operator" },
+	{ STEXK_Operator,	"prefixOp", "Unary Operator" },
+	{ STEXK_Operator,	"postfixOp", "Postfix Unary Operator" },
+	{ STEXK_None,		"uninit", "Uninitializer" },
+	{ STEXK_None,		"cast", "Cast" },
+	{ STEXK_None,		"elem", "Array Element" },			// [array, index]
+	{ STEXK_None,		"memb", "Member Lookup" },			// [struct, child]
+	{ STEXK_None,		"call", "Procedure Call"},			// [procedure, arg0, arg1, ...]
+	{ STEXK_None,		"specStruct", "Specialized Struct" },
+	{ STEXK_None,		"list", "List", },
+	{ STEXK_None,		"params", "Parameter List" },
+	{ STEXK_None,		"expList", "Expression List" },
+	{ STEXK_None,		"genType", "Generic Type Spec" },
+	{ STEXK_None,		"if" ,"If" },
+	{ STEXK_None,		"else", "Else" },
+	{ STEXK_None,		"aryDecl", "Array Decl" },
+	{ STEXK_None,		"refDecl", "Reference Decl" },
+	{ STEXK_None,		"qualDecl", "Qualifier Decl" },
+	{ STEXK_None,		"procDecl", "Procedure Reference Decl" },
+	{ STEXK_Decl,		"decl", "Decl" },
+	{ STEXK_Decl,		"constDecl", "Constant Decl" },
+	{ STEXK_None,		"typedef", "Typedef" },
+	{ STEXK_None,		"procDef", "Procedure Definition" },
+	{ STEXK_None,		"enumDef", "Enum Definition" },
+	{ STEXK_None,		"strucDef", "Struct Definition" },
+	{ STEXK_None,		"enumConst", "Enum Constant" },
+	{ STEXK_None,		"varArg", "Variadic Argument" },
+	{ STEXK_Decl,		"cpdLit", "CompoundLiteral" },
+	//{ STEXK_None,		"aryLit", "Array Literal" },
+	{ STEXK_None,		"argLabel", "Argument Label" },
+	{ STEXK_None,		"genDecl", "Generic Decl" },
+	{ STEXK_None,		"genStruct", "Generic Struct Spec" },
+	{ STEXK_None,		"typeArg", "Type Argument" },
+	{ STEXK_None,		"baked", "Baked Value" },
+};
+
+MOE_CASSERT(MOE_DIM(s_mpParkParkinfo) == PARK_Max, "missing ParkInfo");
+
+
+ErrorManager * ParseContext::PErrman() const
+{
+	return m_pWork->m_pErrman; 
+}
 
 const char * PChzFromLitk(LITK litk)
 {
@@ -74,62 +140,34 @@ const char * PChzFromLitk(LITK litk)
 	return s_mpLitkPChz[litk];
 }
 
-const char * PChzFromPark(PARK park)
+const char * PChzAbbrevFromPark(PARK park)
 {
-	static const char * s_mpParkPChz[] =
-	{
-		"Error",
-		"Identifier",
-		"Reserved Word",
-		"Nop",
-		"Literal",
-		"Additive Operator",
-		"Multiplicative Operator",
-		"Shift Operator",
-		"Relational Operator",
-		"LogicalAndOr Operator",
-		"Assignment Operator",
-		"Unary Operator",
-		"Postfix Unary Operator",
-		"Uninitializer",
-		"Cast",
-		"Array Element",		// [array, index]
-		"Member Lookup",		// [struct, child]
-		"Procedure Call",		// [procedure, arg0, arg1, ...]
-		"Specialized Struct",
-		"List",
-		"Parameter List",
-		"Expression List",
-		"Generic Type Spec",
-		"If",
-		"Else",
-		"Array Decl",
-		"Reference Decl",
-		"Qualifier Decl",
-		"Procedure Reference Decl",
-		"Decl",
-		"Typedef",
-		"Constant Decl",
-		"Procedure Definition",
-		"Enum Definition",
-		"Struct Definition",
-		"Enum Constant",
-		"Variadic Argument",
-		"Array Literal",
-		"Argument Label",
-		"Generic Decl",
-		"Generic Struct Spec",
-		"Type Argument",
-		"Baked Value"
-	};
-	MOE_CASSERT(MOE_DIM(s_mpParkPChz) == PARK_Max, "missing PARK string");
 	if (park == PARK_Nil)
 		return "Nil";
 
 	if ((park < PARK_Nil) | (park >= PARK_Max))
 		return "Unknown PARK";
 
-	return s_mpParkPChz[park];
+	return s_mpParkParkinfo[park].m_pChzAbbrev;
+}
+
+const char * PChzLongFromPark(PARK park)
+{
+	if (park == PARK_Nil)
+		return "Nil";
+
+	if ((park < PARK_Nil) | (park >= PARK_Max))
+		return "Unknown PARK";
+
+	return s_mpParkParkinfo[park].m_pChzLong;
+}
+
+STEXK StexkFromPark(PARK park)
+{
+	if ((park <= PARK_Nil) | (park >= PARK_Max))
+		return STEXK_Nil;
+
+	return s_mpParkParkinfo[park].m_stexk;
 }
 
 const char * PChzFromQualk(QUALK qualk)
@@ -149,7 +187,6 @@ const char * PChzFromQualk(QUALK qualk)
 	return s_mpQualkPChz[qualk];
 }
 
-
 void AppendFlagNames(Moe::StringBuffer * pStrbuf, GRFQUALK grfqualk, const char * pChzSpacer)
 {
 	const char * pChzSpacerCur = "";
@@ -165,82 +202,21 @@ void AppendFlagNames(Moe::StringBuffer * pStrbuf, GRFQUALK grfqualk, const char 
 }
 
 
-STEXK StexkFromPark(PARK park)
+void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFSEW grfsew)
 {
-	static const STEXK s_mpParkStexk[] = 
-	{
-		STEXK_None,			// PARK_Error,
-		STEXK_Value,		// PARK_Identifier,
-		STEXK_Value,		// PARK_ReservedWord,
-		STEXK_None,			// PARK_Nop,
-		STEXK_Value,		// PARK_Literal,
-		STEXK_Operator,		// PARK_AdditiveOp,
-		STEXK_Operator,		// PARK_MultiplicativeOp,
-		STEXK_Operator,		// PARK_ShiftOp,
-		STEXK_Operator,		// PARK_RelationalOp,
-		STEXK_Operator,		// PARK_LogicalAndOrOp,
-		STEXK_Operator,		// PARK_AssignmentOp,
-		STEXK_Operator,		// PARK_UnaryOp,
-		STEXK_Operator,		// PARK_PostfixUnaryOp,	// postfix increment, decrement
-		STEXK_None,			// PARK_Uninitializer,
-		STEXK_None,		// PARK_Cast,
-		STEXK_None,		// PARK_ArrayElement,		// [array, index]
-		STEXK_None,		// PARK_MemberLookup,		// [struct, child]
-		STEXK_None,		// PARK_ProcedureCall,		// [procedure, arg0, arg1, ...]
-		STEXK_None,		// PARK_SpecializedStruct,	// swapped in during typecheck for ProcedureCall nodes that turn out to be instantiated structs SArray(33)
-		STEXK_None,		// PARK_List,				// declarations used by structs
-		STEXK_None,		// PARK_ParameterList,		// comma separated declarations used by argument lists
-		STEXK_None,		// PARK_ExpressionList,	// list of expressions, used by compound literals - doesn't error on rhs only values.
-		STEXK_None,		// PARK_GenericTypeSpec,	// list of types to specify a generic procedure/struct instantiation
-		STEXK_None,		// PARK_If,
-		STEXK_None,		// PARK_Else,
-		STEXK_None,		// PARK_ArrayDecl,
-		STEXK_None,		// PARK_ReferenceDecl,		// used in type specification, not used for the unary address-of operator
-		STEXK_None,		// PARK_QualifierDecl,
-		STEXK_None,		// PARK_ProcedureReferenceDecl,
-		STEXK_None,		// PARK_Decl,
-		STEXK_None,		// PARK_Typedef,
-		STEXK_None,		// PARK_ConstantDecl,
-		STEXK_None,		// PARK_ProcedureDefinition,
-		STEXK_None,		// PARK_EnumDefinition,
-		STEXK_None,		// PARK_StructDefinition,
-		STEXK_None,		// PARK_EnumConstant,
-		STEXK_None,		// PARK_VariadicArg,
-		STEXK_Decl,		// PARK_CompoundLiteral,	// array/struct literal
-		STEXK_None,		// PARK_ArgumentLabel,
-		STEXK_None,		// PARK_GenericDecl,
-		STEXK_None,		// PARK_GenericStructSpec,		// 
-		STEXK_None,		// PARK_TypeArgument,			// raw type, specified to a generic instantiation SFoo(:int)
-		STEXK_None,		// PARK_BakedValue,
-	};
+	AppendChz(pStrbuf, ":");
 
-	MOE_CASSERT(MOE_DIM(s_mpParkStexk) == PARK_Max, "missing PARK STEXK");
-
-	if ((park <= PARK_Nil) | (park >= PARK_Max))
-		return STEXK_Nil;
-
-	return s_mpParkStexk[park];
-}
-
-void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFDBGSTR grfdbgstr = FDBGSTR_None)
-{
 	if (pTin == nullptr)
 	{
-		switch (park)
+		if (park != PARK_Nil)
 		{
-		case PARK_ExpressionList:
-		case PARK_List:				AppendChz(pStrbuf, "{}");		return;
-		case PARK_Identifier:		AppendChz(pStrbuf, "Ident");	return;
-		case PARK_ParameterList:	AppendChz(pStrbuf, "Params");	return; 
-		case PARK_VariadicArg:		AppendChz(pStrbuf, "..");		return;
-		case PARK_Nop:				AppendChz(pStrbuf, "Nop");		return;
-		case PARK_Uninitializer:	AppendChz(pStrbuf, "---");		return;
-		case PARK_AssignmentOp:		AppendChz(pStrbuf, "=");		return;
-		case PARK_ConstantDecl:		AppendChz(pStrbuf, "constdecl");return;
-		case PARK_Decl:				AppendChz(pStrbuf, "decl");		return;
-		case PARK_ArrayDecl:		AppendChz(pStrbuf, "arydecl");	return;
-		default:					AppendChz(pStrbuf, "unk");		return;
+			FormatChz(pStrbuf, "null(%s)", PChzAbbrevFromPark(park));
 		}
+		else
+		{
+			AppendChz(pStrbuf, "null");
+		}
+		return;
 	}
 
 	switch (pTin->m_tink)
@@ -248,17 +224,17 @@ void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFD
 	case TINK_Qualifier:
 		{
 			auto pTinqual = (TypeInfoQualifier *)pTin;
-			const char * pChzSpacer = (grfdbgstr.FIsSet(FDBGSTR_NoWhitespace)) ? "." : " ";
+			const char * pChzSpacer = (grfsew.FIsSet(FSEW_NoWhitespace)) ? "." : " ";
 			AppendFlagNames(pStrbuf, pTinqual->m_grfqualk, pChzSpacer);
 			AppendChz(pStrbuf, pChzSpacer);
-			PrintTypeInfo(pStrbuf, pTinqual->m_pTin, park, grfdbgstr);
+			WriteTypeInfoSExpression(pStrbuf, pTinqual->m_pTin, park, grfsew);
 			return;
 		} break;
 	case TINK_Pointer:		
 		{
 			auto pTinptr = (TypeInfoPointer*)pTin;
 			AppendChz(pStrbuf, PChzFromTok(TOK_Reference));
-			PrintTypeInfo(pStrbuf, pTinptr->m_pTin, park, grfdbgstr);
+			WriteTypeInfoSExpression(pStrbuf, pTinptr->m_pTin, park, grfsew);
 			return;
 		}
 	case TINK_Array:
@@ -275,7 +251,7 @@ void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFD
 				break;
 			}
 
-			PrintTypeInfo(pStrbuf, pTinary->m_pTin, park, grfdbgstr);
+			WriteTypeInfoSExpression(pStrbuf, pTinary->m_pTin, park, grfsew);
 			return;
 		}
 
@@ -285,10 +261,10 @@ void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFD
 
 			if (pTinlit->m_litty.m_litk == LITK_Enum)
 			{
-				PrintTypeInfo(pStrbuf, pTinlit->m_pTinSource, PARK_Nil, grfdbgstr);
+				WriteTypeInfoSExpression(pStrbuf, pTinlit->m_pTinSource, PARK_Nil, grfsew);
 				AppendChz(pStrbuf, " ");
 			}
-			else if (!grfdbgstr.FIsSet(FDBGSTR_LiteralSize))
+			else if (!grfsew.FIsSet(FSEW_LiteralSize))
 			{
 				AppendChz(pStrbuf, PChzFromLitk(pTinlit->m_litty.m_litk));
 				AppendChz(pStrbuf, " ");
@@ -296,7 +272,7 @@ void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFD
 				if (pTinlit->m_litty.m_litk == LITK_Compound && pTinlit->m_pTinSource)
 				{
 					AppendChz(pStrbuf, "(");
-					PrintTypeInfo(pStrbuf, pTinlit->m_pTinSource, PARK_Nil, grfdbgstr);
+					WriteTypeInfoSExpression(pStrbuf, pTinlit->m_pTinSource, PARK_Nil, grfsew);
 					AppendChz(pStrbuf, ")");
 				}
 			}
@@ -319,7 +295,7 @@ void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFD
 			size_t cCommas = (pTinproc->FHasVarArgs()) ? cpTin : cpTin - 1;
 			for (size_t ipTin = 0; ipTin < cpTin; ++ipTin)
 			{
-				PrintTypeInfo(pStrbuf, pTinproc->m_arypTinParams[ipTin], PARK_Nil, grfdbgstr);
+				WriteTypeInfoSExpression(pStrbuf, pTinproc->m_arypTinParams[ipTin], PARK_Nil, grfsew);
 
 				if (ipTin < cCommas)
 				{
@@ -337,7 +313,7 @@ void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFD
 			cpTin = pTinproc->m_arypTinReturns.C();
 			for (size_t ipTin = 0; ipTin < cpTin; ++ipTin)
 			{
-				PrintTypeInfo(pStrbuf, pTinproc->m_arypTinReturns[ipTin], PARK_Nil, grfdbgstr);
+				WriteTypeInfoSExpression(pStrbuf, pTinproc->m_arypTinReturns[ipTin], PARK_Nil, grfsew);
 			}
 
 			if (pTinproc->m_grftinproc.FIsSet(FTINPROC_IsForeign))
@@ -356,7 +332,7 @@ void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFD
 			{
 				PrintGenmapAnchors(pStrbuf, pTinstruct->m_pGenmap);
 			}
-			else if (pTinstruct->FHasGenericParams() && grfdbgstr.FIsSet(FDBGSTR_ShowStructArgs))
+			else if (pTinstruct->FHasGenericParams() && grfsew.FIsSet(FSEW_ShowStructArgs))
 			{
 				auto pStnodStruct = pTinstruct->m_pStnodStruct;
 				STStruct * pStstruct = nullptr;
@@ -390,8 +366,7 @@ void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFD
 
 						if (pStdecl->m_pStnodType)
 						{
-							auto istrType = IstrFromTypeInfo(pStdecl->m_pStnodType->m_pTin);
-							FormatChz(pStrbuf, ":%s", istrType.m_pChz);
+							WriteTypeInfoSExpression(pStrbuf, pStdecl->m_pStnodType->m_pTin, pStdecl->m_pStnodType->m_park);
 						}
 					}
 					AppendChz(pStrbuf, pChzClose);
@@ -407,7 +382,7 @@ void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFD
 		}
 	case TINK_Numeric:
 		{
-			if (!grfdbgstr.FIsSet(FDBGSTR_UseSizedNumerics))
+			if (!grfsew.FIsSet(FSEW_UseSizedNumerics))
 			{
 				AppendChz(pStrbuf, pTin->m_istrName.m_pChz);
 				return;
@@ -450,7 +425,7 @@ void PrintTypeInfo(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFD
 	}
 }
 
-
+/*
 void PrintLiteral(Moe::StringBuffer * pStrbuf, STNode * pStnodLit)
 {
 	auto pStvalLit = PStnodRtiCast<STValue * >(pStnodLit);
@@ -463,14 +438,195 @@ void PrintLiteral(Moe::StringBuffer * pStrbuf, STNode * pStnodLit)
 	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStvalLit->m_nUnsigned);				return;
 	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStvalLit->m_nSigned);				return;
 	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStvalLit->m_g);						return;
-	case STVALK_ReservedWord:	FormatChz(pStrbuf, "%s", pStvalLit->m_istr.m_pChz);				return;
 	default:
 		MOE_ASSERT(false, "unknown literal %s", PChzFromTok(pStnodLit->m_tok));
 		return;
 	}
 }
 
-void PrintStnodName(Moe::StringBuffer * pStrbuf, STNode * pStnod)
+void WriteAstValue(Moe::StringBuffer * pStrbuf, STNode * pStnod)
+{
+	auto pStval = PStnodRtiCast<STValue *>(pStnod);
+	if (!pStval)
+	{
+		AppendChz(pStrbuf, "novalue");
+		return;
+	}
+
+	auto  pTinlit = PTinRtiCast<TypeInfoLiteral *>(pStnod->m_pTin);
+	auto stvalk = pStval->m_stvalk;
+	if (pTinlit)
+	{
+		switch (pTinlit->m_litty.m_litk)
+		{
+			case LITK_Char:		// fallthrough
+			case LITK_Enum:		// fallthrough
+			case LITK_Numeric:	
+			{
+				if (pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsFloat))
+				{
+					stvalk = STVALK_Float;
+				}
+				else
+				{
+					stvalk = (pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsSigned)) ? STVALK_SignedInt : STVALK_UnsignedInt;
+				}
+			} break;
+			case LITK_String:	stvalk = STVALK_String;																break;
+			case LITK_Bool:		FormatChz(pStrbuf, "%s", (pStval->m_nUnsigned == 0) ? "false" : "true");			return;
+			case LITK_Null:		AppendChz(pStrbuf, "null");															return;
+			case LITK_Compound:
+				{
+#ifdef MOEB_LATER
+					AppendChz(pStrbuf, "(");
+
+					auto pStdecl = PStmapRtiCast<CSTDecl *>(pStnod->m_pStmap);
+					if (!EWC_FVERIFY(pStdecl && pStdecl->m_iStnodInit >= 0, "array literal with no values"))
+						break;
+
+					auto pStnodList = pStnod->PStnodChild(pStdecl->m_iStnodInit);
+					for (int ipStnod = 0; ipStnod < pStnodList->CStnodChild(); ++ipStnod)
+					{
+						PrintStval(pStrbuf, pStnodList->PStnodChild(ipStnod));
+						if (ipStnod + 1 < pStnodList->CStnodChild())
+						{
+							AppendChz(pStrbuf, ", ");
+						}
+					}
+
+					AppendChz(pStrbuf, ")");
+#endif
+				} break;
+		}
+	}
+
+	switch (stvalk)
+	{
+	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStval->m_g);												return;
+	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStval->m_nSigned);										return;
+	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStval->m_nUnsigned);									return;
+	case STVALK_String:			FormatChz(pStrbuf, "'%s'", pStval->m_istr.m_pChz);									return;
+	}
+}
+*/
+
+bool FTryWriteValueSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod)
+{
+	auto pStval = PStnodRtiCast<STValue *>(pStnod);
+	if (!pStval)
+		return false;
+
+	auto  pTinlit = PTinRtiCast<TypeInfoLiteral *>(pStnod->m_pTin);
+	auto stvalk = pStval->m_stvalk;
+	if (pTinlit)
+	{
+		switch (pTinlit->m_litty.m_litk)
+		{
+			case LITK_Char:		// fallthrough
+			case LITK_Enum:		// fallthrough
+			case LITK_Numeric:	
+			{
+				if (pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsFloat))
+				{
+					stvalk = STVALK_Float;
+				}
+				else
+				{
+					stvalk = (pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsSigned)) ? STVALK_SignedInt : STVALK_UnsignedInt;
+				}
+			} break;
+			case LITK_String:	
+				stvalk = STVALK_String;																
+				break;
+
+			case LITK_Bool:		
+				FormatChz(pStrbuf, "%s", (pStval->m_nUnsigned == 0) ? "false" : "true");			
+				return true;
+
+			case LITK_Null:		
+				AppendChz(pStrbuf, "null");															
+				return true;
+
+			case LITK_Compound:
+				{
+#ifdef MOEB_LATER
+					AppendChz(pStrbuf, "(");
+
+					auto pStdecl = PStmapRtiCast<CSTDecl *>(pStnod->m_pStmap);
+					if (!EWC_FVERIFY(pStdecl && pStdecl->m_iStnodInit >= 0, "array literal with no values"))
+						break;
+
+					auto pStnodList = pStnod->PStnodChild(pStdecl->m_iStnodInit);
+					for (int ipStnod = 0; ipStnod < pStnodList->CStnodChild(); ++ipStnod)
+					{
+						PrintStval(pStrbuf, pStnodList->PStnodChild(ipStnod));
+						if (ipStnod + 1 < pStnodList->CStnodChild())
+						{
+							AppendChz(pStrbuf, ", ");
+						}
+					}
+
+					AppendChz(pStrbuf, ")");
+					break;
+#else
+					return false;
+#endif
+				} 
+		}
+	}
+
+	switch (stvalk)
+	{
+	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStval->m_g);								break;
+	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStval->m_nSigned);						break;
+	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStval->m_nUnsigned);					break;
+	case STVALK_String:			FormatChz(pStrbuf, "'%s'", pStval->m_istr.m_pChz);					break;
+	default: 
+		return false;
+	}
+
+	return true;
+}
+
+void WriteParseKindSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, GRFSEW grfsew)
+{
+	if (!pStnod)
+	{
+		AppendChz(pStrbuf, "null");
+		return;
+	}
+
+	FormatChz(pStrbuf, "%s", PChzAbbrevFromPark(pStnod->m_park));
+}
+
+void WriteParseSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, GRFSEW grfsew)
+{
+	if (!pStnod)
+	{
+		AppendChz(pStrbuf, "null");
+		return;
+	}
+
+	if (FTryWriteValueSExpression(pStrbuf, pStnod))
+		return;
+
+	if (pStnod->Stexk() == STEXK_Operator)
+	{
+		FormatChz(pStrbuf, "op%s", PChzFromTok(pStnod->m_tok));
+		return;
+	}
+
+	if (pStnod->m_pTin)
+	{
+		WriteTypeInfoSExpression(pStrbuf, pStnod->m_pTin, pStnod->m_park, grfsew);
+		return;
+	}
+
+	WriteParseKindSExpression(pStrbuf, pStnod, grfsew);
+}
+
+/*
+void WriteAstName(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 {
 	if (!pStnod)
 	{
@@ -531,35 +687,117 @@ void PrintStnodName(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 	default:						AppendChz(pStrbuf, "error");				return;
 	}
 }
+*/
 
-InString IstrFromTypeInfo(TypeInfo * pTin)
+void WriteStnodFromSewk(StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, GRFSEW grfsew)
 {
-	if (!pTin)
+	switch(sewk)
 	{
-		return IstrIntern("null");
+	case SEWK_Park:
+		{
+			WriteParseKindSExpression(pStrbuf, pStnod, grfsew);
+		} break;
+	case SEWK_Parse:
+		{
+			WriteParseSExpression(pStrbuf, pStnod, grfsew);
+		} break;
+	case SEWK_Value:
+		{
+			if(!FTryWriteValueSExpression(pStrbuf, pStnod))
+			{
+				AppendChz(pStrbuf, "_");
+			}
+		} break;
+	case SEWK_TypeInfo:	
+		{
+			if (pStnod->m_pTin == nullptr && (pStnod->m_park == PARK_Identifier || pStnod->m_park == PARK_ReservedWord))
+			{
+				(void)FTryWriteValueSExpression(pStrbuf, pStnod);
+			}
+			else
+			{
+				WriteTypeInfoSExpression(pStrbuf, pStnod->m_pTin, pStnod->m_park, grfsew);
+			}
+		} break;
+	default:
+		MOE_ASSERT(false, "unhandled SExpression Kind");
 	}
 
+	if (grfsew.FIsSet(FSEW_LiteralSize))
+	{
+		if (pStnod->m_pTin && pStnod->m_pTin->m_tink == TINK_Literal)
+		{
+			const LiteralType & litty = ((TypeInfoLiteral *)pStnod->m_pTin)->m_litty;
+
+			FormatChz(pStrbuf, ":%s", PChzFromLitk(litty.m_litk));
+
+			if (litty.m_cBit >= 0)
+			{
+				FormatChz(pStrbuf, "%d", litty.m_cBit);
+			}
+		}
+		grfsew.Clear(FSEW_LiteralSize);
+	}
+}
+
+void WriteSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, GRFSEW grfsew)
+{
+	if (pStnod == nullptr)
+	{
+		AppendChz(pStrbuf, "null");
+		return;
+	}
+
+	auto cpStnodChild = pStnod->m_cpStnodChild;
+	if (cpStnodChild <= 0)
+	{
+		WriteStnodFromSewk(pStrbuf, pStnod, sewk, grfsew);
+		return;
+	}
+
+	AppendChz(pStrbuf, "(");
+	WriteStnodFromSewk(pStrbuf, pStnod, sewk, grfsew);
+
+	for (size_t ipStnod = 0; ipStnod < cpStnodChild; ++ipStnod)
+	{
+		if (MOE_FVERIFY(CBFree(*pStrbuf) > 1, "debug string overflow"))
+		{
+			*pStrbuf->m_pChzAppend++ = ',';
+			*pStrbuf->m_pChzAppend++ = ' ';
+		}
+		if (MOE_FVERIFY(CBFree(*pStrbuf) > 0, "debug string overflow"))
+		{
+			STNode * pStnodChild = pStnod->m_apStnodChild[ipStnod];
+			WriteSExpression(pStrbuf, pStnodChild, sewk, grfsew);
+		}
+	}
+
+	if (MOE_FVERIFY(CBFree(*pStrbuf) > 1, "debug string overflow"))
+	{
+		*pStrbuf->m_pChzAppend++ = ')';
+	}
+
+	EnsureTerminated(pStrbuf, '\0');
+}
+
+
+InString IstrSExpression(TypeInfo * pTin, GRFSEW grfsew)
+{
 	char aCh[1024];
 	Moe::StringBuffer strbuf(aCh, MOE_DIM(aCh));
 
-	PrintTypeInfo(&strbuf, pTin, PARK_Nil);
+	WriteTypeInfoSExpression(&strbuf, pTin, PARK_Nil);
 	return IstrInternCopy(aCh);
 }
 
-InString IstrFromStnod(STNode * pStnod)
+InString IstrSExpression(STNode * pStnod, SEWK sewk, GRFSEW grfsew)
 {
-	if (!pStnod)
-	{
-		return IstrIntern("null");
-	}
-
 	char aCh[1024];
 	Moe::StringBuffer strbuf(aCh, MOE_DIM(aCh));
 
-	PrintStnodName(&strbuf, pStnod);
+	WriteSExpression(&strbuf, pStnod, sewk, grfsew);
 	return IstrInternCopy(aCh);
 }
-
 
 void PushSymbolTable(ParseContext * pParctx, SymbolTable * pSymtab)
 {
@@ -1137,59 +1375,124 @@ void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode * pStnodChild)
 	memcpy(m_apStnodChild, &pStnodChild, cB);
 }
 
-void STNode::AssertValid()
+bool STNode::FCheckIsValid(ErrorManager * pErrman)
 {
-	STEXK stexk = StexkFromPark(m_park);
-
+	STEXK stexk = Stexk();
 	switch (stexk)
 	{
-	case STEXK_None:												break;
-	case STEXK_For:			((STFor*)this)->AssertValid();			break;
-	case STEXK_Decl:		((STDecl*)this)->AssertValid();			break;
-	case STEXK_Enum:		((STEnum*)this)->AssertValid();			break;
-	case STEXK_Struct:		((STStruct*)this)->AssertValid();		break;
-	case STEXK_Proc:		((STProc*)this)->AssertValid();			break;
-	case STEXK_Value:		((STValue*)this)->AssertValid();		break;
-	case STEXK_Operator:	((STOperator*)this)->AssertValid();		break;
+	case STEXK_None:														break;
+	case STEXK_For:			return ((STFor*)this)->FCheckIsValid(pErrman);
+	case STEXK_Decl:		return ((STDecl*)this)->FCheckIsValid(pErrman);
+	case STEXK_Enum:		return ((STEnum*)this)->FCheckIsValid(pErrman);
+	case STEXK_Struct:		return ((STStruct*)this)->FCheckIsValid(pErrman);
+	case STEXK_Proc:		return ((STProc*)this)->FCheckIsValid(pErrman);
+	case STEXK_Value:		return ((STValue*)this)->FCheckIsValid(pErrman);
+	case STEXK_Operator:	return ((STOperator*)this)->FCheckIsValid(pErrman);
 	default:
 		MOE_ASSERT(false, "missing assert valid for STNode type");
 		break;
 	}
+
+	return true;
 }
 
-void STFor::AssertValid()
+bool STFor::FCheckIsValid(ErrorManager * pErrman)
 {
-	MOE_ASSERT(StexkFromPark(m_park) == STEXK_For, "bad park mapping");
+	MOE_ASSERT(Stexk() == STEXK_For, "bad park mapping");
+	return true;
 }
 
-void STDecl::AssertValid()
+bool STDecl::FCheckIsValid(ErrorManager * pErrman)
 {
-	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Decl, "bad park mapping");
+#ifdef MOEB_LATER 
+	- notes need to be revised affter we have a new compound decl approach
+
+	// Decl structure has become a bit complicated...
+	// ParameterList { Decl, Decl, Decl{ childDecl[3] } }
+	// ParameterLists contain declarations and declarations can contain compound (ie parent/child declarations)
+	//   Compound declarations only allow one level deep and are there to support comma separated declarations 
+	//   and initialization to multiple return types.
+
+	// n1, n2:s32, g1: f32;	// would be one compound decl
+	// parent decls cannot have a type.
+	// child decls cannot have initializers - the initializer should come from the parent.
+#endif
+
+	MOE_ASSERT(Stexk() == STEXK_Decl, "bad park mapping");
+
+	bool fMissingTypeSpecifier;
+	bool fIsValid = true;
+	if (1) //m_pStnodChildMin == nullptr)
+	{
+		fMissingTypeSpecifier = (m_pStnodType == nullptr);
+	}
+	else // compound decl
+	{
+#ifdef MOEB_LATER
+		if (pStdecl->m_iStnodType != -1)
+			ParseError(pParctx, pLex, "Internal error, compound decl should not specify a type");
+
+		fMissingTypeSpecifier = false;
+		for (int iStnodChild = pStdecl->m_iStnodChildMin; iStnodChild != pStdecl->m_iStnodChildMax; ++iStnodChild)
+		{
+			auto pStdeclChild = PStmapDerivedCast<CSTDecl *>(pStnodDecl->PStnodChild(iStnodChild)->m_pStmap);
+			MOE_ASSERT(pStdeclChild->m_iStnodIdentifier != -1, "declaration missing identifier");
+
+			if (pStdeclChild->m_iStnodInit != -1)
+				ParseError(pParctx, pLex, "Internal error, child decl should not specify an initializer");
+
+			MOE_ASSERT(pStdeclChild->m_iStnodChildMin == -1 && pStdeclChild->m_iStnodChildMax == -1, "nested children not supported");
+
+			fMissingTypeSpecifier |= (pStdeclChild->m_iStnodType == -1);
+		}
+#endif
+	}
+	
+	//auto pStnodInit = pStnodDecl->PStnodChildSafe(pStdecl->m_iStnodInit);
+	if (fMissingTypeSpecifier & (m_pStnodInit == nullptr))
+	{
+		EmitError(pErrman, m_lexsp, ERRID_TypeSpecifierExpected, "Expected type specifier or initialization");
+	}
+	if (m_pStnodInit && m_pStnodInit->m_park == PARK_Uninitializer)
+	{
+		if (fMissingTypeSpecifier)
+		{
+			EmitError(pErrman, m_lexsp, ERRID_UninitializerNotAllowed, "Uninitializer not allowed without specified type");
+			fIsValid = false;
+		}
+	}
+
+	return fIsValid;
 }
 
-void STEnum::AssertValid()
+bool STEnum::FCheckIsValid(ErrorManager * pErrman)
 {
-	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Enum, "bad park mapping");
+	MOE_ASSERT(Stexk() == STEXK_Enum, "bad park mapping");
+	return true;
 }
 
-void STStruct::AssertValid()
+bool STStruct::FCheckIsValid(ErrorManager * pErrman)
 {
-	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Struct, "bad park mapping");
+	MOE_ASSERT(Stexk() == STEXK_Struct, "bad park mapping");
+	return true;
 }
 
-void STProc::AssertValid()
+bool STProc::FCheckIsValid(ErrorManager * pErrman)
 {
-	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Proc, "bad park mapping");
+	MOE_ASSERT(Stexk() == STEXK_Proc, "bad park mapping");
+	return true;
 }
 
-void STValue::AssertValid()
+bool STValue::FCheckIsValid(ErrorManager * pErrman)
 {
-	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Value, "bad park mapping");
+	MOE_ASSERT(Stexk() == STEXK_Value, "bad park mapping");
+	return true;
 }
 
-void STOperator::AssertValid()
+bool STOperator::FCheckIsValid(ErrorManager * pErrman)
 {
-	MOE_ASSERT(StexkFromPark(m_park) == STEXK_Operator, "bad park mapping");
+	MOE_ASSERT(Stexk() == STEXK_Operator, "bad park mapping");
+	return true;
 }
 
 static inline bool FIsValidStnod(STNode * pStnod)
@@ -1284,6 +1587,172 @@ void ExpectEndOfStatement(ParseContext * pParctx, Lexer * pLex, const char * pCh
 		EmitError(pParctx, LexSpan(pLex), ERRID_ExpectedEndOfLine, "Expected end-of-line or ';' before '%s' %s", strUnexpected.m_pChz, aB);
 	}
 }
+STNode * PStnodParsePointerDecl(ParseContext * pParctx, Lexer * pLex)
+{
+	// handle the mis-lexing of '&&' as one token here
+	if (pLex->m_tok == TOK_DoubleReference)
+	{
+		SplitToken(pLex, TOK_Reference);
+	}
+
+	if (FConsumeToken(pLex, TOK_Reference))
+	{
+		auto pStnod = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ReferenceDecl, pLex, LexSpan(pLex));
+		return pStnod;
+	}
+
+	return nullptr;
+}
+
+STNode * PStnodParseQualifierDecl(ParseContext * pParctx, Lexer * pLex)
+{
+	if (pLex->m_tok == TOK_Identifier && (pLex->m_istr == RWord::g_pChzConst || pLex->m_istr == RWord::g_pChzInArg))
+	{
+		auto pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_QualifierDecl, pLex, LexSpan(pLex));
+		pStval->SetIstr(pLex->m_istr);
+
+		TokNext(pLex);	
+		return pStval;
+	}
+
+	return nullptr;
+}
+
+STNode * PStnodParseArrayDecl(ParseContext * pParctx, Lexer * pLex, GRFPDECL grfpdecl)
+{
+	if (FConsumeToken(pLex, TOK('[')))
+	{
+		auto pStnodArray = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ArrayDecl, pLex, LexSpan(pLex));
+
+		if (FConsumeToken(pLex, TOK_PeriodPeriod))
+		{
+			;
+		}
+		else if (pLex->m_tok != TOK(']'))
+		{
+#ifdef MOEB_LATER
+			STNode * pStnodDim = PStnodParseBakedConstant(pParctx, pLex, PARK_Decl);
+#else
+			STNode * pStnodDim = nullptr;
+#endif
+			if (pStnodDim)
+			{
+				auto pSymtab = pParctx->m_pSymtab;
+
+				// BB - do we need to spoof a pStnodType here?
+				pStnodDim->m_pTin = pSymtab->PTinBuiltin(IstrIntern(BuiltIn::g_pChzInt));
+			}
+			else
+			{
+				pStnodDim = PStnodParseExpression(pParctx, pLex);
+			}
+
+			if (pStnodDim)
+			{
+				pStnodArray->CopyChildArray(pParctx->m_pAlloc, pStnodDim);
+			}
+		}
+
+		FExpect(pParctx, pLex, TOK(']'));
+		return pStnodArray;
+	}
+	return nullptr;
+}
+
+STNode * PStnodParseTypeSpecifier(ParseContext * pParctx, Lexer * pLex, const char * pChzErrorContext, GRFPDECL grfpdecl)
+{
+	STNode * pStnod = PStvalParseIdentifier(pParctx, pLex);
+	if (pStnod)
+	{
+		if (FConsumeToken(pLex, TOK('(')))
+		{
+			SymbolTable * pSymtabParent = pParctx->m_pSymtab;
+
+			auto pStnodStructInst = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_GenericStructSpec, pLex, LexSpan(pLex));
+			
+			CDynAry<STNode *> arypStnodArg(pParctx->m_pAlloc, BK_Parse);
+			arypStnodArg.Append(pStnod);
+
+			ParseArgumentList(pParctx, pLex, &arypStnodArg, FARGLIST_AllowGenericValues);
+			pStnodStructInst->CopyChildArray(pParctx->m_pAlloc, arypStnodArg.A(), arypStnodArg.C());
+
+			FExpect(pParctx, pLex, TOK(')'));
+			return pStnodStructInst;
+
+		}
+		else if (pLex->m_tok == TOK('.'))
+		{
+			while (FConsumeToken(pLex, TOK('.')))
+			{
+				LexSpan lexsp(pLex);
+
+				TOK tokPrev = TOK(pLex->m_tok);
+				auto pStvalIdent = PStvalParseIdentifier(pParctx, pLex);
+				if (!pStvalIdent)
+				{
+					EmitError(pParctx, lexsp, ERRID_MissingIdentifier, "Expected identifier after '.' before %s", PChzFromTok(tokPrev));
+				}
+				else
+				{
+					auto pStop = PStnodAlloc<STOperator>(pParctx->m_pAlloc, PARK_MemberLookup, pLex, lexsp);
+					pStop->m_tok = TOK('.');
+					pStop->m_pStnodLhs = pStnod;
+					pStop->m_pStnodRhs = pStvalIdent;
+					pStnod = pStop;
+				}
+			}
+		}
+		return pStnod;
+	}
+
+#ifdef MOEB_LATER
+	pStnod = PStnodParseProcedureReferenceDecl(pParctx, pLex);
+	if (pStnod)
+		return pStnod;
+
+	pStnod = PStnodParseGenericTypeDecl(pParctx, pLex, grfpdecl);
+	if (pStnod)
+		return pStnod;
+#endif
+
+	pStnod = PStnodParsePointerDecl(pParctx, pLex);
+	if (!pStnod)
+	{
+		pStnod = PStnodParseQualifierDecl(pParctx, pLex);
+	}
+
+	if (!pStnod)
+	{
+		pStnod = PStnodParseArrayDecl(pParctx, pLex, grfpdecl);
+	}
+	if (!pStnod)
+		return nullptr;
+
+	STNode * pStnodChild = PStnodParseTypeSpecifier(pParctx, pLex, pChzErrorContext, grfpdecl);
+	if (!pStnodChild)
+	{
+		EmitError(pParctx, LexSpan(pLex), ERRID_TypeSpecParseFail, "Expected type type name before '%s'", PChzFromTok(TOK(pLex->m_tok)));
+		// BB - Assume int to try to continue compilation? ala C?
+	}
+	else
+	{
+		MOE_ASSERT(!pStnod->FHasChildArray(), "child array should be empty");
+		pStnod->CopyChildArray(pParctx->m_pAlloc, pStnodChild);
+
+#ifdef MOEB_NO_TYPES_IN_PARSE
+		if (auto pTinptr = PTinRtiCast<TypeInfoPointer *>(pStnod->m_pTin))
+		{
+			pTinptr->m_pTin = pStnodChild->m_pTin;
+		}
+		else if (auto pTinary = PTinRtiCast<TypeInfoArray *>(pStnod->m_pTin))
+		{
+			pTinary->m_pTin = pStnodChild->m_pTin;
+		}
+#endif
+	}
+
+	return pStnod;
+}
 
 STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex)
 {
@@ -1299,7 +1768,7 @@ STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex)
 
 	STValue * pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, LexSpan(pLex));
 	pStval->SetIstr(pLex->m_istr);
-	pStval->AssertValid();
+	(void) pStval->FCheckIsValid(pParctx->PErrman());
 
 	if (istrIdent.m_pChz[0] == '#')
 	{
@@ -1324,7 +1793,7 @@ STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, const ch
 
 	STValue * pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_ReservedWord, pLex, LexSpan(pLex));
 	pStval->SetIstr(pLex->m_istr);
-	pStval->AssertValid();
+	(void)pStval->FCheckIsValid(pParctx->PErrman());
 	pStval->m_tok = TOK(pLex->m_tok);
 
 	TokNext(pLex);
@@ -1569,9 +2038,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 					// parse type specifier
 					TokNext(pLex); // consume ':'
 					
-#ifdef MOEB_LATER
 					pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "compound literal", FPDECL_AllowBakedTypes | FPDECL_AllowBakedValues);
-#endif
 
 					if (!FIsValidStnod(pStnodType))
 					{
@@ -1619,8 +2086,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 	}
 }
 
-//void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, STNode * pStnodArgList, GRFARGLIST grfarglist = FARGLIST_None)
-void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> * parypStnodArgList, GRFARGLIST grfarglist = FARGLIST_None)
+void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> * parypStnodArgList, GRFARGLIST grfarglist)
 {
 	while (1)
 	{
@@ -1904,11 +2370,7 @@ STNode * PStnodParseCastExpression(ParseContext * pParctx, Lexer * pLex)
 
 	FExpect(pParctx, pLex, TOK('('));
 
-#ifdef MOEB_LATER
-	//auto pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "cast", FPDECL_None);
 	pStdecl->m_pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "cast", FPDECL_None);
-	//pStdecl->m_iStnodType = pStnodCast->IAppendChild(pStnodType);
-#endif
 
 	FExpect(pParctx, pLex, TOK(')'));
 
@@ -2287,6 +2749,251 @@ STNode * PStnodParseCompoundStatement(ParseContext * pParctx, Lexer * pLex, Symb
 	return pStnodList;
 }
 
+STNode * PStnodParseParameter(
+	ParseContext * pParctx,
+	Lexer * pLex,
+	SymbolTable * pSymtab,
+	GRFPDECL grfpdecl)
+{
+
+	LexSpan lexsp(pLex);
+	if (pLex->m_tok == TOK_PeriodPeriod && grfpdecl.FIsSet(FPDECL_AllowVariadic))
+	{
+		TokNext(pLex);
+
+		auto pStnodVarArgs = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_VariadicArg, pLex, lexsp);
+		pStnodVarArgs->m_tok = TOK_PeriodPeriod;
+		return pStnodVarArgs;
+	}
+
+#if MOEB_LATER
+	auto pStnodUsing = PStnodParseUsingStatement(pParctx, pLex, pSymtab);
+#else
+	STNode * pStnodUsing = nullptr;
+#endif
+	if (pStnodUsing)
+	{
+		if (grfpdecl.FIsSet(FPDECL_AllowUsing))
+		{
+			return pStnodUsing;
+		}
+
+		EmitError(pParctx, lexsp, ERRID_UsingStatementNotAllowed, "Using statement not allowed in this context");
+		pParctx->m_pAlloc->MOE_DELETE(pStnodUsing);
+		return nullptr;
+	}
+
+	STNode * pStnodReturn = nullptr;
+	STNode * pStnodCompound = nullptr;
+	STNode * pStnodInit = nullptr;
+	bool fAllowCompoundDecl = grfpdecl.FIsSet(FPDECL_AllowCompoundDecl);
+	bool fAllowBakedValues = grfpdecl.FIsSet(FPDECL_AllowBakedValues);
+	bool fAllowConstants = grfpdecl.FIsSet(FPDECL_AllowConstants);
+	bool fIsUnnamed = false;
+
+	Lexer lexPeek = *pLex;
+	int cIdent = 0;
+	while (1)
+	{
+		if (fAllowBakedValues)
+		{
+			(void)FConsumeToken(&lexPeek, TOK_Generic); // ignore baked constant marks
+		}
+
+		if (lexPeek.m_tok != TOK_Identifier)
+		{
+			if (lexPeek.m_tok == TOK(':') && grfpdecl.FIsSet(FPDECL_AllowUnnamed))
+			{
+				fIsUnnamed = true;
+				break;
+			}
+			return nullptr;
+		}
+
+		InString istrIdent = lexPeek.m_istr;
+
+		++cIdent;
+		TokNext(&lexPeek);
+
+		if (fAllowCompoundDecl && FConsumeToken(&lexPeek, TOK(',')))
+			continue;
+
+		if (FConsumeIdentifier(pLex, IstrIntern(RWord::g_pChzImmutable)))
+			break;
+
+		if ((lexPeek.m_tok == TOK(':')) | (lexPeek.m_tok == TOK_ColonEqual))
+			break;
+
+		return nullptr;
+	}
+
+	int cTypeNeeded = 0;
+	STDecl * pStdecl = nullptr;
+	do
+	{
+		bool fIsBakedConstant = false;
+		if (fAllowBakedValues && FConsumeToken(pLex, TOK_Generic))
+		{
+			fIsBakedConstant = true;
+		}
+
+		if (pStnodInit)
+			EmitError(pParctx, LexSpan(pLex), ERRID_CompoundDeclNotAllowed, "Initializer must come after all comma separated declarations");
+
+		STNode * pStnodIdent = nullptr; 
+		if (!fIsUnnamed)
+		{
+			pStnodIdent = PStvalParseIdentifier(pParctx, pLex);
+			if (!MOE_FVERIFY(pStnodIdent, "parse failed during decl peek"))
+				return nullptr;
+		}
+
+		pStdecl = PStnodAlloc<STDecl>(pParctx->m_pAlloc, PARK_Decl, pLex, lexsp);
+
+		//auto pStdecl = pStnodDecl->PStmapEnsure<CSTDecl>(pParctx->m_pAlloc);
+		pStdecl->m_fIsBakedConstant = fIsBakedConstant;
+		++cTypeNeeded;
+
+		if (pStnodReturn)
+		{
+#ifdef MOEB_LATER // compound decls need a rewrite
+
+			if (!pStnodCompound)
+			{
+				pStnodCompound = PStnodAlloc<STDecl>(pParctx->m_pAlloc, PARK_Decl, pLex, lexsp);
+
+				//auto pStdeclCompound = pStnodCompound->PStmapEnsure<CSTDecl>(pParctx->m_pAlloc);
+
+				pStdeclCompound->m_iStnodChildMin = pStnodCompound->IAppendChild(pStnodReturn);
+				pStnodReturn = pStnodCompound;
+			}
+
+			auto pStdeclCompound = PStmapDerivedCast<CSTDecl *>(pStnodCompound->m_pStmap);
+			pStdeclCompound->m_iStnodChildMax = pStnodCompound->IAppendChild(pStnodDecl) + 1;
+#else
+			EmitError(pParctx, lexsp, ERRID_FeatureNotImplemented, "CompundDecls need rewrite");
+#endif
+		}
+		else
+		{
+			pStnodReturn = pStdecl;
+		}
+
+		if (!fIsUnnamed)
+		{
+			// NOTE: May not resolve symbols (symtab is null if this is a procedure reference)
+			if (pSymtab)
+			{
+				FSHADOW fshadow = (grfpdecl.FIsSet(FPDECL_AllowShadowing)) ? FSHADOW_ShadowingAllowed : FSHADOW_NoShadowing;
+				pStnodIdent->m_pSymbase = pSymtab->PSymEnsure(pParctx->m_pWork->m_pErrman, IstrFromIdentifier(pStnodIdent), pStdecl, FSYM_None, fshadow);
+			}
+
+			pStdecl->m_pStnodIdentifier = pStnodIdent;
+		}
+
+
+		if (FConsumeIdentifier(pLex, IstrIntern(RWord::g_pChzImmutable)))
+		{
+			if (pStnodCompound)
+				EmitError(pParctx, LexSpan(pLex), ERRID_CompoundDeclNotAllowed, "Comma separated declarations not supported for immutable values");
+
+			if (!fAllowConstants)
+			{
+				EmitError(pParctx, LexSpan(pLex), ERRID_ImmutableNotAllowed, "immutable declarations not supported in parameter list");
+			}
+			else
+			{
+				pStdecl->m_park = PARK_ConstantDecl;
+			}
+		}
+
+		if (FConsumeToken(pLex, TOK_ColonEqual))
+		{
+			pStnodInit = PStnodParseExpression(pParctx, pLex);
+		}
+		else if (FConsumeToken(pLex, TOK(':')))
+		{
+			if (pStnodCompound)
+			{
+				MOE_ASSERT(cTypeNeeded, "No compound children?");
+
+#ifdef MOEB_LATER
+				auto pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "declaration", grfpdecl);
+
+				auto pStdeclCompound = PStmapDerivedCast<CSTDecl *>(pStnodCompound->m_pStmap);
+				int iStnodChild = pStdeclCompound->m_iStnodChildMax - cTypeNeeded;
+				int iChild = 0;
+				for ( ; iStnodChild < pStdeclCompound->m_iStnodChildMax; ++iStnodChild)
+				{
+					auto pStnodChild = pStnodCompound->PStnodChild(iStnodChild);
+
+					auto pStdeclChild = PStmapDerivedCast<CSTDecl *>(pStnodChild->m_pStmap);
+					MOE_ASSERT(pStdeclChild->m_iStnodType == -1, "shouldn't set the type child twice");
+
+					auto pStnodTypeCopy = (iChild == 0) ? pStnodType : PStnodCopy(pParctx->m_pAlloc, pStnodType);
+					++iChild;
+
+					pStdeclChild->m_iStnodType = pStnodChild->IAppendChild(pStnodTypeCopy);
+				}
+#endif
+
+				cTypeNeeded = 0;
+			}
+			else
+			{
+				auto pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "declaration", grfpdecl);
+				pStdecl->m_pStnodType = pStnodType;
+				cTypeNeeded = 0;
+			}
+
+			if (FConsumeToken(pLex, TOK('=')))
+			{
+				if (FConsumeToken(pLex, TOK_TripleMinus))
+				{
+					if (!grfpdecl.FIsSet(FPDECL_AllowUninitializer))
+					{
+						EmitError(pParctx, LexSpan(pLex), ERRID_UninitializerNotAllowed, "--- uninitializer not allowed in parameter lists");
+					}
+					else
+					{
+						pStnodInit = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_Uninitializer, pLex, LexSpan(pLex));
+						pStnodInit->m_tok = TOK_TripleMinus;
+					}
+				}
+				else
+				{
+					pStnodInit = PStnodParseExpression(pParctx, pLex);
+					if (!pStnodInit)
+						EmitError(pParctx, LexSpan(pLex), ERRID_InitialValueExpected, "initial value expected before %s", PChzCurrentToken(pLex));
+				}
+			}
+		}
+
+	} while (fAllowCompoundDecl && FConsumeToken(pLex, TOK(',')));
+
+	auto pStdeclReturn = PStnodDerivedCast<STDecl *>(pStnodReturn);
+	pStdeclReturn->m_pStnodInit = pStnodInit;
+
+	//ValidateDeclaration(pParctx, pLex, pStnodReturn, grfpdecl);
+	MOE_ASSERT(pStdecl->m_pStnodIdentifier != nullptr || grfpdecl.FIsSet(FPDECL_AllowUnnamed), "declaration missing identifier");
+	(void)pStdeclReturn->FCheckIsValid(pParctx->PErrman());
+	return pStnodReturn;
+}
+
+
+STNode * PStnodParseDecl(ParseContext * pParctx, Lexer * pLex)
+{
+	// stand alone declaration statement
+
+	GRFPDECL grfpdecl = FPDECL_AllowUninitializer | FPDECL_AllowCompoundDecl | FPDECL_AllowConstants | FPDECL_AllowUsing | FPDECL_AllowShadowing;
+	auto * pStnod =  PStnodParseParameter(pParctx, pLex, pParctx->m_pSymtab, grfpdecl);
+	if (!pStnod)
+		return nullptr;
+
+	ExpectEndOfStatement(pParctx, pLex);
+	return pStnod;
+}
+
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 {
 	STNode * pStnod = PStnodParseCompoundStatement(pParctx, pLex, nullptr);
@@ -2296,21 +3003,22 @@ STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 	// Note - Declarations and definition checks need to come first because they peek ahead to see 
 	//  if an identifier has ::, : or :=
 
-#ifdef MOEB_LATER 
 	pStnod = PStnodParseDecl(pParctx, pLex);
 	if (pStnod)
 		return pStnod;
 
+#ifdef MOEB_LATER 
 	pStnod = PStnodParseDefinition(pParctx, pLex);
 	if (pStnod)
 		return pStnod;
+#endif
 
 	pStnod = PStnodParseExpressionStatement(pParctx, pLex);
 	if (pStnod)
 		return pStnod;
 
 	// handle label for switches or loops
-
+#ifdef MOEB_LATER
 	STIdentifier * pStidentLabel = nullptr;
 
 	if (FConsumeToken(pLex, TOK_Label))
@@ -2380,7 +3088,7 @@ bool FParseImportDirectives(ParseContext * pParctx, Lexer * pLex)
 	TokNext(pLex);
 	if (pLex->m_tok == TOK_Literal && pLex->m_litk == LITK_String)
 	{
-		(void) pWork->PFileEnsure(pLex->m_istr.m_pChz, filek);
+		(void) pWork->PFileEnsure(pLex->m_istr, filek);
 
 		TokNext(pLex);
 		return true;
@@ -2402,8 +3110,12 @@ bool FIsLegalTopLevel(PARK park)
 		(park == PARK_StructDefinition);
 }
 
-void ParseTopLevel(ParseContext * pParctx, Lexer * pLex, MoeQuery * pMq)
+void ExecuteParseJob(Compilation * pComp, Workspace * pWork, Job * pJob)
 {
+	auto pParjd = (ParseJobData *)pJob->m_pVData;
+	ParseContext * pParctx = &pParjd->m_parctx;
+	Lexer * pLex = &pParjd->m_lex;
+
 	// load the first token
 	TokNext(pLex);
 
@@ -2435,11 +3147,35 @@ void ParseTopLevel(ParseContext * pParctx, Lexer * pLex, MoeQuery * pMq)
 					pParctx,
 					pLex,
 					"Unexpected statement at global scope '%s'",
-					PChzFromPark(pStnod->m_park));
+					PChzLongFromPark(pStnod->m_park));
 			}
 		}
 #endif
 	}
+}
+
+Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename)
+{
+	Alloc * pAlloc = pWork->m_pAlloc;
+	ParseJobData * pParjd = MOE_NEW(pAlloc, ParseJobData) ParseJobData(pAlloc, pWork);
+
+	InitLexer(&pParjd->m_lex, pChzBody, &pChzBody[CBChz(pChzBody)-1], pParjd->m_aChStorage, sizeof(pParjd->m_aChStorage));
+
+	pParjd->m_pChzBody = pChzBody;
+	pParjd->m_lex.m_istrFilename = istrFilename;
+
+	// not thread safe?
+	//PushSymbolTable(, pWork->m_pSymtab);
+
+	ParseContext * pParctx = &pParjd->m_parctx;
+	MOE_ASSERT(pParctx->m_pSymtab == nullptr, "expected null top-level symbol table");
+	pParctx->m_pSymtab = pWork->m_pSymtab;
+
+	auto pJob = PJobAllocate(pComp, pParjd);
+	pJob->m_pFnUpdate = ExecuteParseJob;
+	EnqueueJob(pComp, pJob);
+
+	return pJob;
 }
 
 

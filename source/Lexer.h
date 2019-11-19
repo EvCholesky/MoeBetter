@@ -207,6 +207,7 @@ struct LexSpan // tag = lexsp
 
 void InitLexer(Lexer * pLex, const char * pChInput, const char * pChInputEnd, char * aChStorage, u32 cChStorage);
 bool FConsumeToken(Lexer * pLex, TOK tok);
+bool FConsumeIdentifier(Lexer * pLex, Moe::InString istr);
 int TokNext(Lexer * pLex);
 
 void SkipToToken(Lexer * pLex, TOK const * const aTok, int cTok, GRFLEXER grflexer);

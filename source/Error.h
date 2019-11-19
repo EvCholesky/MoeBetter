@@ -64,6 +64,11 @@ enum ERRID
 	ERRID_ExpectedExpression		= 1028,
 	ERRID_MissingIdentifier			= 1029,
 	ERRID_CStyle					= 1030,
+	ERRID_UninitializerNotAllowed	= 1031,
+	ERRID_ImmutableNotAllowed		= 1032,
+	ERRID_CompoundDeclNotAllowed	= 1033,
+	ERRID_InitialValueExpected		= 1034,
+	ERRID_TypeSpecifierExpected		= 1035,
 	ERRID_ParserMax					= 2000,
 
 	ERRID_TypeCheckMin				= ERRID_ParserMax,

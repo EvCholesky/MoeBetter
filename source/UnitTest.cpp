@@ -911,7 +911,7 @@ TESTRES TestresRunUnitTest(
 
 		if (!fHasExpectedErr && testres == TESTRES_Success && !FIsEmptyString(pChzTypeCheckExpected))
 		{
-			WriteDebugStringForEntries(&work, pCh, pChMax, FDBGSTR_Type | FDBGSTR_LiteralSize | FDBGSTR_NoWhitespace);
+			WriteDebugStringForEntries(&work, pCh, pChMax, FDBGSTR_Type | FSEW_LiteralSize | FSEW_NoWhitespace);
 
 			size_t cB = CBChz(pChzTypeCheckExpected);
 			char * aChExpected = (char *)work.m_pAlloc->MOE_ALLOC(cB, 1);

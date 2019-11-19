@@ -125,13 +125,12 @@ struct Workspace	// tag = work
 	char *				PChzLoadFile(const Moe::InString & istrFilename, Moe::Alloc * pAlloc);
 	void				AppendEntry(STNode * pStnod, SymbolTable * pSymtab);
 
-	File *				PFileEnsure(const char * pChzFile, FILEK filek);
+	File *				PFileEnsure(const Moe::InString istrFilename, FILEK filek);
 	File *				PFileLookup(const char * pChzFile, FILEK filek);
 	Moe::CHash<HV, int> * 
 						PHashHvIPFile(FILEK filek);
 
 	Moe::Alloc *						m_pAlloc;
-	ParseContext *						m_pParctx;
 	BlockListEntry 						m_blistEntry;
 	Moe::CDynAry<WorkspaceEntry *> 		m_arypEntryChecked;		// order in which entry points were successfully type checked
 

@@ -23,14 +23,14 @@
 // Requests: RQK and source builds up one or more RequestResults
 // Query: symbol search + m_treesRequired
 
+struct Compilation;
+struct Job;
 struct STNode;
 struct Symbol;
 struct TypeInfo;
 struct Workspace;
 
 // Outward facing API
-namespace Moe
-{
 
 enum RQK // REQuest Kind
 {
@@ -91,24 +91,24 @@ struct RequestResult // tag = rqres
 // BB - how do we manage the lifetime of these result objects??
 struct RequestResultSymbol : public RequestResult // tag = rqressym
 {
-	CDynAry<Symbol *>	m_arypSym;
+	Moe::CDynAry<Symbol *>		m_arypSym;
 };
 
 struct RequestResultType : public RequestResult // tag = rqrestin
 {
-	CDynAry<TypeInfo *>	m_arypTin;
+	Moe::CDynAry<TypeInfo *>	m_arypTin;
 };
 
 struct RequestResultAst : public RequestResult // rqresst
 {
-	CDynAry<STNode *>	m_arypStnod;
+	Moe::CDynAry<STNode *>		m_arypStnod;
 };
 
 // Internal Queries 
 
 struct Query
 {
-	CDynAry <Request>			m_aryRq;
+	Moe::CDynAry <Request>		m_aryRq;
 };
 
 // indices
@@ -134,19 +134,47 @@ struct RequestSource
 	Moe::InString	m_istr;
 };
 
+void AddRequest(Compilation * pComp, Request * pRq);
+void AddSourceFile(Compilation * pComp, const char * pChzFilename);
+int CRqresServiceRequest(Compilation * pComp, Workspace * pWork);
+void PrintResult(Compilation * pComp, int iRqres, char * aCh, size_t cChMax);
+
+typedef void (*PFnJobUpdate)(Compilation * pComp, Workspace * pWork, Job *);
+typedef void (*PFnJobDelete)(Job *);
+
+struct Job
+{
+					Job()
+					:m_cJobUnfinished(0)
+					,m_pFnUpdate(nullptr)
+					,m_pFnDelete(nullptr)
+					,m_pVData(nullptr)
+						{ ; }
+
+	int				m_cJobUnfinished;
+	PFnJobUpdate	m_pFnUpdate;
+	PFnJobDelete	m_pFnDelete;
+	void *			m_pVData;
+};
+
+Job * PJobAllocate(Compilation * pComp, void * pVData);
+void EnqueueJob(Compilation * pComp, Job * pJob);
+void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJob);
+
+
+
 struct Compilation // tag = comp
 {
 								Compilation(Moe::Alloc * pAlloc);
 
-	CDynAry<RequestSource>				m_aryRqsrc;
-	CDynAry<Request>					m_aryRq;
-	CDynAry<RequestResult *>			m_arypRqres;
+	Moe::CDynAry<RequestSource>			m_aryRqsrc;
+	Moe::CDynAry<Request>				m_aryRq;
+	Moe::CDynAry<RequestResult *>		m_arypRqres;
+
+	Moe::CDynAry<Job>					m_aryJob;
+	Moe::CDynAry<Job *>					m_arypJobQueued;	// jobs waiting to be executed
 };
 
-void AddRequest(Compilation * pComp, Request * pRq);
-void AddSourceFile(Compilation * pComp, const char * pChzFilename);
-int CRqresServiceRequest(Workspace * pWork, Compilation * pComp);
-void PrintResult(Compilation * pComp, int iRqres, char * aCh, size_t cChMax);
 
 /*
 struct SReqEntry    // tag = reqent
@@ -168,4 +196,3 @@ void RequestCompilation(SCompilation * pComp, REQK reqk);
 SReqSymbol * PReqsymLookup(const char * pChzName);
 SReqEntry * PReqentTypeOf(SReqSymbol * pReqsym);
 */
-} // namespace Moe

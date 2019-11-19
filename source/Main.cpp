@@ -202,12 +202,27 @@ static CommandLineManager::Option s_optHelp("-help", "List the compiler options"
 static CommandLineManager::Option s_optNoLink("-nolink", "Skip the linker step");
 static CommandLineManager::Option s_optUseLLD("-useLLD", "Use the LLVM linker LLD");
 static CommandLineManager::Option s_optRelease("-release", "Generate optimized code and link against optimized local libraries\n");
-static CommandLineManager::Option s_optAst("-printAST", "print the post parse AST", CommandLineManager::OPTK_String);
+static CommandLineManager::Option s_optAst("-printAST", "print the post parse AST");
 
+extern bool FTestLexing();
 
 
 int main(int cpChzArg, const char * apChzArg[])
 {
+	static const int s_cBString = 100 * 1024;
+	static const int s_cBHeap = 1000 * 1024;
+	static const int s_cBError = 100 * 1024;
+
+	{
+		u8 aBString[s_cBString];
+		Alloc allocString(aBString, s_cBString);
+		Moe::StaticInitStrings(&allocString);
+
+		FTestLexing();
+
+		Moe::StaticShutdownStrings(&allocString);
+	}
+
 #ifdef MOE_DEBUG
 	printf("Warning: Compiler was built in debug mode and may be very slow.\n"); 
 #endif
@@ -226,18 +241,14 @@ int main(int cpChzArg, const char * apChzArg[])
 		PCmdlineman()->PrintHelp();
 	}
 
-	static const int s_cBString = 100 * 1024;
-	static const int s_cBHeap = 1000 * 1024;
-	static const int s_cBError = 100 * 1024;
-
 	u8 aBString[s_cBString];
-	Alloc allocString(aBString, sizeof(aBString));
+	Alloc allocString(aBString, s_cBString);
 
 	u8 * aBHeap = new u8[s_cBHeap];
-	Alloc allocHeap(aBHeap, sizeof(aBHeap));
+	Alloc allocHeap(aBHeap, s_cBHeap);
 
 	u8 * aBError = new u8[s_cBError];
-	Alloc allocError(aBError, sizeof(aBError));
+	Alloc allocError(aBError, s_cBError);
 
 	if (pCmdlineman->FHasCommand(s_optTest))
 	{
@@ -253,7 +264,9 @@ int main(int cpChzArg, const char * apChzArg[])
 	}
 	else if (pCmdlineman->m_pChzFilename)
 	{
-		Moe::Compilation comp(&allocHeap);
+		Moe::StaticInitStrings(&allocString);
+
+		Compilation comp(&allocHeap);
 		AddSourceFile(&comp, pCmdlineman->m_pChzFilename);
 
 		if (CommandLineManager::Command * pCom = pCmdlineman->PComLookup(s_optAst))
@@ -262,8 +275,6 @@ int main(int cpChzArg, const char * apChzArg[])
 			RequestSymbol(&rq, RQK_FindAst, IstrIntern(pCom->m_pChzValue));
 			AddRequest(&comp, &rq);
 		}
-
-		Moe::StaticInitStrings(&allocString);
 
 		ErrorManager errman(&allocError);
 		Workspace work(&allocHeap, &errman);
@@ -284,7 +295,7 @@ int main(int cpChzArg, const char * apChzArg[])
 #endif
 
 		int cRqres;
-		if (cRqres = CRqresServiceRequest(&work, &comp))
+		if (cRqres = CRqresServiceRequest(&comp, &work))
 		{
 			char aCh[1024];
 			for (int iRqres = 0; iRqres < cRqres; ++iRqres)

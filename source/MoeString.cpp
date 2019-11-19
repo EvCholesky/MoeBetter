@@ -53,6 +53,7 @@ u32 HvFromPChzLowercaseFVN(const char * pV, size_t cB)
     return hv;
 }
 
+#define CHECK_FOR_STRING_COLLISION 1
 
 namespace Moe
 {
@@ -78,7 +79,9 @@ public:
 						else
 						{
 							++pEntry->m_cRef;
-							MOE_ASSERT(!pEntry->m_fIsManaged && pEntry->m_pChz == pChz, "bad table lookup in CStringTable");
+#if CHECK_FOR_STRING_COLLISION
+							MOE_ASSERT(Moe::FAreChzEqual(pEntry->m_pChz, pChz), "bad table lookup in StringTable");
+#endif
 						}
 
 						return pEntry->m_pChz;
@@ -99,7 +102,9 @@ public:
 						else
 						{
 							++pEntry->m_cRef;
-							MOE_ASSERT(pEntry->m_fIsManaged && Moe::FAreChzEqual(pEntry->m_pChz, pChz, cB-1), "bad table lookup in CStringTable");
+#if CHECK_FOR_STRING_COLLISION
+							MOE_ASSERT(Moe::FAreChzEqual(pEntry->m_pChz, pChz, cB-1), "bad table lookup in CStringTable");
+#endif
 						}
 
 						return pEntry->m_pChz;
@@ -144,14 +149,15 @@ const char * PChzIntern(const char * pChz)
 {
 	// intern this string into the table, it's responsible for it's own lifetime
 
-	return s_pStrtab->PChzIntern(pChz, Moe::CCh(pChz), Moe::HvFromPChz(pChz));
+	return s_pStrtab->PChzIntern(pChz, Moe::CBChz(pChz), Moe::HvFromPChz(pChz));
 }
 
 const char * PChzInternCopy(const char * pChz, size_t cB = 0)
 {
 	if (cB == 0)
 	{
-		return s_pStrtab->PChzInternCopy(pChz, Moe::CCh(pChz), Moe::HvFromPChz(pChz, cB));
+		size_t cBChz = Moe::CBChz(pChz);
+		return s_pStrtab->PChzInternCopy(pChz, cBChz, Moe::HvFromPChz(pChz, cBChz));
 	}
 
 	return s_pStrtab->PChzInternCopy(pChz, cB, Moe::HvFromPChz(pChz, cB));
@@ -159,7 +165,7 @@ const char * PChzInternCopy(const char * pChz, size_t cB = 0)
 
 const char * PChzInternCopy(const char * pChz)
 {
-	return s_pStrtab->PChzInternCopy(pChz, Moe::CCh(pChz), Moe::HvFromPChz(pChz));
+	return s_pStrtab->PChzInternCopy(pChz, Moe::CBChz(pChz), Moe::HvFromPChz(pChz));
 }
 
 /*
@@ -207,3 +213,9 @@ Moe::InString IstrInternCopy(const char * pChz, size_t cB)
 	return instr;
 }
 
+Moe::InString IstrInternCopy(const char * pChzBegin, const char * pChzEnd)
+{
+	Moe::InString instr;
+	instr.m_pChz = Moe::PChzInternCopy(pChzBegin, pChzEnd - pChzBegin + 1);
+	return instr;
+}

@@ -115,3 +115,4 @@ namespace Moe
 
 Moe::InString IstrIntern(const char * pChz);
 Moe::InString IstrInternCopy(const char * pChz, size_t cB = 0);
+Moe::InString IstrInternCopy(const char * pChzBegin, const char * pChzEnd);

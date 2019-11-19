@@ -23,6 +23,8 @@
 #include "Symbol.h"
 #include "TypeInfo.h"
 
+struct Compilation;
+struct Job;
 struct MoeQuery;
 struct SymbolTable;
 struct SymbolBase;
@@ -67,8 +69,8 @@ enum PARK : s8 // PARse Kind
 	PARK_ProcedureReferenceDecl,
 	PARK_Decl,
 //	PARK_CompoundDecl,		// comma separated declarations - specialized AST node for future tuple return value support.
-	PARK_Typedef,
 	PARK_ConstantDecl,
+	PARK_Typedef,
 	PARK_ProcedureDefinition,
 	PARK_EnumDefinition,
 	PARK_StructDefinition,
@@ -119,21 +121,6 @@ enum STREES : s8
 
 	MOE_MAX_MIN_NIL(STREES)
 };
-
-enum FDBGSTR // DeBuG STRing Flags
-{
-	FDBGSTR_Name				= 0x1,
-	FDBGSTR_Type				= 0x2,
-	FDBGSTR_LiteralSize			= 0x4,
-	FDBGSTR_UseSizedNumerics	= 0x8, // resolve type aliasing for simple integers - should this be all type aliasing?
-	FDBGSTR_NoWhitespace		= 0x10,
-	FDBGSTR_Values				= 0x20,
-	FDBGSTR_ShowStructArgs		= 0x40,
-
-	FDBGSTR_None				= 0x0,
-	FDBGSTR_All					= 0x3F,
-};
-MOE_DEFINE_GRF(GRFDBGSTR, FDBGSTR, u32);
 
 enum FSTNOD
 {
@@ -201,8 +188,12 @@ public:
 	void					SetChildArray(STNode ** apStnodChild, size_t cpStnodChild);
 	void					CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t cpStnodChild);
 	void					CopyChildArray(Moe::Alloc * pAlloc, STNode * apStnodChild);
+	bool					FHasChildArray() const
+								{ return m_cpStnodChild > 0; }
+	STEXK					Stexk() const
+								{ return StexkFromPark(m_park); }
 
-	void					AssertValid();
+	bool					FCheckIsValid(ErrorManager * pErrman);
 
 	TOK						m_tok;		
 	PARK					m_park;		
@@ -222,14 +213,10 @@ public:
 	STNode **				m_apStnodChild;
 };
 
-Moe::InString IstrFromIdentifier(STNode * pStnod);
-Moe::InString IstrFromTypeInfo(TypeInfo * pTin);
-Moe::InString IstrFromStnod(STNode * pStnod);
-
 template <typename T>
 T PStnodRtiCast(STNode * pStnod)
 {
-	if (pStnod && StexkFromPark(pStnod->m_park) == Moe::SStripPointer<T>::Type::s_stexk)
+	if (pStnod && pStnod->Stexk() == Moe::SStripPointer<T>::Type::s_stexk)
 		return (T)pStnod;
 	return nullptr;
 }
@@ -237,7 +224,7 @@ T PStnodRtiCast(STNode * pStnod)
 template <typename T>
 T PStnodDerivedCast(STNode * pStnod)
 {
-	MOE_ASSERT(pStnod && pStnod->m_stexk == Moe::SStripPointer<T>::Type::s_stexk, "illegal stnode derived cast");
+	MOE_ASSERT(pStnod && pStnod->Stexk() == Moe::SStripPointer<T>::Type::s_stexk, "illegal stnode derived cast");
 	return (T)pStnod;
 }
 
@@ -259,18 +246,18 @@ struct STProc : public STNode
 public:
 	static const STEXK s_stexk = STEXK_Proc;
 
-				STProc(PARK park, const LexSpan & lexsp)
-				:STNode(s_stexk, park, lexsp)
-				,m_pStnodName(nullptr)
-				,m_pStnodParameterList(nullptr)
-				,m_pStnodReturnType(nullptr)
-				,m_pStnodParentScope(nullptr)
-					{ ; }
+							STProc(PARK park, const LexSpan & lexsp)
+							:STNode(s_stexk, park, lexsp)
+							,m_pStnodName(nullptr)
+							,m_pStnodParameterList(nullptr)
+							,m_pStnodReturnType(nullptr)
+							,m_pStnodParentScope(nullptr)
+								{ ; }
 
 	MOE_STNOD_CHILD4(m_pStnodName, m_pStnodParameterList, m_pStnodReturnType, m_pStnodParentScope);
-	GRFSTPROC   m_grfstproc;
+	GRFSTPROC				m_grfstproc;
 
-	void AssertValid();
+	bool					FCheckIsValid(ErrorManager * pErrman);
 };
 
 
@@ -280,19 +267,19 @@ struct STFor : public STNode
 public:
 	static const STEXK s_stexk = STEXK_For;
 
-				STFor(PARK park, const LexSpan & lexsp)
-				:STNode(s_stexk, park, lexsp)
-				,m_pStnodDecl(nullptr)
-				,m_pStnodIterator(nullptr)
-				,m_pStnodInit(nullptr)
-				,m_pStnodBody(nullptr)
-				,m_pStnodPredicate(nullptr)
-				,m_pStnodIncrement(nullptr)
-					{ ; }
+							STFor(PARK park, const LexSpan & lexsp)
+							:STNode(s_stexk, park, lexsp)
+							,m_pStnodDecl(nullptr)
+							,m_pStnodIterator(nullptr)
+							,m_pStnodInit(nullptr)
+							,m_pStnodBody(nullptr)
+							,m_pStnodPredicate(nullptr)
+							,m_pStnodIncrement(nullptr)
+								{ ; }
 
 	MOE_STNOD_CHILD6(m_pStnodDecl, m_pStnodIterator, m_pStnodInit, m_pStnodBody, m_pStnodPredicate, m_pStnodIncrement);
 
-	void AssertValid();
+	bool					FCheckIsValid(ErrorManager * pErrman);
 };
 
 
@@ -302,21 +289,21 @@ struct STDecl : public STNode
 public:
 	static const STEXK s_stexk = STEXK_Decl;
 
-					STDecl(PARK park, const LexSpan & lexsp)
-					:STNode(s_stexk, park, lexsp)
-					,m_fIsBakedConstant(false)
-					,m_fHasUsingPrefix(false)
-					,m_pStnodIdentifier(nullptr)
-					,m_pStnodType(nullptr)
-					,m_pStnodInit(nullptr)
-						{ ; }
+							STDecl(PARK park, const LexSpan & lexsp)
+							:STNode(s_stexk, park, lexsp)
+							,m_fIsBakedConstant(false)
+							,m_fHasUsingPrefix(false)
+							,m_pStnodIdentifier(nullptr)
+							,m_pStnodType(nullptr)
+							,m_pStnodInit(nullptr)
+								{ ; }
 
-	bool			m_fIsBakedConstant;
-	bool			m_fHasUsingPrefix;
+	bool					m_fIsBakedConstant;
+	bool					m_fHasUsingPrefix;
 	MOE_STNOD_CHILD3(m_pStnodIdentifier, m_pStnodType, m_pStnodInit);
 
 	// TODO: how to handle variable set of child decls, new decl list PARK?
-	void AssertValid();
+	bool					FCheckIsValid(ErrorManager * pErrman);
 };
 
 
@@ -325,25 +312,25 @@ struct STEnum : public STNode
 {
 	static const STEXK s_stexk = STEXK_Enum;
 
-						STEnum(PARK park, const LexSpan & lexsp)
-						:STNode(s_stexk, park, lexsp)
-						,m_pStnodIdentifier(nullptr)
-						,m_pStnodType(nullptr)
-						,m_pStnodConstantList(nullptr)
-						,m_enumk(ENUMK_Basic)
-						,m_cConstantExplicit(0)
-						,m_cConstantImplicit(0)
-						,m_pTinenum(nullptr)
-							{ ; }
+							STEnum(PARK park, const LexSpan & lexsp)
+							:STNode(s_stexk, park, lexsp)
+							,m_pStnodIdentifier(nullptr)
+							,m_pStnodType(nullptr)
+							,m_pStnodConstantList(nullptr)
+							,m_enumk(ENUMK_Basic)
+							,m_cConstantExplicit(0)
+							,m_cConstantImplicit(0)
+							,m_pTinenum(nullptr)
+								{ ; }
 
 	MOE_STNOD_CHILD3(m_pStnodIdentifier, m_pStnodType, m_pStnodConstantList);
 
-	ENUMK               m_enumk;
-	size_t              m_cConstantExplicit;
-	size_t              m_cConstantImplicit;
-	TypeInfoEnum *		m_pTinenum;     // why is this here? not just m_pTin?
+	ENUMK					m_enumk;
+	size_t					m_cConstantExplicit;
+	size_t					m_cConstantImplicit;
+	TypeInfoEnum *			m_pTinenum;     // why is this here? not just m_pTin?
 
-	void AssertValid();
+	bool					FCheckIsValid(ErrorManager * pErrman);
 };
 
 
@@ -352,17 +339,17 @@ struct STStruct : public STNode
 {
 	static const STEXK s_stexk = STEXK_Struct;
 
-						STStruct(PARK park, const LexSpan & lexsp)
-						:STNode(s_stexk, park, lexsp)
-						,m_pStnodIdentifier(nullptr)
-						,m_pStnodParameterList(nullptr)
-						,m_pStnodBakedParameterList(nullptr)
-						,m_pStnodDeclList(nullptr)
-							{ ; }
+							STStruct(PARK park, const LexSpan & lexsp)
+							:STNode(s_stexk, park, lexsp)
+							,m_pStnodIdentifier(nullptr)
+							,m_pStnodParameterList(nullptr)
+							,m_pStnodBakedParameterList(nullptr)
+							,m_pStnodDeclList(nullptr)
+								{ ; }
 
 	MOE_STNOD_CHILD4(m_pStnodIdentifier, m_pStnodParameterList, m_pStnodBakedParameterList, m_pStnodDeclList);
 
-	void AssertValid();
+	bool					FCheckIsValid(ErrorManager * pErrman);
 };
 
 #define AST_ASSERT(PWORK, PSTNOD, PREDICATE, ... ) do { if (!(PREDICATE)) { \
@@ -398,7 +385,6 @@ enum STVALK // Syntax Tree VALue Kind
 	STVALK_SignedInt,
 	STVALK_UnsignedInt,
 	STVALK_String,
-	STVALK_ReservedWord,
 };
 
 struct STValue : public STNode // tag = stval
@@ -443,24 +429,24 @@ struct STValue : public STNode // tag = stval
 
 	MOE_STNOD_NO_CHILDREN();
 
-	void AssertValid();
+	bool					FCheckIsValid(ErrorManager * pErrman);
 };
 
 struct STOperator : public STNode // tag = stop
 {
 	static const STEXK s_stexk = STEXK_Operator;
 
-						STOperator(PARK park, const LexSpan & lexsp)
-						:STNode(s_stexk, park, lexsp)
-						,m_optype()
-						,m_pStnodLhs(nullptr)
-						,m_pStnodRhs(nullptr)
-							{ ; }
+							STOperator(PARK park, const LexSpan & lexsp)
+							:STNode(s_stexk, park, lexsp)
+							,m_optype()
+							,m_pStnodLhs(nullptr)
+							,m_pStnodRhs(nullptr)
+								{ ; }
 
-	OpTypes 			m_optype;
+	OpTypes 				m_optype;
 	MOE_STNOD_CHILD2(m_pStnodLhs, m_pStnodRhs);
 
-	void AssertValid();
+	bool					FCheckIsValid(ErrorManager * pErrman);
 };
 
 struct ParseContext // tag = parctx
@@ -474,6 +460,8 @@ struct ParseContext // tag = parctx
 						,m_grfsymlook(FSYMLOOK_Default)
 							{ ; }
 
+	ErrorManager *		PErrman() const;
+
 	Moe::Alloc * 		m_pAlloc;
 	Workspace *			m_pWork;
 	SymbolTable *		m_pSymtab;
@@ -483,5 +471,56 @@ struct ParseContext // tag = parctx
 	GRFSYMLOOK			m_grfsymlook;
 };
 
-void ParseTopLevel(Workspace * pWork, Lexer * pLex, MoeQuery * pMq);
+struct ParseJobData // tag = parjd
+{
+					ParseJobData(Moe::Alloc * pAlloc, Workspace * pWork)
+					:m_parctx(pAlloc, pWork)
+					,m_lex()
+					,m_pChzBody(nullptr)
+						{ ; }
+
+	ParseContext 	m_parctx;
+	Lexer 			m_lex;
+	const char *	m_pChzBody;
+
+	static const int s_cBLexerStorage = 8 * 1024;
+	char			m_aChStorage[s_cBLexerStorage];
+};
+
+// S-Expression writer notes 
+enum SEWK // S-Expression Kind
+{
+	SEWK_Park,				// write an S-Expression with the parse kind
+	SEWK_Parse,				// write an S-Expression with the parsed value at each node, 
+							// 1. nodes that have a meaningful value (strings and literals)
+							// 2. Operators show tokens
+							// 3. types if they exist (they mostly shouldn't 
+							// 4. park
+	SEWK_Value,
+	SEWK_TypeInfo,	
+};
+
+enum FSEW // DeBuG STRing Flags
+{
+	FSEW_LiteralSize			= 0x1,
+	FSEW_UseSizedNumerics		= 0x2, // resolve type aliasing for simple integers - should this be all type aliasing?
+	FSEW_NoWhitespace			= 0x4,
+	FSEW_ShowStructArgs			= 0x8,
+
+	FSEW_None					= 0x0,
+	FSEW_All					= 0xF,
+	GRFSEW_Default				= FSEW_None,
+};
+MOE_DEFINE_GRF(GRFSEW, FSEW, u32);
+
+
+Moe::InString IstrSExpression(STNode * pTin, SEWK sewk, GRFSEW grfsew = GRFSEW_Default);
+Moe::InString IstrSExpression(TypeInfo * pTin, GRFSEW grfsew = GRFSEW_Default);
+
+void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFSEW grfsew = GRFSEW_Default);
+void WriteSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, GRFSEW grfsew = GRFSEW_Default);
+
+Moe::InString IstrFromIdentifier(STNode * pStnod);
+
+Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename);
 

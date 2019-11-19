@@ -496,6 +496,10 @@ void	ConvertChToWch(const char * pChz, size_t cWchMax, WChar * pWchz);
 bool	FPChzContainsChar(const char * pChz, char ch);
 void	ReplaceChars(const char * pChSrc, size_t cCh, const char * pChzRemove, char chFill, char * pChDst);
 
+// file utils
+size_t CChConstructFilename(const char * pChzFilenameIn, const char * pChzExtension, char * pChzFilenameOut, size_t cChOutMax);
+const char * PChzSkipUnicodeBOM(const char * pChzFile);
+
 inline const char * PChzVerifyAscii(const char * pChz)
 {
 	auto pChzIt = pChz;

@@ -222,7 +222,7 @@ static int TokParseString(Lexer * pLex, const char * pChz)
 	}
 
 	*pChOut = 0;
-	pLex->m_istr = IstrInternCopy(pLex->m_aChScratch, pChOut - pLex->m_aChScratch);
+	pLex->m_istr = IstrInternCopy(pLex->m_aChScratch, pChOut);
 
 	int tok = TokSetTokinf(pLex, TOK_Literal, pChzStart, pChz);
 	pLex->m_litk = LITK_String;
@@ -324,6 +324,16 @@ void SplitToken(Lexer * pLex, TOK tokSplit)
 bool FConsumeToken(Lexer * pLex, TOK tok)
 {
 	if (pLex->m_tok == tok)
+	{
+		TokNext(pLex);
+		return true;
+	}
+	return false;
+}
+
+bool FConsumeIdentifier(Lexer * pLex, Moe::InString istr)
+{
+	if (pLex->m_tok == TOK_Identifier && pLex->m_istr == istr)
 	{
 		TokNext(pLex);
 		return true;

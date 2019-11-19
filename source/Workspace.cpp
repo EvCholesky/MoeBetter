@@ -10,6 +10,9 @@
 
 using namespace Moe;
 
+const char * Workspace::s_pChzSourceExtension = ".moe";
+const char * Workspace::s_pChzUnitTestExtension = ".moetest";
+
 ErrorManager::ErrorManager(Alloc * pAlloc)
 :m_pWork(nullptr)
 ,m_aryErrid(pAlloc, BK_Workspace, 0)
@@ -99,7 +102,7 @@ void PrintGenmapAnchors(Moe::StringBuffer * pStrbuf, GenericMap * pGenmap)
 		switch (pAnc->m_genk)
 		{
 		case GENK_Type:
-			istrAnc = IstrFromTypeInfo(pAnc->m_pTin);
+			istrAnc = IstrSExpression(pAnc->m_pTin);
 			FormatChz(pStrbuf, "%s$%s :%s", pChzSeparate, pIstrAnchor->m_pChz, istrAnc.m_pChz);
 			break;
 		case GENK_Value:
@@ -119,7 +122,7 @@ void PrintGenmapAnchors(Moe::StringBuffer * pStrbuf, GenericMap * pGenmap)
 				}
 				else
 				{
-					istrAnc = IstrFromStnod(pStnodValue);
+					istrAnc = IstrSExpression(pStnodValue, SEWK_Value);
 					FormatChz(pStrbuf, "%s$%s %s", pChzSeparate, pIstrAnchor->m_pChz, istrAnc.m_pChz);
 				}
 			} break;
@@ -370,9 +373,9 @@ LexLookup::LexLookup(Workspace * pWork, STNode * pStnod)
 }
 
 
+
 Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 :m_pAlloc(pAlloc)
-,m_pParctx(nullptr)
 ,m_blistEntry(pAlloc, Moe::BK_Workspace)
 ,m_arypEntryChecked(pAlloc, Moe::BK_Workspace) 
 //,m_arypValManaged(pAlloc, Moe::BK_WorkspaceVal, 0)
@@ -414,10 +417,9 @@ Moe::CHash<HV, int> * Workspace::PHashHvIPFile(FILEK filek)
 	return m_mpFilekPHashHvIPFile[filek];
 }
 
-Workspace::File * Workspace::PFileEnsure(const char * pChzFile, FILEK filek)
+Workspace::File * Workspace::PFileEnsure(const Moe::InString istrFilename, FILEK filek)
 {
 	Moe::CHash<HV, int> * phashHvIPFile = PHashHvIPFile(filek);
-	Moe::InString istrFilename(IstrInternCopy(pChzFile));
 
 	int * pipFile = nullptr;
 	//BB - should check platform before using case-insensitive file lookup 
@@ -461,6 +463,41 @@ Workspace::File * Workspace::PFileLookup(const char * pChzFile, FILEK filek)
 	return nullptr;
 }
 
+char * Workspace::PChzLoadFile(const Moe::InString & istrFilename, Moe::Alloc * pAlloc)
+{
+	LexSpan lexsp(istrFilename);
+#if defined( _MSC_VER )
+	FILE * pFile;
+	fopen_s(&pFile, istrFilename.m_pChz, "rb");
+#else
+	FILE * pFile = fopen(istrFilename.m_pChz, "rb");
+#endif
+	if (!pFile)
+	{
+		EmitError(m_pErrman, lexsp, ERRID_FailedOpeningFile, "Failed opening file %s", istrFilename.m_pChz);
+		return nullptr;
+	}
+
+	fseek(pFile, 0, SEEK_END);
+	size_t cB = ftell(pFile);
+	fseek(pFile, 0, SEEK_SET);
+
+	char * pChzFile = (char *)pAlloc->MOE_ALLOC(cB + 1, 4);
+	size_t cBRead = fread(pChzFile, 1, cB, pFile);
+	fclose(pFile);
+
+	if (cB != cBRead)
+	{
+		EmitError(m_pErrman, lexsp, ERRID_UnknownError, "Failed reading file %s", istrFilename.m_pChz);
+		pAlloc->MOE_FREE(pChzFile);
+		return nullptr;
+	}
+
+	pChzFile[cB] = '\0';
+	return pChzFile;
+}
+
+
 
 void BeginWorkspace(Workspace * pWork)
 {
@@ -488,6 +525,8 @@ void BeginWorkspace(Workspace * pWork)
 	pWork->m_pSymtab = PSymtabNew(pAlloc, nullptr, IstrIntern("global"), pWork->m_pTyper, &pWork->m_unsetTin);
 	pWork->m_pSymtab->AddBuiltInSymbols(pWork);
 }
+
+
 
 #ifdef MOEB_LATER
 void BeginParse(Workspace * pWork, Lexer * pLex, const char * pChzIn, const char * pChzFilename)

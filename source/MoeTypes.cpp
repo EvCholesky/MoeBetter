@@ -307,6 +307,48 @@ size_t	CBCopyChz(const char * pChzSource, char * aCoDest, size_t cBDest)
 	return strbuf.m_pChzAppend - strbuf.m_pChzBegin + 1;
 }
 
+size_t CChConstructFilename(const char * pChzFilenameIn, const char * pChzExtension, char * pChzFilenameOut, size_t cChOutMax)
+{
+	// remove the last extension (if one exists) and replace it with the supplied one.
+
+	char * pChzPeriod = nullptr;
+	char * pChzOut = pChzFilenameOut;
+	char * pChzOutMax = &pChzFilenameOut[cChOutMax];
+	const char * pChIt = pChzFilenameIn;
+	for ( ; *pChIt != '\0' && pChzOut != pChzOutMax; ++pChIt)
+	{
+		if (*pChIt == '.')
+		{
+			pChzPeriod = pChzOut;
+		}
+
+		*pChzOut++ = *pChIt;
+	}
+
+	if (pChzPeriod)
+		pChzOut = pChzPeriod;
+
+	pChIt = pChzExtension; 
+	for ( ; *pChIt != '\0' && pChzOut != pChzOutMax; ++pChIt)
+	{
+		*pChzOut++ = *pChIt;
+	}
+
+	*pChzOut++ = '\0';
+	return pChzOut - pChzFilenameOut;
+}
+
+const char * PChzSkipUnicodeBOM(const char * pChzFile)
+{
+	// utf8 BOM
+	const u8 * pBFile = (const u8 *)pChzFile;
+	if (pBFile[0] == 0xEF && pBFile[1] == 0xBB && pBFile[2] == 0xBF)
+	{
+		pChzFile += 3;
+	}
+	return pChzFile;
+}
+
 void FormatChz(StringBuffer * pStrbuf, const char * pChzFormat, ...)
 {
 	ptrdiff_t cBMax = &pStrbuf->m_pChzBegin[pStrbuf->m_cBMax] - pStrbuf->m_pChzAppend;

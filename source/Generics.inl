@@ -78,7 +78,7 @@ struct GenericMap // tag = genmap
 								{
 #define BUILD_GENMAP_NAMES 1
 #if BUILD_GENMAP_NAMES
-									m_istrName = pChzPrefix;
+									m_istrName = IstrInternCopy(pChzPrefix);
 									if (pTinOwner)
 									{
 										char aCh[128];

@@ -202,6 +202,7 @@ static CommandLineManager::Option s_optHelp("-help", "List the compiler options"
 static CommandLineManager::Option s_optNoLink("-nolink", "Skip the linker step");
 static CommandLineManager::Option s_optUseLLD("-useLLD", "Use the LLVM linker LLD");
 static CommandLineManager::Option s_optRelease("-release", "Generate optimized code and link against optimized local libraries\n");
+static CommandLineManager::Option s_optSrc("-src", "supply source snippet on the command-line", CommandLineManager::OPTK_String);
 static CommandLineManager::Option s_optAst("-printAST", "print the post parse AST");
 
 extern bool FTestLexing();
@@ -262,12 +263,20 @@ int main(int cpChzArg, const char * apChzArg[])
 
 		Moe::StaticShutdownStrings(&allocString);
 	}
-	else if (pCmdlineman->m_pChzFilename)
+	else 
 	{
 		Moe::StaticInitStrings(&allocString);
 
 		Compilation comp(&allocHeap);
-		AddSourceFile(&comp, pCmdlineman->m_pChzFilename);
+
+		if (pCmdlineman->m_pChzFilename)
+		{
+			AddSourceFile(&comp, pCmdlineman->m_pChzFilename);
+		}
+		else if (CommandLineManager::Command * pCom = pCmdlineman->PComLookup(s_optSrc))
+		{
+			AddSourceText(&comp, pCom->m_pChzValue);
+		}
 
 		if (CommandLineManager::Command * pCom = pCmdlineman->PComLookup(s_optAst))
 		{

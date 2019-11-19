@@ -136,6 +136,7 @@ struct RequestSource
 
 void AddRequest(Compilation * pComp, Request * pRq);
 void AddSourceFile(Compilation * pComp, const char * pChzFilename);
+void AddSourceText(Compilation * pComp, const char * pChz);
 int CRqresServiceRequest(Compilation * pComp, Workspace * pWork);
 void PrintResult(Compilation * pComp, int iRqres, char * aCh, size_t cChMax);
 

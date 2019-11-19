@@ -79,18 +79,6 @@ namespace Moe
 		bool			operator!=(const InString & istrOther) const
 							{ return !(*this == istrOther); }
 
-		InString &		operator=(const InString & istrOther)
-							{ return *this = istrOther.m_pChz; }
-		InString &		operator=(const char * pChz)
-							{
-								if (m_pChz != pChz)
-								{
-									m_pChz = PChzIntern(pChz);
-								}
-
-								return *this;
-							}
-
 		bool			FIsEmpty() const
 							{ return m_pChz == nullptr || *m_pChz == '\0'; }
 		size_t			CB() const

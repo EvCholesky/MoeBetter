@@ -53,7 +53,14 @@ void AddSourceFile(Compilation * pComp, const char * pChzFilename)
 {
 	auto pRqsrc = pComp->m_aryRqsrc.AppendNew();
 	pRqsrc->m_rqsrck = RQSRCK_Filename;
-	pRqsrc->m_istr = pChzFilename;
+	pRqsrc->m_istr = IstrInternCopy(pChzFilename);
+}
+
+void AddSourceText(Compilation * pComp, const char * pChz)
+{
+	auto pRqsrc = pComp->m_aryRqsrc.AppendNew();
+	pRqsrc->m_rqsrck = RQSRCK_SourceText;
+	pRqsrc->m_istr = IstrInternCopy(pChz);
 }
 
 int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
@@ -61,7 +68,29 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 	auto pRqsrcMax = pComp->m_aryRqsrc.PMac();
 	for (auto pRqsrc = pComp->m_aryRqsrc.A(); pRqsrc != pRqsrcMax; ++pRqsrc)
 	{
-		(void) pWork->PFileEnsure(pRqsrc->m_istr, Workspace::FILEK_Source);
+		Workspace::File * pFile = pWork->PFileEnsure(pRqsrc->m_istr, Workspace::FILEK_Source);
+
+		switch(pRqsrc->m_rqsrck)
+		{
+		case RQSRCK_Filename:
+			{
+				char aChFilenameOut[Workspace::s_cBFilenameMax];
+				(void)Moe::CChConstructFilename(pFile->m_istrFilename.m_pChz, Workspace::s_pChzSourceExtension, aChFilenameOut, MOE_DIM(aChFilenameOut));
+
+				pFile->m_pChzFileBody = pWork->PChzLoadFile(IstrInternCopy(aChFilenameOut), pWork->m_pAlloc);
+			} break;
+		case RQSRCK_SourceText:
+			{
+				auto cB = pRqsrc->m_istr.CB();
+				char * pChzCopy = (char *)pWork->m_pAlloc->MOE_ALLOC(cB, 1);
+				CBCopyChz(pRqsrc->m_istr.m_pChz, pChzCopy, cB);
+
+				pFile->m_pChzFileBody = pChzCopy;
+			} break;
+		default: 
+			MOE_ASSERT(false, "unknown request source kind (%d)", pRqsrc->m_rqsrck);  
+			break;
+		}
 	}
 
 	Lexer lex;
@@ -71,10 +100,6 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 		if (pFile->m_filek != Workspace::FILEK_Source)
 			continue;
 
-		char aChFilenameOut[Workspace::s_cBFilenameMax];
-		(void)Moe::CChConstructFilename(pFile->m_istrFilename.m_pChz, Workspace::s_pChzSourceExtension, aChFilenameOut, MOE_DIM(aChFilenameOut));
-
-		pFile->m_pChzFileBody = pWork->PChzLoadFile(IstrInternCopy(aChFilenameOut), pWork->m_pAlloc);
 		if (!pFile->m_pChzFileBody)
 			continue;
 

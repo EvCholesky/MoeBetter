@@ -241,15 +241,15 @@ struct TypeInfoQualifier : public TypeInfo // tag == tinqual
 	GRFQUALK			m_grfqualk;
 };
 
-enum CALLCONV
+enum MCALLCON
 {
-	CALLCONV_CX86		= 0,
-	CALLCONV_StdcallX86	= 1,
-	CALLCONV_X64		= 2,
+	MCALLCON_CX86		= 0,
+	MCALLCON_StdcallX86	= 1,
+	MCALLCON_X64		= 2,
 
-	MOE_MAX_MIN_NIL(CALLCONV)
+	MOE_MAX_MIN_NIL(MCALLCON)
 };
-const char * PChzFromCallconv(CALLCONV callconv);
+const char * PChzFromCallconv(MCALLCON callconv);
 
 enum INLINEK
 {
@@ -313,7 +313,7 @@ struct TypeInfoProcedure : public TypeInfo	// tag = 	tinproc
 						,m_grftingen(FTINGEN_None)
 						,m_grftinproc(FTINPROC_None)
 						,m_inlinek(INLINEK_Nil)
-						,m_callconv(CALLCONV_Nil)
+						,m_callconv(MCALLCON_Nil)
 							{ ; }
 
 	bool				FHasVarArgs() const
@@ -332,7 +332,7 @@ struct TypeInfoProcedure : public TypeInfo	// tag = 	tinproc
 	GRFTINGEN					m_grftingen;
 	GRFTINPROC					m_grftinproc;
 	INLINEK						m_inlinek;
-	CALLCONV					m_callconv;
+	MCALLCON					m_callconv;
 };
 
 struct TypeInfoAnchor : public TypeInfo // tag = tinanc

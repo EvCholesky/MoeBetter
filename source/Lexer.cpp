@@ -29,7 +29,7 @@ static int TokSetTokinf(Lexer * pLex, TOK tok, const char * pChStart, const char
 	pLex->m_tok = tok;
 	pLex->m_pChBegin = pChStart;
 	pLex->m_pChEnd = pChEnd;
-	pLex->m_pChParse = pChEnd + 1;
+	pLex->m_pChParse = pChEnd;
 
 	pLex->m_litk = LITK_Nil;
 	pLex->m_grfnum = FNUM_None;
@@ -109,7 +109,7 @@ static int TokParseSuffixes(Lexer * pLex, TOK tok, LITK litk, GRFNUM grfnum, con
 {
 	pLex->m_istr = Moe::InString();
 
-	int tokReturn = TokSetTokinf(pLex, tok, pChzStart, pChzCur-1);
+	int tokReturn = TokSetTokinf(pLex, tok, pChzStart, pChzCur);
 	pLex->m_litk = litk;
 	pLex->m_grfnum = grfnum;
 	return tokReturn;
@@ -211,7 +211,7 @@ static int TokParseString(Lexer * pLex, const char * pChz)
 		}
 		if (pChOut+1 > pChOutEnd)
 		{
-			return TokSetTokinf(pLex, TOK_ParseError, pChzStart, pChz);
+			return TokSetTokinf(pLex, TOK_ParseError, pChzStart, pChz+1);
 		}
 
 	      // @TODO expand unicode escapes to UTF8
@@ -224,7 +224,7 @@ static int TokParseString(Lexer * pLex, const char * pChz)
 	*pChOut = 0;
 	pLex->m_istr = IstrInternCopy(pLex->m_aChScratch, pChOut);
 
-	int tok = TokSetTokinf(pLex, TOK_Literal, pChzStart, pChz);
+	int tok = TokSetTokinf(pLex, TOK_Literal, pChzStart, pChz+1);
 	pLex->m_litk = LITK_String;
 	return tok;
 }
@@ -294,7 +294,7 @@ static int TokLexHereString(Lexer * pLex, const char * pChz)
 
 	pLex->m_istr = IstrInternCopy(pChzStart, pChzLine - pChzStart);
 
-	int tok = TokSetTokinf(pLex, TOK_Literal, pChzStart, pChz);
+	int tok = TokSetTokinf(pLex, TOK_Literal, pChzStart, pChz+1);
 	pLex->m_litk = LITK_String;
 	return tok;
 }
@@ -310,14 +310,14 @@ void SplitToken(Lexer * pLex, TOK tokSplit)
 	while (pChIt != pChEnd)
 	{
 		MOE_ASSERT(*pChIt == *pChzTok, "Split token mismatch");
-		if (*pChIt == '\0')
+		if (*pChzTok == '\0')
 			break;
 
 		++pChIt;
 		++pChzTok;
 	}
 
-	pLex->m_pChEnd = pChIt - 1;
+	pLex->m_pChEnd = pChIt;
 	pLex->m_pChParse = pChIt;
 }
 
@@ -377,7 +377,7 @@ int TokNext(Lexer * pLex)
 				++pChz;
 			}
 		    if (pChz == pLex->m_pChEof)
-		       return TokSetTokinf(pLex, TOK_ParseError, pChStart, pChz-1);
+		       return TokSetTokinf(pLex, TOK_ParseError, pChStart, pChz);
 		    pChz += 2;
 		    continue;
 		}
@@ -429,20 +429,20 @@ int TokNext(Lexer * pLex)
 				}
 #endif
 
-				return TokSetTokinf(pLex, TOK_Identifier, pChz, pChz+iCh-1);
+				return TokSetTokinf(pLex, TOK_Identifier, pChz, pChz+iCh);
 			}
 
 		single_char:         
 			// not an identifier, return the character as itself
-			return TokSetTokinf(pLex, TOK(*pChz), pChz, pChz);
+			return TokSetTokinf(pLex, TOK(*pChz), pChz, pChz + 1);
 
 		case '+':
 			if (pChz+1 != pLex->m_pChEof) 
 			{
 				if (pChz[1] == '+') 
-					return TokSetTokinf(pLex, TOK_PlusPlus, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_PlusPlus, pChz, pChz+2);
 				if (pChz[1] == '=') 
-					return TokSetTokinf(pLex, TOK_PlusEqual, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_PlusEqual, pChz, pChz+2);
 			} goto single_char;
 
 		case '-':
@@ -451,99 +451,99 @@ int TokNext(Lexer * pLex)
 				if (pChz[1] == '-') 
 				{
 					if ((pChz+2 != pLex->m_pChEof) && pChz[2] == '-')
-						return TokSetTokinf(pLex, TOK_TripleMinus, pChz, pChz+2);
-					return TokSetTokinf(pLex, TOK_MinusMinus, pChz, pChz+1);
+						return TokSetTokinf(pLex, TOK_TripleMinus, pChz, pChz+3);
+					return TokSetTokinf(pLex, TOK_MinusMinus, pChz, pChz+2);
 				}
 				if (pChz[1] == '=') 
-					return TokSetTokinf(pLex, TOK_MinusEqual, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_MinusEqual, pChz, pChz+2);
 				if (pChz[1] == '>') 
-					return TokSetTokinf(pLex, TOK_Arrow, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_Arrow, pChz, pChz+2);
 			} goto single_char;
 
 		case '&':
 			 if (pChz+1 != pLex->m_pChEof) 
 			 {
 				if (pChz[1] == '&') 
-					return TokSetTokinf(pLex, TOK_AndAnd, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_AndAnd, pChz, pChz+2);
 				if (pChz[1] == '=') 
-					return TokSetTokinf(pLex, TOK_AndEqual, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_AndEqual, pChz, pChz+2);
 			 } goto single_char;
 
 		case '|':
 			if (pChz+1 != pLex->m_pChEof) 
 			{
 				if (pChz[1] == '|') 
-					return TokSetTokinf(pLex, TOK_OrOr, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_OrOr, pChz, pChz+2);
 				if (pChz[1] == '=') 
-					return TokSetTokinf(pLex, TOK_OrEqual, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_OrEqual, pChz, pChz+2);
 			} goto single_char;
 
 		case '=':
 		    if (pChz+1 != pLex->m_pChEof && pChz[1] == '=') 
-				return TokSetTokinf(pLex, TOK_EqualEqual, pChz, pChz+1);
+				return TokSetTokinf(pLex, TOK_EqualEqual, pChz, pChz+2);
 			goto single_char;
 
 		case '!':
 			if (pChz+1 != pLex->m_pChEof && pChz[1] == '=') 
-				return TokSetTokinf(pLex, TOK_NotEqual, pChz, pChz+1);
+				return TokSetTokinf(pLex, TOK_NotEqual, pChz, pChz+2);
 			goto single_char;
 
 		case '^':
 			if (pChz+1 != pLex->m_pChEof && pChz[1] == '=') 
-				return TokSetTokinf(pLex, TOK_XorEqual, pChz,pChz+1);
+				return TokSetTokinf(pLex, TOK_XorEqual, pChz,pChz+2);
 			goto single_char;
 
 		case ':':
 			if (pChz+1 != pLex->m_pChEof)
 				{
 					if (pChz[1] == ':') 
-						return TokSetTokinf(pLex, TOK_ColonColon, pChz,pChz+1);
+						return TokSetTokinf(pLex, TOK_ColonColon, pChz,pChz+2);
 					if (pChz[1] == '=') 
-						return TokSetTokinf(pLex, TOK_ColonEqual, pChz,pChz+1);
+						return TokSetTokinf(pLex, TOK_ColonEqual, pChz,pChz+2);
 				}
 			goto single_char;
 
 		case '.':
 			if (pChz+1 != pLex->m_pChEof && pChz[1] == '.') 
-				return TokSetTokinf(pLex, TOK_PeriodPeriod, pChz,pChz+1);
+				return TokSetTokinf(pLex, TOK_PeriodPeriod, pChz,pChz+2);
 			goto single_char;
 
 		case '~':
 			if (pChz+1 != pLex->m_pChEof && pChz[1] == '=') 
-				return TokSetTokinf(pLex, TOK_TildeEqual, pChz,pChz+1);
+				return TokSetTokinf(pLex, TOK_TildeEqual, pChz,pChz+2);
 			goto single_char;
 			
 		case '%':
 			if (pChz+1 != pLex->m_pChEof && pChz[1] == '=')
-				return TokSetTokinf(pLex, TOK_ModEqual, pChz, pChz+1);
+				return TokSetTokinf(pLex, TOK_ModEqual, pChz, pChz+2);
 			goto single_char;
 
 		case '*':
 			if (pChz+1 != pLex->m_pChEof && pChz[1] == '=')
-				return TokSetTokinf(pLex, TOK_MulEqual, pChz, pChz+1);
+				return TokSetTokinf(pLex, TOK_MulEqual, pChz, pChz+2);
 			goto single_char;
 
 		case '/':
 			if (pChz+1 != pLex->m_pChEof && pChz[1] == '=')
-				return TokSetTokinf(pLex, TOK_DivEqual, pChz, pChz+1);
+				return TokSetTokinf(pLex, TOK_DivEqual, pChz, pChz+2);
 			goto single_char;
 			
 		case '<':
 			if (pChz+1 != pLex->m_pChEof) 
 			{
 			    if (pChz[1] == '=') 
-					return TokSetTokinf(pLex, TOK_LessEqual, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_LessEqual, pChz, pChz+2);
 			    if (pChz[1] == '<') 
-                   return TokSetTokinf(pLex, TOK_ShiftLeft, pChz, pChz+1);
+                   return TokSetTokinf(pLex, TOK_ShiftLeft, pChz, pChz+2);
 			} goto single_char;
 
 		case '>':
 			if (pChz+1 != pLex->m_pChEof) 
 			{
 			    if (pChz[1] == '=') 
-					return TokSetTokinf(pLex, TOK_GreaterEqual, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_GreaterEqual, pChz, pChz+2);
 			    if (pChz[1] == '>') 
-					return TokSetTokinf(pLex, TOK_ShiftRight, pChz, pChz+1);
+					return TokSetTokinf(pLex, TOK_ShiftRight, pChz, pChz+2);
 			 }
 			 goto single_char;
 
@@ -559,11 +559,11 @@ int TokNext(Lexer * pLex)
 		    pLex->m_n = tok;
 
 		    if (tok < 0)
-		       return TokSetTokinf(pLex, TOK_ParseError, pChzStart,pChzStart);
+		       return TokSetTokinf(pLex, TOK_ParseError, pChzStart,pChzStart+1);
 		    if (pChz == pLex->m_pChEof || *pChz != '\'')
-		       return TokSetTokinf(pLex, TOK_ParseError, pChzStart, pChz);
+		       return TokSetTokinf(pLex, TOK_ParseError, pChzStart, pChz+1);
 
-			tok = TokSetTokinf(pLex, TOK_Literal, pChzStart, pChz);
+			tok = TokSetTokinf(pLex, TOK_Literal, pChzStart, pChz+1);
 			pLex->m_litk = LITK_Char;
 			return tok;
 		}
@@ -592,7 +592,7 @@ int TokNext(Lexer * pLex)
 					pLex->m_n = n;
 					#endif
 					if (pChzNext == pChz+2)
-						return TokSetTokinf(pLex, TOK_ParseError, pChz-2, pChz-1);
+						return TokSetTokinf(pLex, TOK_ParseError, pChz-2, pChz);
 					return TokParseSuffixes(pLex, TOK_Literal, LITK_Numeric, FNUM_None, pChz, pChzNext);
 				}
 			}

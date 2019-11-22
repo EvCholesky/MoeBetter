@@ -214,6 +214,8 @@ int main(int cpChzArg, const char * apChzArg[])
 	static const int s_cBHeap = 1000 * 1024;
 	static const int s_cBError = 100 * 1024;
 
+	InitConsoleSettings();
+
 	{
 		u8 aBString[s_cBString];
 		Alloc allocString(aBString, s_cBString);

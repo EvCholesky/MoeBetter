@@ -581,7 +581,7 @@ extern void STBM_CALLBACK EwcSystemFree(void * pUserContext, void *p);
 // BB - This allocation tracking code doesn't work yet, it doesn't clean up properly for deletions (it needs to
 // add some kind of HV(file,line) into an allocation prefix
 
-//#define MOE_TRACK_ALLOCATION
+#define MOE_TRACK_ALLOCATION
 #ifdef MOE_TRACK_ALLOCATION
 	inline size_t CBAllocationPrefix() { return sizeof(HV); }
 #else
@@ -703,21 +703,24 @@ struct Alloc // tag=alloc
 								MOE_ASSERT(m_pStbheap, "Trying to free to a NULL heap");
 
 								pV = ((char *)pV) - CBAllocationPrefix();
-								
 #ifdef MOE_USE_SYS_HEAP
-								free(pV);
+								size_t cB = 0;
 #else
 								size_t cB = stbm_get_allocation_size(pV);
-								stbm_free(nullptr, m_pStbheap, pV);
-
+#endif
+								
 #ifdef MOE_TRACK_ALLOCATION
 								HV * pHv = (HV *)pV;
 								if (m_pAltrac)
 									TrackFree(cB, pHv);
 #endif
 
-								m_cBFree += cB;
+#ifdef MOE_USE_SYS_HEAP
+								free(pV);
+#else
+								stbm_free(nullptr, m_pStbheap, pV);
 #endif
+								m_cBFree += cB;
 							}
 
 	template <typename T> 

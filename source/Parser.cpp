@@ -1257,65 +1257,6 @@ void SymbolTable::AddManagedSymtab(SymbolTable * pSymtab)
 	m_pSymtabNextManaged = pSymtab;
 }
 
-#if 0
-// partial instantiation STEX creation
-template <typename T> struct StexAlloc	
-{ 
-	static T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-	{
-		return MOE_NEW(pAlloc, T) T(STEXK_None, park, lexsp);
-	}
-};
-
-template <> struct StexAlloc<STValue>
-{ 
-	static STValue * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-	{
-		return MOE_NEW(pAlloc, STValue) STValue(park, lexsp);
-	}
-};
-
-template <> struct StexAlloc<STDecl>
-{ 
-	static STDecl * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-	{
-		auto pStdecl = MOE_NEW(pAlloc, STDecl) STDecl(park, lexsp);
-		pStdecl->SetChildArray(&pStdecl->m_pStnodIdentifier, 3);
-		return pStdecl;
-	}
-};
-
-template <> struct StexAlloc<STProc>
-{ 
-	static STProc * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-	{
-		auto pStproc = MOE_NEW(pAlloc, STProc) STProc(park, lexsp);
-		pStproc->SetChildArray(&pStproc->m_pStnodName, 4);
-		return pStproc;
-	}
-};
-
-template <> struct StexAlloc<STStruct>
-{ 
-	static STStruct * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-	{
-		auto pStstruct = MOE_NEW(pAlloc, STStruct) STStruct(park, lexsp);
-		pStstruct->SetChildArray(&pStstruct->m_pStnodIdentifier, 4);
-		return pStstruct;
-	}
-};
-
-template <> struct StexAlloc<STOperator>
-{ 
-	static STOperator * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-	{
-		auto pStop = MOE_NEW(pAlloc, STOperator) STOperator(park, lexsp);
-		pStop->SetChildArray(&pStop->m_pStnodLhs, 2);
-		return pStop;
-	}
-};
-#else
-
 template <typename T> struct StexAlloc	
 { 
 	static T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
@@ -1333,7 +1274,6 @@ template <> struct StexAlloc<STNode>
 		return MOE_NEW(pAlloc, STNode) STNode(STEXK_None, park, lexsp);
 	}
 };
-#endif
 
 template <typename T>
 T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, Lexer * pLex, const LexSpan & lexsp)
@@ -1344,6 +1284,35 @@ T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, Lexer * pLex, const LexSpan & le
 	return pStnod;
 }
 
+STNode::~STNode()
+{
+	MOE_ASSERT(m_cpStnodChild == 0 && m_apStnodChild == nullptr, "failed to cleanup STNode");
+}
+
+void CleanupStnodeRecursive(Moe::Alloc * pAlloc, STNode * pStnod)
+{
+	if (pStnod->m_cpStnodChild)
+	{
+		for (size_t ipStnod = pStnod->m_cpStnodChild; ipStnod-- > 0; )
+		{
+			STNode * pStnodChild = pStnod->m_apStnodChild[ipStnod];
+			if (pStnodChild)
+			{
+				CleanupStnodeRecursive(pAlloc, pStnodChild);
+				pAlloc->MOE_DELETE(pStnodChild);
+			}
+		}
+
+		if (pStnod->m_grfstnod.FIsSet(FSTNOD_ChildArrayOnHeap))
+		{
+			pAlloc->MOE_DELETE(pStnod->m_apStnodChild);
+			pStnod->m_grfstnod.Clear(FSTNOD_ChildArrayOnHeap);
+		}
+
+		pStnod->m_cpStnodChild = 0;
+		pStnod->m_apStnodChild = nullptr;
+	}
+}
 
 STNode * STNode::PStnodChildSafe(int ipStnod)
 {
@@ -1365,6 +1334,7 @@ void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t 
 	m_apStnodChild = (STNode **)pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(STNode *));
 	m_cpStnodChild = cpStnodChild;
 	memcpy(m_apStnodChild, apStnodChild, cB);
+	m_grfstnod.AddFlags(FSTNOD_ChildArrayOnHeap);
 }
 
 void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode * pStnodChild)
@@ -1373,6 +1343,8 @@ void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode * pStnodChild)
 	size_t cB = sizeof(STNode *) * m_cpStnodChild;
 	m_apStnodChild = (STNode **)pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(STNode *));
 	memcpy(m_apStnodChild, &pStnodChild, cB);
+
+	m_grfstnod.AddFlags(FSTNOD_ChildArrayOnHeap);
 }
 
 bool STNode::FCheckIsValid(ErrorManager * pErrman)
@@ -3154,6 +3126,16 @@ void ExecuteParseJob(Compilation * pComp, Workspace * pWork, Job * pJob)
 	}
 }
 
+void CleanupParseJob(Workspace * pWork, Job * pJob)
+{
+	if (pJob->m_pVData)
+	{
+		auto pParjd = (ParseJobData *)pJob->m_pVData;
+		pWork->m_pAlloc->MOE_DELETE(pParjd);
+		pJob->m_pVData = nullptr;
+	}
+}
+
 Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename)
 {
 	Alloc * pAlloc = pWork->m_pAlloc;
@@ -3173,11 +3155,11 @@ Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzB
 
 	auto pJob = PJobAllocate(pComp, pParjd);
 	pJob->m_pFnUpdate = ExecuteParseJob;
+	pJob->m_pFnCleanup = CleanupParseJob;
 	EnqueueJob(pComp, pJob);
 
 	return pJob;
 }
-
 
 #define MOE_CHECK_LEXER_SPANS 0
 // can move this into the standard unit test code - just make a print routine that outputs the characters in the lexspan

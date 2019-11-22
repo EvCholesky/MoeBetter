@@ -152,6 +152,42 @@ struct Workspace	// tag = work
 	GRFUNT								m_grfunt;
 };
 
+enum FCCOL // Console color
+{
+	FCCOL_FgBlue	= 0x1,
+	FCCOL_FgGreen	= 0x2,
+	FCCOL_FgRed		= 0x4,
+	FCCOL_FgIntense = 0x8,
+	FCCOL_BgBlue	= 0x10,
+	FCCOL_BgGreen	= 0x20,
+	FCCOL_BgRed		= 0x40,
+	FCCOL_BgIntense = 0x80,
+
+	FCCOL_None		= 0x0,
+	FCCOL_All		= 0xFF,
+
+	GRFCCOL_FgIntenseRed		= FCCOL_FgRed | FCCOL_FgIntense,
+	GRFCCOL_FgIntenseBlue		= FCCOL_FgBlue | FCCOL_FgIntense,
+	GRFCCOL_FgIntenseYellow		= FCCOL_FgRed | FCCOL_FgGreen | FCCOL_FgIntense,
+	GRFCCOL_FgIntenseWhite		= FCCOL_FgRed | FCCOL_FgGreen | FCCOL_FgBlue | FCCOL_FgIntense,
+};
+
+MOE_DEFINE_GRF(GRFCCOL, FCCOL, u16);
+
+void InitConsoleSettings();
+GRFCCOL GrfccolCurrent();
+void SetConsoleTextColor(GRFCCOL grfccol);
+
+struct ConsoleColorScope // tag = ccolscope
+{
+					ConsoleColorScope()
+						{ m_grfccol = GrfccolCurrent(); }
+					~ConsoleColorScope()
+						{ SetConsoleTextColor(m_grfccol); }
+		
+	GRFCCOL			m_grfccol;
+};
+
 void BeginWorkspace(Workspace * pWork);
 void BeginParse(Workspace * pWork, Lexer * pLex, const char * pChzIn, const char * pChzFilename = nullptr);
 void EndParse(Workspace * pWork, Lexer * pLex);

@@ -130,7 +130,7 @@ enum FSTNOD
 	FSTNOD_CommutativeCall		= 0x8,	// this function is an overloaded operator with arguments reversed.
 	FSTNOD_NoCodeGeneration		= 0x10, // skip this node for codegen - used by generic definitions
 	FSTNOD_AssertOnDelete		= 0x20,	// debugging tool, assert when deleted
-	FSTNOD_DynamicChildArray	= 0x40, // child array is allocated on the heap, delete upon cleanup
+	FSTNOD_ChildArrayOnHeap		= 0x40, // child array is allocated on the heap, delete upon cleanup
 
 	FSTNOD_HasParseError		= 0x80,
 	FSTNOD_HasTypeCheckError	= 0x100,
@@ -181,6 +181,8 @@ public:
 							,m_cpStnodChild(0)
 							,m_apStnodChild(nullptr)
 								{ MOE_ASSERT(StexkFromPark(park) == stexk, "park/stexk mismatch"); }
+							~STNode();
+								
 
 	STNode *				PStnodChild(int ipStnod)
 								{ return m_apStnodChild[ipStnod]; }
@@ -212,6 +214,8 @@ public:
 	size_t                  m_cpStnodChild;
 	STNode **				m_apStnodChild;
 };
+
+void CleanupStnodeRecursive(Moe::Alloc * pAlloc, STNode * pStnod);
 
 template <typename T>
 T PStnodRtiCast(STNode * pStnod)

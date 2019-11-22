@@ -68,12 +68,12 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 	auto pRqsrcMax = pComp->m_aryRqsrc.PMac();
 	for (auto pRqsrc = pComp->m_aryRqsrc.A(); pRqsrc != pRqsrcMax; ++pRqsrc)
 	{
-		Workspace::File * pFile = pWork->PFileEnsure(pRqsrc->m_istr, Workspace::FILEK_Source);
-
 		switch(pRqsrc->m_rqsrck)
 		{
 		case RQSRCK_Filename:
 			{
+				Workspace::File * pFile = pWork->PFileEnsure(pRqsrc->m_istr, Workspace::FILEK_Source);
+
 				char aChFilenameOut[Workspace::s_cBFilenameMax];
 				(void)Moe::CChConstructFilename(pFile->m_istrFilename.m_pChz, Workspace::s_pChzSourceExtension, aChFilenameOut, MOE_DIM(aChFilenameOut));
 
@@ -81,6 +81,8 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 			} break;
 		case RQSRCK_SourceText:
 			{
+				Workspace::File * pFile = pWork->PFileEnsure(IstrIntern("src"), Workspace::FILEK_Source);
+
 				auto cB = pRqsrc->m_istr.CB();
 				char * pChzCopy = (char *)pWork->m_pAlloc->MOE_ALLOC(cB, 1);
 				CBCopyChz(pRqsrc->m_istr.m_pChz, pChzCopy, cB);
@@ -117,8 +119,40 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 			InString istrParse = IstrSExpression(pEntry->m_pStnod, SEWK_Parse);
 			printf("     : %s\n", istrParse.m_pChz);
 
-			InString istrPark = IstrSExpression(pEntry->m_pStnod, SEWK_Park);
-			printf("parse: %s\n", istrPark.m_pChz);
+		//	InString istrPark = IstrSExpression(pEntry->m_pStnod, SEWK_Park);
+		//	printf("parse: %s\n", istrPark.m_pChz);
+		}
+
+		int cError, cWarning;
+		pWork->m_pErrman->ComputeErrorCounts(&cError, &cWarning);
+		if (cError != 0)
+		{
+			ConsoleColorScope ccolscope;
+			SetConsoleTextColor(GRFCCOL_FgIntenseRed);
+
+			printf("--- Compile FAILED: %d errors, %d warnings ---\n", cError, cWarning);
+		}
+		else
+		{
+			ConsoleColorScope ccolscope;
+			SetConsoleTextColor(GRFCCOL_FgIntenseYellow);
+
+			printf("+++ Success: 0 errors, %d warnings +++\n", cWarning);
+		}
+
+		if (pJobParse->m_pFnCleanup)
+		{
+			(*pJobParse->m_pFnCleanup)(pWork, pJobParse);
+		}
+	}
+
+	for (size_t ipFile = 0; ipFile < pWork->m_arypFile.C(); ++ipFile)
+	{
+		Workspace::File * pFile = pWork->m_arypFile[ipFile];
+		if (pFile->m_pChzFileBody)
+		{
+			pWork->m_pAlloc->MOE_FREE((u8 *)pFile->m_pChzFileBody);
+			pFile->m_pChzFileBody = nullptr;
 		}
 	}
 

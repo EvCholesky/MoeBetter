@@ -8,10 +8,17 @@
 #include "stdio.h"
 #include <cstdarg>
 
+#ifdef _MSC_VER
+	#include <windows.h>
+	static HANDLE s_hConsole = 0;
+#endif
+
 using namespace Moe;
 
 const char * Workspace::s_pChzSourceExtension = ".moe";
 const char * Workspace::s_pChzUnitTestExtension = ".moetest";
+
+void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp);
 
 ErrorManager::ErrorManager(Alloc * pAlloc)
 :m_pWork(nullptr)
@@ -37,6 +44,23 @@ bool ErrorManager::FTryHideError(ERRID errid)
 		}
 	}
 	return false;
+}
+
+void ErrorManager::ComputeErrorCounts(int * pCError, int * pCWarning)
+{
+	int cError = 0;
+	int cWarning = 0;
+	auto pErridMax = m_aryErrid.PMac();
+	for (auto pErrid = m_aryErrid.A(); pErrid != pErridMax; ++pErrid)
+	{
+		if (*pErrid < ERRID_ErrorMax)
+			++cError;
+		else
+			++cWarning;
+
+	}
+	*pCError = cError;
+	*pCWarning = cWarning;
 }
 
 Error::Error(ErrorManager * pErrman, ERRID errid)
@@ -227,6 +251,8 @@ void EmitError(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const
 	Error error(pErrman, errid);
 	PrintErrorLine(&error, "Error:", lexsp, pChz, ap);
 
+	PrintErrorTextSpan(pErrman->m_pWork, lexsp);
+
 	if (error.m_errs != ERRS_Hidden)
 	{
 		PrintGenericInstantiateContext(pErrman);
@@ -254,6 +280,47 @@ void EmitError(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const
 	EmitError(pParctx->m_pWork->m_pErrman, lexsp, errid, pChz, ap);
 }
 
+void InitConsoleSettings()
+{
+#ifdef _MSC_VER
+	SetConsoleOutputCP(CP_UTF8);
+	HANDLE hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
+	DWORD mode;
+	auto result = GetConsoleMode(hStdout, &mode);
+	if (result)
+	{
+		mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+		SetConsoleMode(hStdout, mode);
+	}
+	else
+	{
+		printf("Failed stting console settings.\n");
+	}
+
+	s_hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+#endif //defined _MSC_VER
+}
+
+GRFCCOL GrfccolCurrent()
+{
+	GRFCCOL grfccol;
+#ifdef _MSC_VER
+	MOE_ASSERT(s_hConsole, "No handle to output console");
+
+	CONSOLE_SCREEN_BUFFER_INFO buffinfo;
+	GetConsoleScreenBufferInfo(s_hConsole, &buffinfo);
+
+	grfccol = GRFCCOL(buffinfo.wAttributes & FCCOL_All);
+#endif //defined _MSC_VER
+	return grfccol;
+}
+
+void SetConsoleTextColor(GRFCCOL grfccol)
+{
+#ifdef  _MSC_VER
+	SetConsoleTextAttribute(s_hConsole, WORD(grfccol.m_raw));
+#endif //defined _MSC_VER
+}
 
 void GenerateUniqueName(UniqueNameSet * pUnset, const char * pChzIn, char * pChzOut, size_t cBOutMax)
 {
@@ -360,6 +427,133 @@ static void CalculateLinePosition(Workspace * pWork, const LexSpan & lexsp, s64 
 	*piCol = iCol + 1;		// 1 relative
 }
 
+struct TextSpan // tag = textspan
+{
+	bool		FIsValid() const
+					{ return m_pChzPre != nullptr && m_pChzPost != nullptr && m_pChzBegin != nullptr && m_pChzEnd != nullptr; }
+
+	const char *		m_pChzPre;
+	const char *		m_pChzBegin;
+	const char *		m_pChzEnd;
+	const char *		m_pChzPost;
+};
+
+static void ComputeTextSpan(Workspace * pWork, const LexSpan & lexsp, TextSpan * pTextspan)
+{
+	auto pFile = pWork->PFileLookup(lexsp.m_istrFilename.m_pChz, Workspace::FILEK_Nil);
+	if (!pFile || !lexsp.FIsValid())
+	{
+		pTextspan->m_pChzPre = nullptr;
+		pTextspan->m_pChzBegin = nullptr;
+		pTextspan->m_pChzEnd = nullptr;
+		pTextspan->m_pChzPost = nullptr;
+		return;
+	}
+
+	static const int s_cChPrefixMax = 40;
+	static const int s_cChPostfixMax = 40;
+
+	const char * pChzBody = pFile->m_pChzFileBody;
+	const char * pChzBegin = &pChzBody[lexsp.m_iB];
+	const char * pChzEnd = &pChzBody[lexsp.m_iB + lexsp.m_cB];
+
+	const char * pChzPre = pChzBegin;
+	const char * pChzPreMin = &pChzPre[-s_cChPrefixMax];
+	while(pChzPre != pChzBody && pChzPre != pChzPreMin)
+	{
+		const char * pChzNext = pChzPre - 1; 
+		if (*pChzNext  == '\n')	
+			break;
+
+		pChzPre = pChzNext;
+	}
+
+	const char * pChzPost = pChzEnd;
+	const char * pChzPostMax = &pChzPost[s_cChPostfixMax];
+	for ( ; *pChzPost != '\0' && pChzPost != pChzPostMax; ++pChzPost)
+	{
+		if (*pChzPost  == '\n')	
+			break;
+	}
+
+	pTextspan->m_pChzPre = pChzPre;
+	pTextspan->m_pChzBegin = pChzBegin;
+	pTextspan->m_pChzEnd = pChzEnd;
+	pTextspan->m_pChzPost = pChzPost;
+}
+
+static inline int CDigit(s64 n)
+{
+	int cDigit = 0;
+	while (n != 0)
+	{
+		n /= 10;
+		++cDigit;
+	}
+
+	return cDigit;
+}
+
+void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
+{
+	TextSpan textspan;
+	ComputeTextSpan(pWork, lexsp, &textspan);
+	if (!textspan.FIsValid())
+		return;
+
+	s64 iLine;
+	s64 iCodepoint;
+	CalculateLinePosition(pWork, lexsp, &iLine, &iCodepoint);
+
+	static const char * s_pChzMargin = " | ";
+	int cDigit = CDigit(iLine);
+
+	{
+		ConsoleColorScope ccolscope;
+		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolscope.m_grfccol.m_raw & 0xF0));
+
+		printf("%lld%s", iLine, s_pChzMargin);
+	}
+
+	size_t cB = textspan.m_pChzPost - textspan.m_pChzPre;
+	char * aCh = (char *)pWork->m_pAlloc->MOE_ALLOC(cB, 1);
+
+	size_t cBPre = textspan.m_pChzBegin - textspan.m_pChzPre;
+	CBCopyChz(textspan.m_pChzPre, aCh, cBPre+1);
+	printf("%s", aCh);
+
+	size_t cBSpan = textspan.m_pChzEnd - textspan.m_pChzBegin;
+	{
+		ConsoleColorScope ccolscope;
+		SetConsoleTextColor(ccolscope.m_grfccol | FCCOL_FgIntense);
+
+		CBCopyChz(textspan.m_pChzBegin, aCh, cBSpan+1);
+		printf("%s", aCh);
+	}
+
+	size_t cBPost = textspan.m_pChzPost - textspan.m_pChzEnd;
+	CBCopyChz(textspan.m_pChzEnd, aCh, cBPost+1);
+	printf("%s\n", aCh);
+
+	pWork->m_pAlloc->MOE_FREE(aCh);
+
+	{
+		ConsoleColorScope ccolscope;
+
+		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolscope.m_grfccol.m_raw & 0xF0));
+
+		printf("%*s%s%*s", cDigit, "", s_pChzMargin, (int)cBPre, "");
+
+		SetConsoleTextColor(GRFCCOL_FgIntenseRed | (ccolscope.m_grfccol.m_raw & 0xF0));
+
+		for (int iCh = 0; iCh < moeMax<size_t>(1, cBSpan); ++iCh)
+		{
+			printf("^");
+		}
+	}
+	printf("\n\n");
+}
+
 LexLookup::LexLookup(Workspace * pWork, const LexSpan & lexsp)
 {
 	m_istrFilename = lexsp.m_istrFilename;
@@ -398,7 +592,6 @@ Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 	{
 		m_mpFilekPHashHvIPFile[filek] = MOE_NEW(m_pAlloc, HashHvIPFile) HashHvIPFile(pAlloc, Moe::BK_Workspace);
 	}
-
 }
 
 void Workspace::AppendEntry(STNode * pStnod, SymbolTable * pSymtab)
@@ -582,6 +775,8 @@ void EndWorkspace(Workspace * pWork)
 	BlockListEntry::CIterator iter(&pWork->m_blistEntry);
 	while (WorkspaceEntry * pEntry = iter.Next())
 	{
+		CleanupStnodeRecursive(pAlloc, pEntry->m_pStnod);
+
 		pAlloc->MOE_DELETE(pEntry->m_pStnod);
 		pEntry->m_pStnod = nullptr;
 		pEntry->m_pSymtab = nullptr;

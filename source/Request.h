@@ -141,20 +141,20 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork);
 void PrintResult(Compilation * pComp, int iRqres, char * aCh, size_t cChMax);
 
 typedef void (*PFnJobUpdate)(Compilation * pComp, Workspace * pWork, Job *);
-typedef void (*PFnJobDelete)(Job *);
+typedef void (*PFnJobCleanup)(Workspace * pWork, Job *);
 
 struct Job
 {
 					Job()
 					:m_cJobUnfinished(0)
 					,m_pFnUpdate(nullptr)
-					,m_pFnDelete(nullptr)
+					,m_pFnCleanup(nullptr)
 					,m_pVData(nullptr)
 						{ ; }
 
 	int				m_cJobUnfinished;
 	PFnJobUpdate	m_pFnUpdate;
-	PFnJobDelete	m_pFnDelete;
+	PFnJobCleanup	m_pFnCleanup;
 	void *			m_pVData;
 };
 

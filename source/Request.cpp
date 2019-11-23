@@ -127,14 +127,14 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 		pWork->m_pErrman->ComputeErrorCounts(&cError, &cWarning);
 		if (cError != 0)
 		{
-			ConsoleColorScope ccolscope;
+			ConsoleColorAmbit ccolamb;
 			SetConsoleTextColor(GRFCCOL_FgIntenseRed);
 
 			printf("--- Compile FAILED: %d errors, %d warnings ---\n", cError, cWarning);
 		}
 		else
 		{
-			ConsoleColorScope ccolscope;
+			ConsoleColorAmbit ccolamb;
 			SetConsoleTextColor(GRFCCOL_FgIntenseYellow);
 
 			printf("+++ Success: 0 errors, %d warnings +++\n", cWarning);

@@ -538,7 +538,8 @@ extern TID TID_Nil;
 enum BK // block kind
 {
 	BK_Nil			= -1,
-	BK_Core			= 0,
+	BK_LexRecover	= 0,
+	BK_Core,
 	BK_Workspace,
 	BK_WorkspaceVal,
 	BK_WorkspaceFile,

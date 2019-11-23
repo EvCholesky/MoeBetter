@@ -462,7 +462,13 @@ struct ParseContext // tag = parctx
 						,m_pSymtabGeneric(nullptr)
 						,m_pStnodScope(nullptr)
 						,m_grfsymlook(FSYMLOOK_Default)
-							{ ; }
+							{ 
+								m_pLrecst = PLrecstAlloc(pAlloc);
+							}
+						~ParseContext()
+						{
+							FreeLexRecoverStack(m_pAlloc, m_pLrecst);
+						}
 
 	ErrorManager *		PErrman() const;
 
@@ -473,6 +479,7 @@ struct ParseContext // tag = parctx
 											// ie. 'TakeFoo proc (foo : SFoo($T))' needs to add symbol 'D' to the symtable for TakeFoo
 	STNode *			m_pStnodScope;		// current containg scope
 	GRFSYMLOOK			m_grfsymlook;
+	LexRecoverStack *	m_pLrecst;
 };
 
 struct ParseJobData // tag = parjd

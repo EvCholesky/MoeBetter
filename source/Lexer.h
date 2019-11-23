@@ -19,6 +19,10 @@
 #include "MoeString.h"
 #include "TypeInfo.h"
 
+struct Lexer;
+struct LexRecover;
+struct LexRecoverStack;
+
 enum TOK
 {
 	// don't define single char tokens (they are just ascii codepoints)
@@ -122,9 +126,6 @@ namespace RWord
 #undef STR
 #undef RW
 
-
-
-
 enum FLEXER
 {
 	FLEXER_EndOfLine	= 0x1,	// lexing to this token passed a newline - really StartOfLine
@@ -133,6 +134,36 @@ enum FLEXER
 	FLEXER_All			= 0x1,
 };
 MOE_DEFINE_GRF(GRFLEXER, FLEXER, u8);
+
+
+
+LexRecoverStack * PLrecstAlloc(Moe::Alloc * pAlloc);
+void FreeLexRecoverStack(Moe::Alloc * pAlloc, LexRecoverStack * pLrecst);
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, TOK tok, GRFLEXER grflexer = FLEXER_None);
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, const TOK * aTok, int cTok, GRFLEXER grflexer = FLEXER_None);
+void PopLexRecover(LexRecoverStack * pLrecst, LexRecover * pLrec);
+void SkipToRecovery(Lexer * pLex, LexRecoverStack * lrecst);
+
+struct LexRecoverAmbit  // tag = lrecamb
+{
+				LexRecoverAmbit(LexRecoverStack * pLrecst, TOK tok, GRFLEXER grflexer = FLEXER_None)
+					{
+						m_pLrecst = pLrecst;
+						m_pLrec = PLrecPush(m_pLrecst, tok, grflexer);
+					}
+				LexRecoverAmbit(LexRecoverStack * pLrecst, const TOK * aTok, int cTok, GRFLEXER grflexer = FLEXER_None)
+					{
+						m_pLrecst = pLrecst;
+						m_pLrec = PLrecPush(m_pLrecst, aTok, cTok, grflexer);
+					}
+				~LexRecoverAmbit()
+					{ PopLexRecover(m_pLrecst, m_pLrec); }
+
+	LexRecoverStack *	m_pLrecst;
+	LexRecover *		m_pLrec;
+};
+
+
 
 struct Lexer // tag = lex
 {

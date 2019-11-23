@@ -738,6 +738,100 @@ Moe::InString StrUnexpectedToken(Lexer * pLex)
 	return IstrInternCopy(PChzCurrentToken(pLex));
 }
 
+void SkipToToken(Lexer * pLex, TOK const * const aTok, int cTok, GRFLEXER grflexer)
+{
+	while (1)
+	{
+		bool fFound = (grflexer != FLEXER_None) && pLex->m_grflexer.FIsSet(grflexer);
+		TOK tok = (TOK)pLex->m_tok;
+		if (tok == TOK_Eof)
+			break;
+
+		for (int iTok = 0; !fFound && iTok < cTok; ++iTok)
+		{
+			fFound |= (tok == aTok[iTok]);
+		}
+
+		if (fFound)
+			break;
+		TokNext(pLex);
+	}
+}
+
+struct LexRecover // tag = lrec
+{
+	Moe::CFixAry<TOK, 4>	m_aryTok;	
+	GRFLEXER				m_grflexer;
+};
+
+struct LexRecoverStack // tag = lrecst
+{
+								LexRecoverStack(Moe::Alloc * pAlloc)
+								:m_aryLrec(pAlloc, Moe::BK_LexRecover)
+									{ ; }
+
+	Moe::CDynAry<LexRecover>	m_aryLrec;
+};
+
+LexRecoverStack * PLrecstAlloc(Moe::Alloc * pAlloc)
+{
+	auto pLrecst = MOE_NEW(pAlloc, LexRecoverStack) LexRecoverStack(pAlloc);
+	return pLrecst;
+}
+
+void FreeLexRecoverStack(Moe::Alloc * pAlloc, LexRecoverStack * pLrecst)
+{
+	pAlloc->MOE_DELETE(pLrecst);
+}
+
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, TOK tok, GRFLEXER grflexer)
+{
+	auto pLrec = pLrecst->m_aryLrec.AppendNew();
+	pLrec->m_aryTok.Append(tok);
+	pLrec->m_grflexer = grflexer;
+	return pLrec;
+}
+
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, const TOK * aTok, int cTok, GRFLEXER grflexer)
+{
+	auto pLrec = pLrecst->m_aryLrec.AppendNew();
+	pLrec->m_aryTok.Append(aTok, cTok);
+	pLrec->m_grflexer = grflexer;
+	return pLrec;
+}
+
+void PopLexRecover(LexRecoverStack * pLrecst, LexRecover * pLrec)
+{
+	MOE_ASSERT(pLrecst->m_aryLrec.PLast() == pLrec, "push/pop mismatch in the lex recovery stack");
+	pLrecst->m_aryLrec.PopLast();
+}
+
+void SkipToRecovery(Lexer * pLex, LexRecoverStack * pLrecst)
+{
+	auto pLrec = pLrecst->m_aryLrec.PLast();
+
+	auto grflexer = pLrec->m_grflexer;
+	TOK * pTokMin = pLrec->m_aryTok.A();
+	TOK * pTokMax = pLrec->m_aryTok.PMac();
+
+	while (1)
+	{
+		bool fFound = (grflexer != FLEXER_None) && pLex->m_grflexer.FIsSet(grflexer);
+		TOK tok = (TOK)pLex->m_tok;
+		if (tok == TOK_Eof)
+			break;
+
+		for (TOK * pTok = pTokMin; pTok != pTokMax; ++pTok)
+		{
+			fFound |= (tok == *pTok);
+		}
+
+		if (fFound)
+			break;
+		TokNext(pLex);
+	}
+}
+
 #define LEXER_TEST
 #ifdef LEXER_TEST
 void AssertMatches(

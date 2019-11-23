@@ -178,11 +178,11 @@ void InitConsoleSettings();
 GRFCCOL GrfccolCurrent();
 void SetConsoleTextColor(GRFCCOL grfccol);
 
-struct ConsoleColorScope // tag = ccolscope
+struct ConsoleColorAmbit // tag = ccolamb
 {
-					ConsoleColorScope()
+					ConsoleColorAmbit()
 						{ m_grfccol = GrfccolCurrent(); }
-					~ConsoleColorScope()
+					~ConsoleColorAmbit()
 						{ SetConsoleTextColor(m_grfccol); }
 		
 	GRFCCOL			m_grfccol;

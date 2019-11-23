@@ -509,8 +509,8 @@ void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
 	int cDigit = CDigit(iLine);
 
 	{
-		ConsoleColorScope ccolscope;
-		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolscope.m_grfccol.m_raw & 0xF0));
+		ConsoleColorAmbit ccolamb;
+		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0));
 
 		printf("%lld%s", iLine, s_pChzMargin);
 	}
@@ -524,8 +524,8 @@ void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
 
 	size_t cBSpan = textspan.m_pChzEnd - textspan.m_pChzBegin;
 	{
-		ConsoleColorScope ccolscope;
-		SetConsoleTextColor(ccolscope.m_grfccol | FCCOL_FgIntense);
+		ConsoleColorAmbit ccolamb;
+		SetConsoleTextColor(ccolamb.m_grfccol | FCCOL_FgIntense);
 
 		CBCopyChz(textspan.m_pChzBegin, aCh, cBSpan+1);
 		printf("%s", aCh);
@@ -538,13 +538,13 @@ void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
 	pWork->m_pAlloc->MOE_FREE(aCh);
 
 	{
-		ConsoleColorScope ccolscope;
+		ConsoleColorAmbit ccolamb;
 
-		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolscope.m_grfccol.m_raw & 0xF0));
+		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0));
 
 		printf("%*s%s%*s", cDigit, "", s_pChzMargin, (int)cBPre, "");
 
-		SetConsoleTextColor(GRFCCOL_FgIntenseRed | (ccolscope.m_grfccol.m_raw & 0xF0));
+		SetConsoleTextColor(GRFCCOL_FgIntenseRed | (ccolamb.m_grfccol.m_raw & 0xF0));
 
 		for (int iCh = 0; iCh < moeMax<size_t>(1, cBSpan); ++iCh)
 		{

@@ -81,7 +81,7 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 			} break;
 		case RQSRCK_SourceText:
 			{
-				Workspace::File * pFile = pWork->PFileEnsure(IstrIntern("src"), Workspace::FILEK_Source);
+				Workspace::File * pFile = pWork->PFileEnsure(IstrIntern("-src"), Workspace::FILEK_Source);
 
 				auto cB = pRqsrc->m_istr.CB();
 				char * pChzCopy = (char *)pWork->m_pAlloc->MOE_ALLOC(cB, 1);

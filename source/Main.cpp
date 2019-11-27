@@ -13,6 +13,7 @@
 | COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR 
 | OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
+#include "Lexer.h"
 #include "MoeArray.h"
 #include "MoeString.h"
 #include "MoeTypes.h"
@@ -207,6 +208,19 @@ static CommandLineManager::Option s_optAst("-printAST", "print the post parse AS
 
 extern bool FTestLexing();
 
+void InitInternStrings(Moe::Alloc * pAlloc)
+{
+	Moe::StaticInitStrings(pAlloc);
+	InternReservedWordStrings();
+	InternBuiltInTypeStrings();
+}
+
+void ShutdownInternStrings(Moe::Alloc * pAlloc)
+{
+	ClearReservedWordStrings();
+	ClearBuiltInTypeStrings();
+	Moe::StaticShutdownStrings(pAlloc);
+}
 
 int main(int cpChzArg, const char * apChzArg[])
 {
@@ -219,11 +233,10 @@ int main(int cpChzArg, const char * apChzArg[])
 	{
 		u8 aBString[s_cBString];
 		Alloc allocString(aBString, s_cBString);
-		Moe::StaticInitStrings(&allocString);
 
+		InitInternStrings(&allocString);
 		FTestLexing();
-
-		Moe::StaticShutdownStrings(&allocString);
+		ShutdownInternStrings(&allocString);
 	}
 
 #ifdef MOE_DEBUG
@@ -255,7 +268,7 @@ int main(int cpChzArg, const char * apChzArg[])
 
 	if (pCmdlineman->FHasCommand(s_optTest))
 	{
-		Moe::StaticInitStrings(&allocString);
+		InitInternStrings(&allocString);
 
 		ErrorManager errman(&allocError);
 		Workspace work(&allocHeap, &errman);
@@ -263,11 +276,11 @@ int main(int cpChzArg, const char * apChzArg[])
 		FUnitTestFile(&work, comline.m_pChzFilename, grfcompile.m_raw);
 #endif
 
-		Moe::StaticShutdownStrings(&allocString);
+		ShutdownInternStrings(&allocString);
 	}
 	else 
 	{
-		Moe::StaticInitStrings(&allocString);
+		InitInternStrings(&allocString);
 
 		Compilation comp(&allocHeap);
 
@@ -324,6 +337,6 @@ int main(int cpChzArg, const char * apChzArg[])
 		DeleteAltrac(&allocAltrac, pAltrac);
 		work.m_pAlloc->SetAltrac(nullptr);
 #endif
-		StaticShutdownStrings(&allocString);
+		ShutdownInternStrings(&allocString);
 	}
 }

@@ -1,13 +1,19 @@
 #include "TypeInfo.h"
 
-#define BLTIN(x) const char * g_pChz##x = 
-#define STR(x) #x;
 namespace BuiltIn
 {
+#define BLTIN(x) const char * g_pChz##x = 
+#define STR(x) #x;
 	BUILT_IN_TYPE_LIST	
-}
 #undef STR
 #undef BLTIN
+
+#define BLTIN(x) Moe::InString g_istr##x;
+#define STR(x)
+	BUILT_IN_TYPE_LIST	
+#undef STR
+#undef BLTIN
+}
 
 TypeRegistry::TypeRegistry(Moe::Alloc * pAlloc)
 :m_pAlloc(pAlloc)

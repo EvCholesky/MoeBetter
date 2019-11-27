@@ -157,7 +157,7 @@ const char * PChzInternCopy(const char * pChz, size_t cB = 0)
 	if (cB == 0)
 	{
 		size_t cBChz = Moe::CBChz(pChz);
-		return s_pStrtab->PChzInternCopy(pChz, cBChz, Moe::HvFromPChz(pChz, cBChz));
+		return s_pStrtab->PChzInternCopy(pChz, cBChz, Moe::HvFromPChz(pChz));
 	}
 
 	return s_pStrtab->PChzInternCopy(pChz, cB, Moe::HvFromPChz(pChz, cB));

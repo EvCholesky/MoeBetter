@@ -86,11 +86,12 @@ enum PARK : s8 // PARse Kind
 	MOE_MAX_MIN_NIL(PARK)
 };
 
-const char * PChzFromPark(PARK park);
+const char * PChzLongFromPark(PARK park);
+const char * PChzAbbrevFromPark(PARK park);
 
 enum STEXK // Syntax Tree EXtension Kind
 {
-	STEXK_None,			// basic STNode
+	STEXK_Node,			// basic STNode
 	STEXK_For,
 	STEXK_Decl,
 	STEXK_Enum,
@@ -104,6 +105,7 @@ enum STEXK // Syntax Tree EXtension Kind
 };
 
 STEXK StexkFromPark(PARK park);
+const char * PChzFromStexk(STEXK stexk);
 
 enum STREES : s8
 {
@@ -157,13 +159,11 @@ MOE_DEFINE_GRF(GRFSTNOD, FSTNOD, u16);
 
 #define MOE_STNOD_CHILD5(N1, N2, N3, N4, N5) \
 	STNode *N1, *N2, *N3, *N4, *N5; \
-	void SetDefaultChildArray() { SetChildArray(&N1, 5); } \
-	static const int s_cpStnodChild = 6
+	void SetDefaultChildArray() { SetChildArray(&N1, 5); } 
 
 #define MOE_STNOD_CHILD6(N1, N2, N3, N4, N5, N6) \
 	STNode *N1, *N2, *N3, *N4, *N5, *N6; \
-	void SetDefaultChildArray() { SetChildArray(&N1, 6); } \
-	static const int s_cpStnodChild = 6
+	void SetDefaultChildArray() { SetChildArray(&N1, 6); } 
 
 // Slimmed down AST
 struct STNode // tag = stnod
@@ -180,16 +180,23 @@ public:
 							,m_pSymbase(nullptr)
 							,m_cpStnodChild(0)
 							,m_apStnodChild(nullptr)
-								{ MOE_ASSERT(StexkFromPark(park) == stexk, "park/stexk mismatch"); }
+								{ 
+									MOE_ASSERT(StexkFromPark(park) == stexk, "park/stexk mismatch PARK_%s != STEXK_%s",
+										PChzAbbrevFromPark(park), PChzFromStexk(stexk));
+								}
 							~STNode();
 								
 
+
+	int 					CPStnodChild() const 
+								{ return m_cpStnodChild; }
 	STNode *				PStnodChild(int ipStnod)
 								{ return m_apStnodChild[ipStnod]; }
 	STNode *				PStnodChildSafe(int ipStnod);
-	void					SetChildArray(STNode ** apStnodChild, size_t cpStnodChild);
-	void					CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t cpStnodChild);
-	void					CopyChildArray(Moe::Alloc * pAlloc, STNode * apStnodChild);
+	void					SetChildArray(STNode ** apStnodChild, int cpStnodChild);
+	void					CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, int cpStnodChild);
+	void					CopyChildArray(Moe::Alloc * pAlloc, STNode * pStnodChild);
+	void					AppendChildToArray(Moe::Alloc * pAlloc, STNode * pStnodChild);
 	bool					FHasChildArray() const
 								{ return m_cpStnodChild > 0; }
 	STEXK					Stexk() const
@@ -211,7 +218,7 @@ public:
 	SymbolBase *			m_pSymbase;
 
 	// Child nodes are embedded in STNode derived with a fixed child layout 
-	size_t                  m_cpStnodChild;
+	int						m_cpStnodChild;
 	STNode **				m_apStnodChild;
 };
 
@@ -255,10 +262,12 @@ public:
 							,m_pStnodName(nullptr)
 							,m_pStnodParameterList(nullptr)
 							,m_pStnodReturnType(nullptr)
+							,m_pStnodBody(nullptr)
+							,m_pStnodForeignAlias(nullptr)
 							,m_pStnodParentScope(nullptr)
 								{ ; }
 
-	MOE_STNOD_CHILD4(m_pStnodName, m_pStnodParameterList, m_pStnodReturnType, m_pStnodParentScope);
+	MOE_STNOD_CHILD6(m_pStnodName, m_pStnodParameterList, m_pStnodReturnType, m_pStnodBody, m_pStnodForeignAlias, m_pStnodParentScope );
 	GRFSTPROC				m_grfstproc;
 
 	bool					FCheckIsValid(ErrorManager * pErrman);
@@ -312,6 +321,25 @@ public:
 
 
 
+enum ENUMIMP	// implicit enum members (added as STNodes during parse)
+{
+	ENUMIMP_NilConstant,	// (enum) -1 or max unsigned (not included in min)
+	ENUMIMP_MinConstant,	// (enum) lowest user value
+	ENUMIMP_LastConstant,	// (enum) highest user value 
+	ENUMIMP_MaxConstant,	// (enum) one past the highest value
+	ENUMIMP_None,			// (flagEnum) zero
+	ENUMIMP_All,			// (flagEnum) all defined bits in bitmask
+	ENUMIMP_Names,
+	ENUMIMP_Values,
+
+	ENUMIMP_Max,
+	ENUMIMP_Min = 0,
+	ENUMIMP_Nil = -1,
+};
+
+Moe::InString IstrFromEnumimp(ENUMIMP enumimp);
+bool FNeedsImplicitMember(ENUMIMP enumimp, ENUMK enumk);
+
 struct STEnum : public STNode
 {
 	static const STEXK s_stexk = STEXK_Enum;
@@ -325,14 +353,19 @@ struct STEnum : public STNode
 							,m_cConstantExplicit(0)
 							,m_cConstantImplicit(0)
 							,m_pTinenum(nullptr)
-								{ ; }
+								{ 
+									for (int enumimp = 0; enumimp < MOE_DIM(m_mpEnumimpIstnod); ++enumimp)
+										m_mpEnumimpIstnod[enumimp] = -1;
+								}
 
 	MOE_STNOD_CHILD3(m_pStnodIdentifier, m_pStnodType, m_pStnodConstantList);
 
 	ENUMK					m_enumk;
-	size_t					m_cConstantExplicit;
-	size_t					m_cConstantImplicit;
+	int						m_cConstantExplicit;
+	int						m_cConstantImplicit;
 	TypeInfoEnum *			m_pTinenum;     // why is this here? not just m_pTin?
+
+	int						m_mpEnumimpIstnod[ENUMIMP_Max];		// pStnod index for immplicit constants in pStnodConstantList
 
 	bool					FCheckIsValid(ErrorManager * pErrman);
 };
@@ -358,9 +391,7 @@ struct STStruct : public STNode
 
 #define AST_ASSERT(PWORK, PSTNOD, PREDICATE, ... ) do { if (!(PREDICATE)) { \
 		Moe::AssertHandler(__FILE__, __LINE__, #PREDICATE, __VA_ARGS__); \
-		s32 iLine, iCol; \
-		CalculateLinePosition(pWork, &PSTNOD->m_lexsp, &iLine, &iCol); \
-		printf("compiling: %s:%u\n", PSTNOD->m_lexsp.m_istrFilename.m_pChz, iLine); \
+		printf("compiling: %s:%llu\n", PSTNOD->m_lexsp.m_istrFilename.m_pChz, LexLookup(PWORK, PSTNOD->m_lexsp).m_iLine); \
 		MOE_DEBUG_BREAK(); \
 		 } } while(0)
 
@@ -370,9 +401,7 @@ struct STStruct : public STNode
 	true :\
 	(\
 		Moe::AssertHandler( __FILE__, __LINE__, #PREDICATE, __VA_ARGS__ ),\
-		s32 iLine, iCol; \
-		CalculateLinePosition(pWork, &PSTNOD->m_lexsp, &iLine, &iCol); \
-		printf("compiling: %s:%u\n", PSTNOD->m_lexsp.m_istrFilename.m_pChz, iLine); \
+		printf("compiling: %s:%llu\n", PSTNOD->m_lexsp.m_istrFilename.m_pChz, LexLookup(PWORK, PSTNOD->m_lexsp).m_iLine), \
 		MOE_DEBUG_BREAK(), \
 		false\
 	)\

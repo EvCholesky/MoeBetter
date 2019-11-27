@@ -69,11 +69,6 @@ namespace Moe
 						:m_pChz(nullptr)
 							{ ; }
 
-		bool			operator==(const char * pChzOther) const
-							{ return m_pChz == pChzOther; }
-		bool			operator!=(const char * pChzOther) const
-							{ return !(*this == pChzOther); }
-
 		bool			operator==(const InString & istrOther) const
 							{ return m_pChz == istrOther.m_pChz; }
 		bool			operator!=(const InString & istrOther) const
@@ -81,6 +76,8 @@ namespace Moe
 
 		bool			FIsEmpty() const
 							{ return m_pChz == nullptr || *m_pChz == '\0'; }
+		bool			FIsNull() const
+							{ return m_pChz == nullptr; }
 		size_t			CB() const
 							{ return Moe::CBChz(m_pChz); }
 		size_t			CCodepoint() const

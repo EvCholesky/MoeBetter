@@ -46,13 +46,50 @@ enum FARGLIST
 
 MOE_DEFINE_GRF(GRFARGLIST, FARGLIST, u32);
 
+void PushSymbolTable(ParseContext * pParctx, SymbolTable * pSymtab);
+SymbolTable * PSymtabPop(ParseContext * pParctx);
+
 void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> * parypStnodArgList, GRFARGLIST grfarglist = FARGLIST_None);
+STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex);
 STNode * PStnodParseExpression(ParseContext * pParctx, Lexer * pLex, GRFEXP grfexp = FEXP_None);
 STNode * PStnodParseLogicalOrExpression(ParseContext * pParctx, Lexer * pLex);
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex);
 STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex);
+STValue * PStvalAllocateIdentifier(ParseContext * pParctx, Lexer * pLex, const LexSpan & lexsp, const Moe::InString istrIdent);
 
 static int g_nSymtabVisitId = 1; // visit index used by symbol table collision walks
+
+struct ProcSymtabStack // tag = procss
+{
+						ProcSymtabStack(ParseContext * pParctx)
+						:m_pParctx(pParctx)
+						,m_pSymtabPrev(nullptr)
+							{ ; }
+
+						~ProcSymtabStack()
+						{
+							if (m_pSymtabPrev)
+								PSymtabPop();
+						}
+
+	void				Push(SymbolTable * pSymtab, const LexSpan & lexloc)
+							{
+								m_pSymtabPrev = m_pParctx->m_pSymtabGeneric;
+								m_pParctx->m_pSymtabGeneric = pSymtab;
+
+								::PushSymbolTable(m_pParctx, pSymtab);
+							}
+
+	SymbolTable * 		PSymtabPop()
+							{
+								m_pParctx->m_pSymtabGeneric = m_pSymtabPrev;
+								return ::PSymtabPop(m_pParctx);
+							}
+
+	ParseContext *		m_pParctx; 
+	SymbolTable *		m_pSymtabPrev;
+};
+
 
 struct ParkInfo // tag = parkinfo
 {
@@ -63,10 +100,10 @@ struct ParkInfo // tag = parkinfo
 
 static ParkInfo s_mpParkParkinfo[] =
 {
-	{ STEXK_None,		"err", "Error" },
+	{ STEXK_Node,		"err", "Error" },
 	{ STEXK_Value,		"ident", "Identifier" },
 	{ STEXK_Value,		"rword", "Reserved Word" },
-	{ STEXK_None,		"nop", "Nop" },
+	{ STEXK_Node,		"nop", "Nop" },
 	{ STEXK_Value,		"lit",	"Literal" },
 	{ STEXK_Operator,	"addOp", "Additive Operator" },
 	{ STEXK_Operator,	"mulOp", "Multiplicative Operator" },
@@ -76,37 +113,37 @@ static ParkInfo s_mpParkParkinfo[] =
 	{ STEXK_Operator,	"assignOp", "Assignment Operator" },
 	{ STEXK_Operator,	"prefixOp", "Unary Operator" },
 	{ STEXK_Operator,	"postfixOp", "Postfix Unary Operator" },
-	{ STEXK_None,		"uninit", "Uninitializer" },
-	{ STEXK_None,		"cast", "Cast" },
-	{ STEXK_None,		"elem", "Array Element" },			// [array, index]
-	{ STEXK_None,		"memb", "Member Lookup" },			// [struct, child]
-	{ STEXK_None,		"call", "Procedure Call"},			// [procedure, arg0, arg1, ...]
-	{ STEXK_None,		"specStruct", "Specialized Struct" },
-	{ STEXK_None,		"list", "List", },
-	{ STEXK_None,		"params", "Parameter List" },
-	{ STEXK_None,		"expList", "Expression List" },
-	{ STEXK_None,		"genType", "Generic Type Spec" },
-	{ STEXK_None,		"if" ,"If" },
-	{ STEXK_None,		"else", "Else" },
-	{ STEXK_None,		"aryDecl", "Array Decl" },
-	{ STEXK_None,		"refDecl", "Reference Decl" },
-	{ STEXK_None,		"qualDecl", "Qualifier Decl" },
-	{ STEXK_None,		"procDecl", "Procedure Reference Decl" },
+	{ STEXK_Node,		"uninit", "Uninitializer" },
+	{ STEXK_Node,		"cast", "Cast" },
+	{ STEXK_Node,		"elem", "Array Element" },			// [array, index]
+	{ STEXK_Node,		"memb", "Member Lookup" },			// [struct, child]
+	{ STEXK_Node,		"call", "Procedure Call"},			// [procedure, arg0, arg1, ...]
+	{ STEXK_Node,		"specStruct", "Specialized Struct" },
+	{ STEXK_Node,		"list", "List", },
+	{ STEXK_Node,		"params", "Parameter List" },
+	{ STEXK_Node,		"expList", "Expression List" },
+	{ STEXK_Node,		"genType", "Generic Type Spec" },
+	{ STEXK_Node,		"if" ,"If" },
+	{ STEXK_Node,		"else", "Else" },
+	{ STEXK_Node,		"aryDecl", "Array Decl" },
+	{ STEXK_Node,		"refDecl", "Reference Decl" },
+	{ STEXK_Node,		"qualDecl", "Qualifier Decl" },
+	{ STEXK_Node,		"procDecl", "Procedure Reference Decl" },
 	{ STEXK_Decl,		"decl", "Decl" },
 	{ STEXK_Decl,		"constDecl", "Constant Decl" },
-	{ STEXK_None,		"typedef", "Typedef" },
-	{ STEXK_None,		"procDef", "Procedure Definition" },
-	{ STEXK_None,		"enumDef", "Enum Definition" },
-	{ STEXK_None,		"strucDef", "Struct Definition" },
-	{ STEXK_None,		"enumConst", "Enum Constant" },
-	{ STEXK_None,		"varArg", "Variadic Argument" },
+	{ STEXK_Node,		"typedef", "Typedef" },
+	{ STEXK_Proc,		"procDef", "Procedure Definition" },
+	{ STEXK_Enum,		"enumDef", "Enum Definition" },
+	{ STEXK_Struct,		"strucDef", "Struct Definition" },
+	{ STEXK_Decl,		"enumConst", "Enum Constant" },
+	{ STEXK_Node,		"varArg", "Variadic Argument" },
 	{ STEXK_Decl,		"cpdLit", "CompoundLiteral" },
 	//{ STEXK_None,		"aryLit", "Array Literal" },
-	{ STEXK_None,		"argLabel", "Argument Label" },
-	{ STEXK_None,		"genDecl", "Generic Decl" },
-	{ STEXK_None,		"genStruct", "Generic Struct Spec" },
-	{ STEXK_None,		"typeArg", "Type Argument" },
-	{ STEXK_None,		"baked", "Baked Value" },
+	{ STEXK_Node,		"argLabel", "Argument Label" },
+	{ STEXK_Node,		"genDecl", "Generic Decl" },
+	{ STEXK_Node,		"genStruct", "Generic Struct Spec" },
+	{ STEXK_Node,		"typeArg", "Type Argument" },
+	{ STEXK_Node,		"baked", "Baked Value" },
 };
 
 MOE_CASSERT(MOE_DIM(s_mpParkParkinfo) == PARK_Max, "missing ParkInfo");
@@ -140,6 +177,37 @@ const char * PChzFromLitk(LITK litk)
 	return s_mpLitkPChz[litk];
 }
 
+bool FNeedsImplicitMember(ENUMIMP enumimp, ENUMK enumk)
+{
+	if (enumimp == ENUMIMP_Names || enumimp == ENUMIMP_Values)
+		return true;
+	bool fIsFlagEnumimp = enumimp > ENUMIMP_MaxConstant;
+	return fIsFlagEnumimp == (enumk == ENUMK_FlagEnum);
+}
+
+Moe::InString IstrFromEnumimp(ENUMIMP enumimp)
+{
+	const InString mpEnumimpIstr[] =
+	{
+	BuiltIn::g_istrEnumNil,		// ENUMIMP_NilConstant
+	BuiltIn::g_istrEnumMin,		// ENUMIMP_MinConstant
+	BuiltIn::g_istrEnumLast,	// ENUMIMP_LastConstant
+	BuiltIn::g_istrEnumMax,		// ENUMIMP_MaxConstant
+	BuiltIn::g_istrEnumNone,	// ENUMIMP_None
+	BuiltIn::g_istrEnumAll,		// ENUMIMP_All
+	BuiltIn::g_istrEnumNames,	// ENUMIMP_Names
+	BuiltIn::g_istrEnumValues,	// ENUMIMP_Values
+	};
+
+	if (enumimp == ENUMIMP_Nil)
+		return IstrIntern("Nil");
+
+	if ((enumimp < ENUMIMP_Nil) | (enumimp >= ENUMIMP_Max))
+		return IstrIntern("Unknown EnumImp");
+
+	return mpEnumimpIstr[enumimp];
+}
+
 const char * PChzAbbrevFromPark(PARK park)
 {
 	if (park == PARK_Nil)
@@ -170,6 +238,30 @@ STEXK StexkFromPark(PARK park)
 	return s_mpParkParkinfo[park].m_stexk;
 }
 
+const char * PChzFromStexk(STEXK stexk)
+{
+	static const char * s_mpStexkPChz[] =
+	{
+	"Node",
+	"For",
+	"Decl",
+	"Enum",
+	"Struct",
+	"Proc",
+	"Value",
+	"Operator",
+	};
+	MOE_CASSERT(MOE_DIM(s_mpStexkPChz) == STEXK_Max, "missing STEXK string");
+	if (stexk == STEXK_Nil)
+		return "Nil";
+
+	if ((stexk < STEXK_Nil) | (stexk >= STEXK_Max))
+		return "Unknown STEXK";
+
+	return s_mpStexkPChz[stexk];
+}
+
+
 const char * PChzFromQualk(QUALK qualk)
 {
 	static const char * s_mpQualkPChz[] =
@@ -199,6 +291,16 @@ void AppendFlagNames(Moe::StringBuffer * pStrbuf, GRFQUALK grfqualk, const char 
 			pChzSpacerCur = pChzSpacer;
 		}
 	}
+}
+
+inline bool FIsIdentifier(STNode * pStnod, InString istr)
+{
+	auto pStval = PStnodRtiCast<STValue *>(pStnod);
+
+	if (pStval->m_park != PARK_Identifier)
+		return false;
+
+	return pStval->m_istr == istr;
 }
 
 
@@ -481,7 +583,7 @@ void WriteAstValue(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 					AppendChz(pStrbuf, "(");
 
 					auto pStdecl = PStmapRtiCast<CSTDecl *>(pStnod->m_pStmap);
-					if (!EWC_FVERIFY(pStdecl && pStdecl->m_iStnodInit >= 0, "array literal with no values"))
+					if (!MOE_FVERIFY(pStdecl && pStdecl->m_iStnodInit >= 0, "array literal with no values"))
 						break;
 
 					auto pStnodList = pStnod->PStnodChild(pStdecl->m_iStnodInit);
@@ -553,7 +655,7 @@ bool FTryWriteValueSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 					AppendChz(pStrbuf, "(");
 
 					auto pStdecl = PStmapRtiCast<CSTDecl *>(pStnod->m_pStmap);
-					if (!EWC_FVERIFY(pStdecl && pStdecl->m_iStnodInit >= 0, "array literal with no values"))
+					if (!MOE_FVERIFY(pStdecl && pStdecl->m_iStnodInit >= 0, "array literal with no values"))
 						break;
 
 					auto pStnodList = pStnod->PStnodChild(pStdecl->m_iStnodInit);
@@ -901,6 +1003,27 @@ enum SYMCCK		// SYMbol Collision Check Kind
 	SYMCCK_Uses,	// walking symtabs that the entry table uses
 };
 
+// Symbol lookup rules are as follows 
+// Types symbols are unordered and visible anywhere within the symbol table parent hierarchy
+// Instances are ordered and only visible within the current nesting level or the global one
+
+enum TABVIS
+{
+	TABVIS_Unordered,		// all symbols are visible
+	TABVIS_Ordered,			// instances are visible, if they come later lexically
+	TABVIS_NoInstances,		// no instances, only types are visible
+};
+
+static inline TABVIS TabvisCompute(SymbolTable * pSymtabCur, s32 iNestingDepthQuery, GRFSYMLOOK grfsymlook)
+{
+	if ((pSymtabCur->m_iNestingDepth == 0) | (grfsymlook.FIsSet(FSYMLOOK_IgnoreOrder)))
+		return TABVIS_Unordered;
+
+	if (pSymtabCur->m_iNestingDepth < iNestingDepthQuery)
+		return TABVIS_NoInstances;
+	return TABVIS_Ordered;
+}
+
 SYMCOLLIS SymcollisCheck(
 	SymbolTable * pSymtab,
 	const Moe::InString * pIstrMin,
@@ -1012,6 +1135,11 @@ ERRID ErridCheckSymbolCollision(
 	return ERRID_Nil;
 }
 
+void SymbolTable::AddManagedTin(TypeInfo * pTin)
+{
+	m_arypTinManaged.Append(pTin);
+}
+
 Symbol * SymbolTable::PSymNewUnmanaged(const InString & istrName, STNode * pStnodDefinition, GRFSYM grfsym)
 {
 	auto pSym = MOE_NEW(m_pAlloc, Symbol) Symbol;
@@ -1087,6 +1215,60 @@ Symbol * SymbolTable::PSymEnsure(
 	return pSym;
 }
 
+Symbol * SymbolTable::PSymLookup(InString istr, const LexSpan & lexsp, GRFSYMLOOK grfsymlook, SymbolTable ** ppSymtabOut)
+{
+	if (ppSymtabOut)
+		*ppSymtabOut = this;
+
+	if (grfsymlook.FIsSet(FSYMLOOK_Local))
+	{
+		Symbol ** ppSym = m_hashIstrPSym.Lookup(istr);
+		if (ppSym)
+		{
+			auto tabvis = TabvisCompute(this, m_iNestingDepth, grfsymlook);
+			Symbol * pSym = *ppSym;
+
+			while (pSym)
+			{
+				LexSpan lexspSym = (pSym->m_pStnodDefinition) ? pSym->m_pStnodDefinition->m_lexsp : LexSpan();
+				bool fVisibleWhenNested = pSym->m_grfsym.FIsSet(FSYM_VisibleWhenNested);
+				if (fVisibleWhenNested | (tabvis == TABVIS_Unordered) | ((tabvis < TABVIS_NoInstances) & (lexspSym <= lexsp)))
+				{
+					return pSym;
+				}
+				pSym = pSym->m_pSymPrev;
+			}
+		}
+	}
+
+	SymbolTable * pSymtab = (grfsymlook.FIsSet(FSYMLOOK_Ancestors)) ? m_pSymtabParent : nullptr;
+	LexSpan lexspChild = lexsp;
+	while (pSymtab)
+	{
+		Symbol ** ppSym = pSymtab->m_hashIstrPSym.Lookup(istr);
+
+		if (ppSym)
+		{
+			auto tabvis = TabvisCompute(pSymtab, m_iNestingDepth, grfsymlook);
+			Symbol * pSym = *ppSym;
+			while (pSym)
+			{
+				LexSpan lexspSym = (pSym->m_pStnodDefinition) ? pSym->m_pStnodDefinition->m_lexsp : LexSpan();
+				bool fVisibleWhenNested = pSym->m_grfsym.FIsSet(FSYM_VisibleWhenNested);
+				if (fVisibleWhenNested | (tabvis == TABVIS_Unordered) | ((tabvis < TABVIS_NoInstances) & (lexspSym <= lexsp)))
+				{
+					if (ppSymtabOut)
+						*ppSymtabOut = pSymtab;
+					return pSym;
+				}
+				pSym = pSym->m_pSymPrev;
+			}
+		}
+
+		pSymtab = pSymtab->m_pSymtabParent;
+	}
+	return nullptr; 
+}
 
 TypeInfo * SymbolTable::PTinBuiltin(const Moe::InString & istr)
 {
@@ -1104,6 +1286,63 @@ TypeInfo * SymbolTable::PTinBuiltin(const Moe::InString & istr)
 		return pSym->m_pTin;
 	return nullptr;
 	*/
+}
+
+TypeInfoEnum * SymbolTable::PTinenumAllocate(Moe::InString istrName, int cConstant, ENUMK enumk, STEnum * pStenumDef)
+{
+	size_t cBAlloc = CBAlign(sizeof(TypeInfoEnum), MOE_ALIGN_OF(TypeInfoEnumConstant)) + 
+					cConstant * sizeof(TypeInfoEnumConstant);
+	u8 * pB = (u8 *)m_pAlloc->MOE_ALLOC(cBAlloc, 8);
+
+	TypeInfoEnum * pTinenum = new(pB) TypeInfoEnum(istrName);
+	pTinenum->m_enumk = enumk;
+
+	auto aTinecon = (TypeInfoEnumConstant *)PVAlign( pB + sizeof(TypeInfoEnum), MOE_ALIGN_OF(TypeInfoEnumConstant));
+	pTinenum->m_aryTinecon.SetArray(aTinecon, 0, cConstant);
+
+	pTinenum->m_tinstructProduced.m_pStnodStruct = pStenumDef;
+	AddManagedTin(pTinenum);
+
+	return pTinenum;
+}
+
+TypeInfoProcedure * SymbolTable::PTinprocAllocate(Moe::InString istrName, size_t cParam, size_t cReturn)
+{
+	size_t cBAlloc = CBAlign(sizeof(TypeInfoProcedure), MOE_ALIGN_OF(TypeInfo *));
+	cBAlloc = cBAlloc +	(cParam + cReturn) * sizeof(TypeInfo *) + (cParam * sizeof(GRFPARMQ));
+
+	u8 * pB = (u8 *)m_pAlloc->MOE_ALLOC(cBAlloc,8);
+	TypeInfoProcedure * pTinproc = new(pB) TypeInfoProcedure(istrName);
+	TypeInfo ** ppTin = (TypeInfo**)PVAlign( pB + sizeof(TypeInfoProcedure), MOE_ALIGN_OF(TypeInfo *));
+
+	pTinproc->m_arypTinParams.SetArray(ppTin, 0, cParam);
+	pTinproc->m_arypTinReturns.SetArray(&ppTin[cParam], 0, cReturn);
+
+	auto pGrfparmq = (GRFPARMQ*)&ppTin[cParam + cReturn];
+	pTinproc->m_mpIptinGrfparmq.SetArray(pGrfparmq, cParam, cParam);
+	ZeroAB(pTinproc->m_mpIptinGrfparmq.A(), pTinproc->m_mpIptinGrfparmq.C() * sizeof(GRFPARMQ));
+
+	AddManagedTin(pTinproc);
+	return pTinproc;
+}
+
+TypeInfoStruct * SymbolTable::PTinstructAllocate(InString istrIdent, size_t cField, size_t cGenericParam)
+{
+
+	size_t cBAlloc = CBAlign(sizeof(TypeInfoStruct), MOE_ALIGN_OF(TypeStructMember)) + 
+					cField * sizeof(TypeStructMember) + 
+					cGenericParam  * sizeof (TypeInfo *);
+	u8 * pB = (u8 *)m_pAlloc->MOE_ALLOC(cBAlloc, 8);
+
+	TypeInfoStruct * pTinstruct = new(pB) TypeInfoStruct(istrIdent);
+	AddManagedTin(pTinstruct);
+
+	auto aTypememb = (TypeStructMember*)PVAlign(
+											pB + sizeof(TypeInfoStruct), 
+											MOE_ALIGN_OF(TypeStructMember));
+	pTinstruct->m_aryTypemembField.SetArray(aTypememb, 0, cField);
+
+	return pTinstruct;
 }
 
 void SymbolTable::AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo * pTin, GRFSYM grfsym)
@@ -1271,7 +1510,7 @@ template <> struct StexAlloc<STNode>
 { 
 	static STNode * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
 	{
-		return MOE_NEW(pAlloc, STNode) STNode(STEXK_None, park, lexsp);
+		return MOE_NEW(pAlloc, STNode) STNode(STEXK_Node, park, lexsp);
 	}
 };
 
@@ -1322,14 +1561,18 @@ STNode * STNode::PStnodChildSafe(int ipStnod)
 	return m_apStnodChild[ipStnod];
 }
 
-void STNode::SetChildArray(STNode ** apStnodChild, size_t cpStnodChild)
+void STNode::SetChildArray(STNode ** apStnodChild, int cpStnodChild)
 {
+	MOE_ASSERT(m_apStnodChild == nullptr, "leaking child array");
+
 	m_apStnodChild = (STNode **)apStnodChild;
 	m_cpStnodChild = cpStnodChild;
 }
 
-void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t cpStnodChild)
+void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, int cpStnodChild)
 {
+	MOE_ASSERT(m_apStnodChild == nullptr, "leaking child array");
+
 	size_t cB = sizeof(STNode *) * cpStnodChild;
 	m_apStnodChild = (STNode **)pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(STNode *));
 	m_cpStnodChild = cpStnodChild;
@@ -1339,10 +1582,30 @@ void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, size_t 
 
 void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode * pStnodChild)
 {
+	MOE_ASSERT(m_apStnodChild == nullptr, "leaking child array");
+
 	m_cpStnodChild = 1;
 	size_t cB = sizeof(STNode *) * m_cpStnodChild;
 	m_apStnodChild = (STNode **)pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(STNode *));
 	memcpy(m_apStnodChild, &pStnodChild, cB);
+
+	m_grfstnod.AddFlags(FSTNOD_ChildArrayOnHeap);
+}
+
+void STNode::AppendChildToArray(Moe::Alloc * pAlloc, STNode * pStnodChild)
+{
+	STNode ** apStnodPrev = m_apStnodChild;
+
+	++m_cpStnodChild;
+	size_t cB = sizeof(STNode *) * m_cpStnodChild;
+	m_apStnodChild = (STNode **)pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(STNode *));
+	memcpy(m_apStnodChild, &pStnodChild, sizeof(STNode *) * (m_cpStnodChild - 1));
+	m_apStnodChild[m_cpStnodChild - 1] = pStnodChild;
+
+	if (apStnodPrev && m_grfstnod.FIsSet(FSTNOD_ChildArrayOnHeap))
+	{
+		pAlloc->MOE_DELETE(apStnodPrev);
+	}
 
 	m_grfstnod.AddFlags(FSTNOD_ChildArrayOnHeap);
 }
@@ -1352,7 +1615,7 @@ bool STNode::FCheckIsValid(ErrorManager * pErrman)
 	STEXK stexk = Stexk();
 	switch (stexk)
 	{
-	case STEXK_None:														break;
+	case STEXK_Node:		break;
 	case STEXK_For:			return ((STFor*)this)->FCheckIsValid(pErrman);
 	case STEXK_Decl:		return ((STDecl*)this)->FCheckIsValid(pErrman);
 	case STEXK_Enum:		return ((STEnum*)this)->FCheckIsValid(pErrman);
@@ -1559,7 +1822,7 @@ STNode * PStnodParsePointerDecl(ParseContext * pParctx, Lexer * pLex)
 
 STNode * PStnodParseQualifierDecl(ParseContext * pParctx, Lexer * pLex)
 {
-	if (pLex->m_tok == TOK_Identifier && (pLex->m_istr == RWord::g_pChzConst || pLex->m_istr == RWord::g_pChzInArg))
+	if (pLex->m_tok == TOK_Identifier && (pLex->m_istr == RWord::g_istrConst || pLex->m_istr == RWord::g_istrInArg))
 	{
 		auto pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_QualifierDecl, pLex, LexSpan(pLex));
 		pStval->SetIstr(pLex->m_istr);
@@ -1630,7 +1893,7 @@ STNode * PStnodParseTypeSpecifier(ParseContext * pParctx, Lexer * pLex, const ch
 				arypStnodArg.Append(pStnod);
 
 				ParseArgumentList(pParctx, pLex, &arypStnodArg, FARGLIST_AllowGenericValues);
-				pStnodStructInst->CopyChildArray(pParctx->m_pAlloc, arypStnodArg.A(), arypStnodArg.C());
+				pStnodStructInst->CopyChildArray(pParctx->m_pAlloc, arypStnodArg.A(), int(arypStnodArg.C()));
 			}
 
 			if (!FExpect(pParctx, pLex, TOK(')')))
@@ -1713,6 +1976,14 @@ STNode * PStnodParseTypeSpecifier(ParseContext * pParctx, Lexer * pLex, const ch
 	return pStnod;
 }
 
+STValue * PStvalAllocateIdentifier(ParseContext * pParctx, Lexer * pLex, const LexSpan & lexsp, const Moe::InString istrIdent)
+{
+	STValue * pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, LexSpan(pLex));
+	pStval->m_istr = istrIdent;
+
+	return pStval;
+}
+
 STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex)
 {
 	if (pLex->m_tok != TOK_Identifier)
@@ -1739,14 +2010,14 @@ STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex)
 }
 
 // BB - should merge parseIdentifier and parseReservedWord
-STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, const char * pChzRwordExpected = nullptr)
+STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InString istrRwordExpected = Moe::InString())
 {
 	if (pLex->m_tok != TOK_Identifier || !FIsReservedWord(pLex->m_istr))
 		return nullptr;
 
-	if (pLex->m_istr == pChzRwordExpected)
+	if (!istrRwordExpected.FIsNull() && pLex->m_istr == istrRwordExpected)
 	{
-		EmitError(pParctx, LexSpan(pLex), ERRID_MissingRWord, "Expected %s before %s", pChzRwordExpected, pLex->m_istr.m_pChz);
+		EmitError(pParctx, LexSpan(pLex), ERRID_MissingRWord, "Expected %s before %s", istrRwordExpected.m_pChz, pLex->m_istr.m_pChz);
 		return nullptr;
 	}
 
@@ -1806,7 +2077,7 @@ STNode * PStnodParseExpressionList(
 			arypStnod.Append(pStnodExp);
 		}
 
-		pStnodList->SetChildArray(arypStnod.A(), arypStnod.C());
+		pStnodList->SetChildArray(arypStnod.A(), int(arypStnod.C()));
 	}
 
 	PopLexRecover(pParctx->m_pLrecst, pLrec);
@@ -1833,29 +2104,29 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 		case TOK_Identifier:
 			{
 				STValue * pStval;
-				if (pLex->m_istr == RWord::g_pChzTrue)
+				if (pLex->m_istr == RWord::g_istrTrue)
 				{
 					pStval = PStvalParseReservedWord(pParctx, pLex);
 					//pStval->SetU64(true);
 				}
-				else if (pLex->m_istr == RWord::g_pChzFalse)
+				else if (pLex->m_istr == RWord::g_istrFalse)
 				{
 					pStval = PStvalParseReservedWord(pParctx, pLex);
 					//pStval->SetU64(false);
 				}
-				else if (pLex->m_istr == RWord::g_pChzNull)
+				else if (pLex->m_istr == RWord::g_istrNull)
 				{
 					pStval = PStvalParseReservedWord(pParctx, pLex);
 					//pStval->SetU64(u32(0));
 				}
-				else if (pLex->m_istr == RWord::g_pChzFileDirective)
+				else if (pLex->m_istr == RWord::g_istrFileDirective)
 				{
 					pStval = PStvalParseReservedWord(pParctx, pLex);
 
 					auto pStvalChild = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, pStval->m_lexsp);
 					pStvalChild->SetIstr(pStval->m_lexsp.m_istrFilename);
 				}
-				else if (pLex->m_istr == RWord::g_pChzLineDirective)
+				else if (pLex->m_istr == RWord::g_istrLineDirective)
 				{
 					pStval = PStvalParseReservedWord(pParctx, pLex);
 
@@ -2117,7 +2388,7 @@ void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> *
 				else
 				{
 					arypStnodLabel.Append(pStnodArg);
-					pStnodLabel->CopyChildArray(pParctx->m_pAlloc, arypStnodLabel.A(), arypStnodLabel.C());
+					pStnodLabel->CopyChildArray(pParctx->m_pAlloc, arypStnodLabel.A(), int(arypStnodLabel.C()));
 					pStnodArg = pStnodLabel;
 				}
 			}
@@ -2189,7 +2460,7 @@ STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 				//  need to change this if we expect assignments to return the assigned value (x := a = b; )
 
 				ParseArgumentList(pParctx, pLex, &arypStnodArg);
-				pStnod->CopyChildArray(pParctx->m_pAlloc, arypStnodArg.A(), arypStnodArg.C());
+				pStnod->CopyChildArray(pParctx->m_pAlloc, arypStnodArg.A(), int(arypStnodArg.C()));
 
 				if (!FExpect(
 					pParctx,
@@ -2258,10 +2529,10 @@ STNode * PStnodParseUnaryExpression(ParseContext * pParctx, Lexer * pLex)
 	{
 	case TOK_Identifier:
 		{
-			if (pLex->m_istr == RWord::g_pChzSizeof || 
-				pLex->m_istr == RWord::g_pChzAlignof || 
-				pLex->m_istr == RWord::g_pChzTypeinfo || 
-				pLex->m_istr == RWord::g_pChzTypeof)
+			if (pLex->m_istr == RWord::g_istrSizeof || 
+				pLex->m_istr == RWord::g_istrAlignof || 
+				pLex->m_istr == RWord::g_istrTypeinfo || 
+				pLex->m_istr == RWord::g_istrTypeof)
 			{
 				TOK tokPrev = TOK(pLex->m_tok);	
 				auto pStvalRword = PStvalParseReservedWord(pParctx, pLex);
@@ -2278,7 +2549,7 @@ STNode * PStnodParseUnaryExpression(ParseContext * pParctx, Lexer * pLex)
 				
 				fIsOk &= FExpect(pParctx, pLex, TOK(')'));
 					
-				if (pLex->m_istr == RWord::g_pChzTypeof)
+				if (pLex->m_istr == RWord::g_istrTypeof)
 				{
 					EmitError(pParctx, LexSpan(pLex), ERRID_FeatureNotImplemented, "typeof not implemented yet.");
 					SkipToRecovery(pLex, pParctx->m_pLrecst);
@@ -2332,7 +2603,7 @@ STNode * PStnodParseUnaryExpression(ParseContext * pParctx, Lexer * pLex)
 STNode * PStnodParseCastExpression(ParseContext * pParctx, Lexer * pLex)
 {
 	STNode * pStnodCast = nullptr;
-	if (pLex->m_istr != RWord::g_pChzCast)
+	if (pLex->m_istr != RWord::g_istrCast)
 	{
 		return PStnodParseUnaryExpression(pParctx, pLex);
 	}
@@ -2627,9 +2898,9 @@ STNode * PStnodParseExpression(ParseContext * pParctx, Lexer * pLex, GRFEXP grfe
 
 STNode * PStnodParseJumpStatement(ParseContext * pParctx, Lexer * pLex)
 {
-	if (pLex->m_istr == RWord::g_pChzContinue ||
-		pLex->m_istr == RWord::g_pChzBreak ||
-		pLex->m_istr == RWord::g_pChzFallthrough)
+	if (pLex->m_istr == RWord::g_istrContinue ||
+		pLex->m_istr == RWord::g_istrBreak ||
+		pLex->m_istr == RWord::g_istrFallthrough)
 	{
 		STNode * pStnod = PStvalParseReservedWord(pParctx, pLex);
 		if (pLex->m_tok == TOK_Identifier)
@@ -2643,7 +2914,7 @@ STNode * PStnodParseJumpStatement(ParseContext * pParctx, Lexer * pLex)
 		ExpectEndOfStatement(pParctx, pLex);
 		return pStnod;
 	}
-	else if (pLex->m_istr == RWord::g_pChzReturn)
+	else if (pLex->m_istr == RWord::g_istrReturn)
 	{
 		STNode * pStnodReturn = PStvalParseReservedWord(pParctx, pLex);
 		if (pStnodReturn)
@@ -2719,7 +2990,7 @@ STNode * PStnodParseCompoundStatement(ParseContext * pParctx, Lexer * pLex, Symb
 			}
 		}
 
-		pStnodList->CopyChildArray(pParctx->m_pAlloc, arypStnod.A(), arypStnod.C());
+		pStnodList->CopyChildArray(pParctx->m_pAlloc, arypStnod.A(), int(arypStnod.C()));
 
 		SymbolTable * pSymtabPop = PSymtabPop(pParctx);
 		MOE_ASSERT(pSymtab == pSymtabPop, "CSymbol table push/pop mismatch (list)");
@@ -2798,7 +3069,7 @@ STNode * PStnodParseParameter(
 		if (fAllowCompoundDecl && FConsumeToken(&lexPeek, TOK(',')))
 			continue;
 
-		if (FConsumeIdentifier(pLex, IstrIntern(RWord::g_pChzImmutable)))
+		if (FConsumeIdentifier(pLex, RWord::g_istrImmutable))
 			break;
 
 		if ((lexPeek.m_tok == TOK(':')) | (lexPeek.m_tok == TOK_ColonEqual))
@@ -2872,7 +3143,7 @@ STNode * PStnodParseParameter(
 		}
 
 
-		if (FConsumeIdentifier(pLex, IstrIntern(RWord::g_pChzImmutable)))
+		if (FConsumeIdentifier(pLex, RWord::g_istrImmutable))
 		{
 			if (pStnodCompound)
 				EmitError(pParctx, LexSpan(pLex), ERRID_CompoundDeclNotAllowed, "Comma separated declarations not supported for immutable values");
@@ -2974,6 +3245,1185 @@ STNode * PStnodParseDecl(ParseContext * pParctx, Lexer * pLex)
 	return pStnod;
 }
 
+struct OverloadInfo // tag = ovinf
+{
+	const char *	m_pChz;
+	TOK				m_tok;
+	PARK			m_aPark[2];
+};
+
+static const OverloadInfo s_aOvinf[] = {
+	{ "operator+", TOK('+'),			{ PARK_AdditiveOp, PARK_UnaryOp} },
+	{ "operator-", TOK('-'),			{ PARK_AdditiveOp, PARK_UnaryOp} },
+	{ "operator|", TOK('|'),			{ PARK_AdditiveOp, PARK_Nil} },
+	{ "operator^", TOK('^'),			{ PARK_AdditiveOp, PARK_Nil} },
+	{ "operator*", TOK('*'),			{ PARK_MultiplicativeOp, PARK_Nil} },
+	{ "operator/", TOK('/'),			{ PARK_MultiplicativeOp, PARK_Nil} },
+	{ "operator%", TOK('%'),			{ PARK_MultiplicativeOp, PARK_Nil} },
+	{ "operator&", TOK('&'),			{ PARK_MultiplicativeOp, PARK_UnaryOp} },
+	{ "operator<<", TOK_ShiftLeft,		{ PARK_ShiftOp, PARK_Nil} },
+	{ "operator>>", TOK_ShiftRight,		{ PARK_ShiftOp, PARK_Nil} },
+	{ "operator>", TOK('>'),			{ PARK_RelationalOp, PARK_Nil} },
+	{ "operator<", TOK('<'),			{ PARK_RelationalOp, PARK_Nil} },
+	{ "operator<=", TOK_LessEqual,		{ PARK_RelationalOp, PARK_Nil} },
+	{ "operator>=", TOK_GreaterEqual,	{ PARK_RelationalOp, PARK_Nil} },
+	{ "operator==", TOK_EqualEqual,		{ PARK_RelationalOp, PARK_Nil} },
+	{ "operator!=", TOK_NotEqual,		{ PARK_RelationalOp, PARK_Nil} },
+	{ "operator+=", TOK_PlusEqual,		{ PARK_AssignmentOp, PARK_Nil} },
+	{ "operator-=", TOK_MinusEqual,		{ PARK_AssignmentOp, PARK_Nil} },
+	{ "operator*=", TOK_MulEqual,		{ PARK_AssignmentOp, PARK_Nil} },
+	{ "operator/=", TOK_DivEqual,		{ PARK_AssignmentOp, PARK_Nil} },
+	{ "operator=", TOK('='),			{ PARK_AssignmentOp, PARK_Nil} },
+	{ "operator:=", TOK_ColonEqual,		{ PARK_Decl, PARK_Nil} },
+	{ "operator++", TOK_PlusPlus,		{ PARK_PostfixUnaryOp, PARK_Nil} },
+	{ "operator--", TOK_MinusMinus,		{ PARK_PostfixUnaryOp, PARK_Nil} },
+	{ "operator@", TOK_Dereference,		{ PARK_UnaryOp, PARK_Nil} },
+	{ "operator~", TOK('~'),			{ PARK_UnaryOp, PARK_Nil} },
+	{ "operator!", TOK('!'),			{ PARK_UnaryOp, PARK_Nil} },
+};
+
+enum FOVSIG
+{
+	FOVSIG_MustTakeReference	= 0x1,
+	FOVSIG_ReturnBool			= 0x2,
+	FOVSIG_AllowCommutative		= 0x4,
+
+
+	FOVSIG_None			= 0x0,
+	FOVSIG_All			= 0x7,
+};
+MOE_DEFINE_GRF(GRFOVSIG, FOVSIG, u32);
+
+struct OverloadSignature // tag=ovsig
+{
+	PARK			m_park;
+	int				m_cParam;
+	int				m_cReturn;
+	GRFOVSIG		m_grfovsig;
+	const char *	m_pChzDescription;
+};
+
+OverloadSignature s_aOvsig[] =
+{
+	{ PARK_AdditiveOp,			2, 1,	FOVSIG_AllowCommutative,	"(Lhs: A, Rhs: B)->C" },
+	{ PARK_MultiplicativeOp,	2, 1,	FOVSIG_AllowCommutative,	"(Lhs: A, Rhs: B)->C" },
+	{ PARK_ShiftOp,				2, 1,	false,	"(Lhs: A, Rhs: B)->C" },
+	{ PARK_RelationalOp,		2, 1,	FOVSIG_ReturnBool,	"(Lhs: A, Rhs: B)->bool" },
+	{ PARK_AssignmentOp,		2, 0,	FOVSIG_MustTakeReference,	"(Lhs: &B, Rhs: A)" },
+	{ PARK_Decl,				2, 0,	FOVSIG_MustTakeReference,	"(Lhs: &B, Rhs: A)" },
+	{ PARK_PostfixUnaryOp,		1, 1,	FOVSIG_MustTakeReference,	"(lHs: &A)->B" },
+	{ PARK_UnaryOp,				1, 1,	false,	"(a: A)->B" },
+};
+
+const char * PChzOverloadSignature(PARK park)
+{
+	auto pOvsigMax = MOE_PMAC(s_aOvsig);
+	for (OverloadSignature * pOvsig = s_aOvsig; pOvsig != pOvsigMax; ++pOvsig)
+	{
+		if (pOvsig->m_park == park)
+			return pOvsig->m_pChzDescription;
+	}
+	return "Unknown";
+}
+
+bool FAllowsCommutative(PARK park)
+{
+	auto pOvsigMax = MOE_PMAC(s_aOvsig);
+	for (OverloadSignature * pOvsig = s_aOvsig; pOvsig != pOvsigMax; ++pOvsig)
+	{
+		if (pOvsig->m_park == park)
+			return pOvsig->m_grfovsig.FIsSet(FOVSIG_AllowCommutative);
+	}
+	return false;
+}
+
+const char * PChzOverloadNameFromTok(TOK tok)
+{
+	auto pOvinfMax = MOE_PMAC(s_aOvinf);
+	for (auto pOvinf = s_aOvinf; pOvinf != pOvinfMax; ++pOvinf)
+	{
+		if (pOvinf->m_tok == tok)
+		{
+			return pOvinf->m_pChz;
+		}
+	}
+	return nullptr;
+}
+
+static bool FOperatorOverloadMustTakeReference(TOK tok)
+{
+	auto pOvinfMax = MOE_PMAC(s_aOvinf);
+	for (auto pOvinf = s_aOvinf; pOvinf != pOvinfMax; ++pOvinf)
+	{
+		if (pOvinf->m_tok != tok)
+			continue;
+
+		int acBool[2] = {0,0};
+		auto pOvsigMax = MOE_PMAC(s_aOvsig);
+		for (int iPark = 0; iPark < MOE_DIM(pOvinf->m_aPark); ++iPark)
+		{
+			for (OverloadSignature * pOvsig = s_aOvsig; pOvsig != pOvsigMax; ++pOvsig)
+			{
+				if (pOvsig->m_park == pOvinf->m_aPark[iPark])
+				{
+					++acBool[pOvsig->m_grfovsig.FIsSet(FOVSIG_MustTakeReference)];
+				}
+			}
+			MOE_ASSERT(acBool[0] == 0 || acBool[1] == 0, "conflicting results for diferrent operators");
+		}
+		return acBool[true] != 0;
+	}
+	return false;
+}
+
+bool FCheckOverloadSignature(PARK park, TypeInfoProcedure * pTinproc)
+{
+	size_t cReturn = pTinproc->m_arypTinReturns.C();
+	if (cReturn == 1 && pTinproc->m_arypTinReturns[0]->m_tink == TINK_Void)
+	{
+		cReturn = 0;
+	}
+
+	auto pOvsigMax = MOE_PMAC(s_aOvsig);
+	for (OverloadSignature * pOvsig = s_aOvsig; pOvsig != pOvsigMax; ++pOvsig)
+	{
+		if (pOvsig->m_park == park)
+		{
+			if (pTinproc->m_arypTinParams.C() != pOvsig->m_cParam || cReturn != pOvsig->m_cReturn)
+				return false;
+			if (pOvsig->m_grfovsig.FIsSet(FOVSIG_ReturnBool) && pTinproc->m_arypTinReturns[0]->m_tink != TINK_Bool)
+				return false;
+
+			return !pOvsig->m_grfovsig.FIsSet(FOVSIG_MustTakeReference) || pTinproc->m_arypTinParams[0]->m_tink == TINK_Pointer;
+		}
+	}
+	return false;
+}
+
+ERRID ErridCheckOverloadSignature(TOK tok, TypeInfoProcedure * pTinproc, ErrorManager * pErrman, const LexSpan & lexsp)
+{
+	auto pOvinfMax = MOE_PMAC(s_aOvinf);
+	for (auto pOvinf = s_aOvinf; pOvinf != pOvinfMax; ++pOvinf)
+	{
+		if (pOvinf->m_tok != tok)
+			continue;
+
+		for (int iPark = 0; iPark < MOE_DIM(pOvinf->m_aPark); ++iPark)
+		{
+			PARK park = pOvinf->m_aPark[iPark];
+			if (park != PARK_Nil && FCheckOverloadSignature(park, pTinproc))
+			{
+				if (pTinproc->m_grftinproc.FIsSet(FTINPROC_IsCommutative) && !FAllowsCommutative(park))
+				{
+					EmitError(pErrman, lexsp, ERRID_UnknownError, 
+						"'%s' is not allowed when overloading '%s'", RWord::g_pChzCommutative, PChzFromTok(tok));
+					return ERRID_UnknownError;
+				}
+
+				return ERRID_Nil;
+			}
+		}
+
+		Error error(pErrman, ERRID_BadOverloadSig);
+		PrintErrorLine(&error, "Error:", lexsp, "Incorrect signature for overloading operator '%s'. Options are:", PChzFromTok(tok));
+
+		for (int iPark = 0; iPark < MOE_DIM(pOvinf->m_aPark); ++iPark)
+		{
+			PARK park = pOvinf->m_aPark[iPark];
+			if (park != PARK_Nil)
+			{
+				PrintErrorLine(&error, "", lexsp, "\toperator%s%s'", PChzFromTok(tok), PChzOverloadSignature(park));
+			}
+		}
+		return ERRID_BadOverloadSig;
+	}
+
+	EmitError(pErrman, lexsp, ERRID_UnknownError, "no supported overload signature for operator '%s'", PChzFromTok(tok));
+	return ERRID_UnknownError;
+}
+
+STNode * PStnodParseReturnArrow(ParseContext * pParctx, Lexer * pLex, SymbolTable * pSymtabProc)
+{
+	if (FConsumeToken(pLex, TOK_Arrow))
+	{
+		// TODO : handle multiple return types
+		ProcSymtabStack procss(pParctx);
+		if (pSymtabProc)
+		{
+			LexSpan lexsp(pLex);
+			pSymtabProc->m_iNestingDepth = pParctx->m_pSymtab->m_iNestingDepth + 1;
+			procss.Push(pSymtabProc, lexsp);
+			pParctx->m_pSymtabGeneric = pSymtabProc;
+		}
+
+		auto pStnodRet = PStnodParseTypeSpecifier(pParctx, pLex, "return value", FPDECL_AllowBakedTypes);
+		if (pSymtabProc)
+		{
+			SymbolTable * pSymtabPop = procss.PSymtabPop();
+			MOE_ASSERT(pSymtabProc == pSymtabPop, "CSymbol table push/pop mismatch (list)");
+		}
+
+		if (pStnodRet)
+		{
+			return pStnodRet;
+		}
+
+		EmitError(pParctx, LexSpan(pLex), ERRID_TypeSpecifierExpected, "expected type specification following return arrow.");
+	}
+
+	auto pStvalVoid = PStvalAllocateIdentifier(pParctx, pLex, LexSpan(pLex), BuiltIn::g_istrVoid);
+	pStvalVoid->m_istr = BuiltIn::g_istrVoid;
+
+	return pStvalVoid;
+}
+
+const char * PChzUnexpectedToken(Lexer * pLex)
+{
+	if (pLex->m_tok == TOK_Identifier)
+	{
+		return pLex->m_istr.m_pChz;
+	}
+	return PChzCurrentToken(pLex);
+}
+
+STNode * PStnodParseProcParameterList(ParseContext * pParctx, Lexer * pLex, SymbolTable * pSymtabProc, bool fIsOpOverload)
+{
+	LexSpan lexsp(pLex);
+	ProcSymtabStack procss(pParctx);
+	if (pSymtabProc)
+	{
+		pSymtabProc->m_iNestingDepth = pParctx->m_pSymtab->m_iNestingDepth + 1;
+		procss.Push(pSymtabProc, lexsp);
+		pParctx->m_pSymtabGeneric = pSymtabProc;
+	}
+
+	GRFPDECL grfpdecl = FPDECL_AllowVariadic | FPDECL_AllowBakedTypes | FPDECL_AllowBakedValues | FPDECL_AllowUsing | FPDECL_AllowUnnamed;
+	STNode * pStnodParam = PStnodParseParameter(pParctx, pLex, pSymtabProc, grfpdecl);
+	STNode * pStnodList = nullptr;
+	bool fHasVarArgs = pStnodParam && pStnodParam->m_park == PARK_VariadicArg;
+
+	if (pStnodParam)
+	{
+		pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ParameterList, pLex, LexSpan(pLex));
+		pStnodList->m_pSymtab = pSymtabProc;
+
+		CDynAry<STNode *> arypStnodArg(pParctx->m_pAlloc, BK_Parse);
+		arypStnodArg.Append(pStnodParam);
+
+		auto pStdeclParam = PStnodRtiCast<STDecl *>(pStnodParam);
+		bool fNeedsDefaultArg = pStdeclParam && pStdeclParam->m_pStnodInit;
+		while (FConsumeToken(pLex, TOK(',')))
+		{
+			pStnodParam = PStnodParseParameter(pParctx, pLex, pSymtabProc, grfpdecl);
+
+			if (!pStnodParam)
+			{
+				auto pChzUnexpected = PChzUnexpectedToken(pLex);
+				EmitError(pParctx, LexSpan(pLex), ERRID_ExpectedParameter, "expected parameter declaration before '%s'", pChzUnexpected);
+				break;
+			}
+
+			auto pStdecl = PStnodRtiCast<STDecl *>(pStnodParam);
+			if (pStnodParam->m_park == PARK_Decl && MOE_FVERIFY(pStdecl, "expected parameter to be PARK_Decl"))
+			{
+				bool fHasDefaultArg = pStdecl->m_pStnodInit;
+				if (fNeedsDefaultArg && !fHasDefaultArg)
+				{
+					InString istrIdent(IstrFromIdentifier(pStdecl->m_pStnodIdentifier));
+					EmitError(pParctx, LexSpan(pLex), ERRID_MissingDefaultArgs, 
+						"parameter '%s' must have a default argument because earlier arguments have defaults.", istrIdent.m_pChz);
+				}
+				if (fHasDefaultArg && fIsOpOverload)
+				{
+					InString istrIdent(IstrFromIdentifier(pStdecl->m_pStnodIdentifier));
+					EmitError(pParctx, LexSpan(pLex), ERRID_DefaultParamOpOverload, 
+						"default values for parameter '%s' is not allowed on an operator overload", istrIdent.m_pChz);
+				}
+
+				fNeedsDefaultArg |= fHasDefaultArg;
+			}
+
+			fHasVarArgs |= pStnodParam->m_park == PARK_VariadicArg;
+			//pStnodList->IAppendChild(pStnodParam);
+			arypStnodArg.Append(pStnodParam);
+		}
+
+		pStnodList->CopyChildArray(pParctx->m_pAlloc, arypStnodArg.A(), int(arypStnodArg.C()));
+	}
+
+	if (fHasVarArgs)
+	{
+		STNode * pStnodLast = pStnodList->PStnodChild(int(pStnodList->m_cpStnodChild)-1);
+		if (pStnodLast->m_park != PARK_VariadicArg)
+		{
+			EmitError(pParctx, LexSpan(pLex), ERRID_VariadicMustBeLast, 
+				"Variadic function argument found before the end of the argument list");
+		}
+	}
+
+	if (pSymtabProc)
+	{
+		SymbolTable * pSymtabPop = procss.PSymtabPop();
+		MOE_ASSERT(pSymtabProc == pSymtabPop, "CSymbol table push/pop mismatch (list)");
+	}
+
+	return pStnodList;
+}
+
+STNode ** PPStnodChildFromPark(STNode * pStnod, int * pcpStnodChild, PARK park)
+{
+	if (!pStnod || pStnod->m_park != park)
+	{
+		*pcpStnodChild = 0;
+		return nullptr;
+	}
+
+	*pcpStnodChild = pStnod->m_cpStnodChild;
+	return pStnod->m_apStnodChild;
+}
+
+void CheckGenericParams(ParseContext * pParctx, STNode * pStnodRoot, CHash<InString, STNode *> * pmpIstrPStnod, GRFTINGEN * pGrftingen)
+{
+	CDynAry<STNode *> arypStnodStack(pParctx->m_pAlloc, BK_Parse);
+
+	arypStnodStack.Append(pStnodRoot);
+	while (arypStnodStack.C())
+	{
+		auto pStnodIt = arypStnodStack.TPopLast();
+		if (pStnodIt->m_park == PARK_GenericDecl)
+		{
+			auto pTinanc = PTinDerivedCast<TypeInfoAnchor *>(pStnodIt->m_pTin);
+			if (!pTinanc)
+				continue;
+
+			pGrftingen->AddFlags(FTINGEN_HasBakedTypeArgs);
+
+			STNode ** ppStnodHash;
+			INRES inres = pmpIstrPStnod->InresEnsureKey(pTinanc->m_istrName, &ppStnodHash);
+			if (inres == INRES_AlreadyExisted)
+			{
+				LexLookup lexlook(pParctx->m_pWork, (*ppStnodHash)->m_lexsp);
+
+				EmitError(pParctx->PErrman(), pStnodIt->m_lexsp, ERRID_MultipleAnchorDef, 
+					"Generic type $%s is was already anchored here %s(%d,%d)",
+					pTinanc->m_istrName.m_pChz,
+					lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint);
+			}
+			else
+			{
+				*ppStnodHash = pStnodIt;
+			}
+
+			continue;
+		}
+		else if (pStnodIt->m_park == PARK_Decl)
+		{
+			auto pStdecl = PStnodDerivedCast<STDecl *>(pStnodIt);
+
+			// NOTE: if we have a baked type that is a parameter in another type, we're dealing with 
+			//  a generic type - not a baked value
+			if (pStdecl->m_fIsBakedConstant)
+			{
+				pGrftingen->AddFlags(FTINGEN_HasBakedTypeArgs);
+			}
+		}
+
+		int cpStnodChild = int(pStnodIt->m_cpStnodChild);
+		for (int ipStnodChild = 0; ipStnodChild < cpStnodChild; ++ipStnodChild)
+		{
+			arypStnodStack.Append(pStnodIt->PStnodChild(ipStnodChild));
+		}
+	}
+}
+
+STNode * PStnodFindChildPark(ParseContext * pParctx, STNode * pStnodRoot, PARK park)
+{
+	CDynAry<STNode *> arypStnodStack(pParctx->m_pAlloc, BK_Parse);
+
+	arypStnodStack.Append(pStnodRoot);
+	while (arypStnodStack.C())
+	{
+		auto pStnodIt = arypStnodStack.TPopLast();
+		if (pStnodIt->m_park == park)
+			return pStnodIt;
+
+		int cpStnodChild = pStnodIt->CPStnodChild();
+		for (int ipStnodChild = 0; ipStnodChild < cpStnodChild; ++ipStnodChild)
+		{
+			arypStnodStack.Append(pStnodIt->PStnodChild(ipStnodChild));
+		}
+	}
+	return nullptr;
+}
+
+void CheckTinprocGenerics(ParseContext * pParctx, STNode * pStnodProc, TypeInfoProcedure * pTinproc)
+{
+	auto pStproc = PStnodDerivedCast<STProc *>(pStnodProc);
+	if (!pStproc)
+		return;
+
+	auto pStnodParameterList = pStproc->m_pStnodParameterList;
+	if (pStnodParameterList)
+	{
+		CHash<InString, STNode *> mpIstrPStnod(pParctx->m_pAlloc, BK_Parse);
+
+		int cpStnodParam = pStnodParameterList->m_cpStnodChild;
+		for (int ipStnodParam = 0; ipStnodParam < cpStnodParam; ++ipStnodParam)
+		{
+			auto pStnodParam = pStnodParameterList->PStnodChild(ipStnodParam);
+			auto pStdecl = PStnodRtiCast<STDecl *>(pStnodParam);
+			if (!pStdecl)
+				continue;
+
+			auto pStnodType = pStdecl->m_pStnodType;
+			if (pStdecl->m_fIsBakedConstant)
+			{
+				pTinproc->m_grftingen.AddFlags(FTINGEN_HasBakedValueArgs);
+			}
+
+			pTinproc->m_mpIptinGrfparmq[ipStnodParam].AssignFlags(FPARMQ_BakedValue, pStdecl->m_fIsBakedConstant);
+			pTinproc->m_mpIptinGrfparmq[ipStnodParam].AssignFlags(FPARMQ_TypeArgument, pStdecl->m_pStnodIdentifier == nullptr);
+
+			if (pStnodType)
+			{
+				CheckGenericParams(pParctx, pStnodType, &mpIstrPStnod, &pTinproc->m_grftingen);
+			}
+		}
+	}
+
+	auto pStnodReturn = pStproc->m_pStnodReturnType;
+	if (pStnodReturn)
+	{
+		auto pStnodGeneric = PStnodFindChildPark(pParctx, pStnodReturn, PARK_GenericDecl);
+		if (pStnodGeneric)
+		{
+			auto pTinanc = PTinDerivedCast<TypeInfoAnchor *>(pStnodGeneric->m_pTin);
+
+			EmitError(pParctx->m_pWork->m_pErrman, pStnodReturn->m_lexsp, ERRID_NoGenericReturn,
+				"Generic type anchor '$%s' is not allowed in return type",
+				(pTinanc) ? pTinanc->m_istrName.m_pChz : "unknown");
+		}
+	}
+}
+
+void CheckTinstructGenerics(ParseContext * pParctx, STNode * pStnodStruct, TypeInfoStruct * pTinstruct)
+{
+	auto pStstruct = PStnodDerivedCast<STStruct *>(pStnodStruct);
+	if (!pStstruct)
+		return;
+
+#if KEEP_TYPEINFO_DEBUG_STRING
+	pTinstruct->m_strDebug = StrFromTypeInfo(pTinstruct);
+#endif
+
+	auto pStnodParameterList = pStstruct->m_pStnodParameterList;
+	if (pStnodParameterList)
+	{
+		CHash<InString, STNode *> mpIstrPStnod(pParctx->m_pAlloc, BK_Parse);
+
+		int cpStnodParam = pStnodParameterList->CPStnodChild();
+		for (int ipStnodParam = 0; ipStnodParam < cpStnodParam; ++ipStnodParam)
+		{
+			auto pStnodParam = pStnodParameterList->PStnodChild(ipStnodParam);
+			auto pStdecl = PStnodRtiCast<STDecl *>(pStnodParam);
+			if (!pStdecl)
+				continue;
+
+			auto pStnodType = pStdecl->m_pStnodType;
+			if (pStdecl->m_fIsBakedConstant)
+			{
+				pTinstruct->m_grftingen.AddFlags(FTINGEN_HasBakedValueArgs);
+			}
+
+			if (pStnodType)
+			{
+				CheckGenericParams(pParctx, pStnodType, &mpIstrPStnod, &pTinstruct->m_grftingen);
+			}
+		}
+	}
+}
+
+STNode * PStnodSpoofEnumConstant(ParseContext * pParctx, Lexer * pLex, const LexSpan & lexsp, const InString & istrIdent, PARK park)
+{
+	auto pStdeclConstant = PStnodAlloc<STDecl>(pParctx->m_pAlloc, park, pLex, lexsp);
+	pStdeclConstant->m_grfstnod.AddFlags(FSTNOD_ImplicitMember);
+
+	auto pStvalIdent = PStvalAllocateIdentifier(pParctx, pLex, lexsp, istrIdent);
+	pStvalIdent->m_grfstnod.AddFlags(FSTNOD_ImplicitMember);
+	pStdeclConstant->m_pStnodIdentifier = pStvalIdent;
+
+	pStdeclConstant->m_pSymbase = pParctx->m_pSymtab->PSymEnsure(pParctx->m_pWork->m_pErrman, istrIdent, pStdeclConstant, FSYM_VisibleWhenNested);
+	return pStdeclConstant;
+}
+
+STNode * PStnodParseEnumConstant(ParseContext * pParctx, Lexer * pLex)
+{
+	LexSpan lexsp(pLex);
+	auto pStvalIdent = PStvalParseIdentifier(pParctx, pLex);
+	if (!pStvalIdent)
+		return nullptr;
+
+	auto pStdeclConstant = PStnodAlloc<STDecl>(pParctx->m_pAlloc, PARK_EnumConstant, pLex, lexsp);
+	pStdeclConstant->m_pStnodIdentifier = pStvalIdent;
+
+	SymbolTable * pSymtab = pParctx->m_pSymtab;
+	InString istrIdent = IstrFromIdentifier(pStvalIdent);
+
+	// BB - we should change the interface here so we don't do multiple lookups
+	auto pErrman = pParctx->m_pWork->m_pErrman;
+	auto pSym = pSymtab->PSymLookup(istrIdent, pStdeclConstant->m_lexsp);
+	if (pSym)
+	{
+		LexLookup lexlook(pErrman->m_pWork, pSym->m_pStnodDefinition->m_lexsp);
+		EmitError(pErrman, pStdeclConstant->m_lexsp, ERRID_EnumRepeat, 
+			"Enum constant name '%s' has already been defined at %s(%d, %d)", 
+			istrIdent.m_pChz, 
+			lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint);
+	}
+
+	pSym = pSymtab->PSymEnsure(pErrman, istrIdent, pStdeclConstant, FSYM_VisibleWhenNested);
+	pStdeclConstant->m_pSymbase = pSym;
+
+	if (FConsumeToken(pLex, TOK_ColonEqual))
+	{
+		STNode * pStnodExp = PStnodParseExpression(pParctx, pLex);
+		if (pStnodExp)
+		{
+			pStdeclConstant->m_pStnodInit = pStnodExp;
+		}
+	}
+	return pStdeclConstant;
+}
+
+STNode * PStnodParseEnumConstantList(ParseContext * pParctx, Lexer * pLex, STEnum * pStenum)
+{
+	LexSpan lexsp(pLex);
+	auto pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_List, pLex, lexsp);
+	pStnodList->m_tok = TOK('{');
+
+	CDynAry<STNode *> arypStnod(pParctx->m_pAlloc, BK_Parse);
+
+	// add STNodes for implicit members: nil, min, max, etc.
+
+	for (int enumimp = ENUMIMP_Min; enumimp < ENUMIMP_Max; ++enumimp)
+	{
+		if (!FNeedsImplicitMember((ENUMIMP)enumimp, pStenum->m_enumk))
+			continue;
+
+		PARK park = ((enumimp == ENUMIMP_Names) | (enumimp == ENUMIMP_Values)) ? PARK_CompoundLiteral : PARK_EnumConstant;
+		auto pStnodImplicit = PStnodSpoofEnumConstant(pParctx, pLex, lexsp, IstrFromEnumimp((ENUMIMP)enumimp), park);
+
+		pStenum->m_mpEnumimpIstnod[enumimp] = int(arypStnod.C());
+		arypStnod.Append(pStnodImplicit);
+	
+		if (park == PARK_EnumConstant)
+		{
+			++pStenum->m_cConstantImplicit;
+		}
+	}
+
+	while (1)
+	{
+		STNode * pStnod = PStnodParseEnumConstant(pParctx, pLex);
+		if (!pStnod)
+			break;
+
+		arypStnod.Append(pStnod);
+		++pStenum->m_cConstantExplicit;
+
+		if (!FConsumeToken(pLex, TOK(',')))
+			break;
+	}
+
+	pStnodList->CopyChildArray(pParctx->m_pAlloc, arypStnod.A(), int(arypStnod.C()));
+	return pStnodList;
+}
+
+STNode * PStnodParseMemberDeclList(ParseContext * pParctx, Lexer * pLex)
+{
+	STNode * pStnodList = nullptr;
+	CDynAry<STNode *> arypStnod(pParctx->m_pAlloc, BK_Parse);
+
+	LexSpan lexsp(pLex);
+	while (1)
+	{
+		STNode * pStnod = PStnodParseDecl(pParctx, pLex);
+		if (!pStnod)
+		{
+			pStnod = PStnodParseDefinition(pParctx, pLex);
+		}
+		if (!pStnod)
+			break;
+
+		arypStnod.Append(pStnod);
+	}
+
+	if (!arypStnod.FIsEmpty())
+	{
+		pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_List, pLex, lexsp);
+		pStnodList->m_tok = TOK('{');
+		pStnodList->CopyChildArray(pParctx->m_pAlloc, arypStnod.A(), int(arypStnod.C()));
+	}
+
+	return pStnodList;
+}
+
+
+STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
+{
+	if (pLex->m_tok == TOK_Identifier)
+	{
+		InString istrRword;
+		bool fIsDefinition = false;
+		if (pLex->m_istr == RWord::g_istrOperator)
+		{
+			fIsDefinition = true;
+			istrRword = pLex->m_istr;
+		}
+
+		Lexer lexPeek = *pLex;
+		TokNext(&lexPeek);
+
+		if (istrRword.FIsNull())
+		{
+			istrRword = lexPeek.m_istr;
+
+			if (istrRword == RWord::g_istrProc || 
+				istrRword == RWord::g_istrStruct ||
+				istrRword == RWord::g_istrEnum ||
+				istrRword == RWord::g_istrFlagEnum ||
+				istrRword == RWord::g_istrTypedef)
+			{
+				fIsDefinition = true;
+			}
+		}
+
+		if (!fIsDefinition)
+			return nullptr;
+
+		LexSpan lexsp(pLex);
+		STNode * pStnodIdent;
+
+		if (istrRword == RWord::g_istrOperator)
+		{
+			TokNext(pLex);
+
+			const char * pChzOverloadName = PChzOverloadNameFromTok((TOK)pLex->m_tok);
+			if (!pChzOverloadName)
+			{
+				EmitError(pParctx, lexsp, ERRID_InvalidOpOverload, "Cannot overload operator '%s'", PChzFromTok((TOK)pLex->m_tok));
+				pChzOverloadName = "OverloadError";
+			}
+
+			Moe::InString istrIdent = IstrIntern(pChzOverloadName);
+			pStnodIdent = PStvalAllocateIdentifier(pParctx, pLex, lexsp, istrIdent);
+			pStnodIdent->m_tok = TOK(pLex->m_tok);
+		}
+		else
+		{
+			pStnodIdent = PStvalParseIdentifier(pParctx, pLex);
+			pStnodIdent->m_tok = TOK_Identifier;
+		}
+
+		*pLex = lexPeek;
+		TokNext(pLex);
+		
+		// function definition
+		if (istrRword == RWord::g_istrProc || istrRword == RWord::g_istrOperator)
+		{
+			FExpect(pParctx, pLex, TOK('('));
+
+			auto pStproc = PStnodAlloc<STProc>(pParctx->m_pAlloc, PARK_ProcedureDefinition, pLex, LexSpan(pLex));
+			pStproc->m_grfstnod.AddFlags(FSTNOD_EntryPoint);
+
+			pStproc->m_pStnodName = pStnodIdent;
+			pStproc->m_pStnodParentScope = pParctx->m_pStnodScope;
+
+			Moe::InString istrName = IstrFromIdentifier(pStnodIdent);
+			SymbolTable * pSymtabParent = pParctx->m_pSymtab;
+			SymbolTable * pSymtabProc = PSymtabNew(pParctx->m_pAlloc, pSymtabParent, istrName);
+
+			// BB - don't mangle the main function so the linker can find it. yuck.
+			if (istrName == RWord::g_istrMain)
+			{
+				pStproc->m_grfstproc.AddFlags(FSTPROC_UseUnmangledName);
+			}
+
+			STNode * pStnodParams = PStnodParseProcParameterList(pParctx, pLex, pSymtabProc, istrRword == RWord::g_istrOperator);
+			pStproc->m_pStnodParameterList = pStnodParams;
+			FExpect(pParctx, pLex, TOK(')'));
+
+			auto pStnodReturns = PStnodParseReturnArrow(pParctx, pLex, pSymtabProc);
+			pStproc->m_pStnodReturnType = pStnodReturns;
+
+			INLINEK inlinek = INLINEK_Nil;
+			MCALLCON callconv = MCALLCON_Nil;
+			GRFTINPROC grftinproc;
+			pStproc->m_pStnodBody = nullptr;
+			if (pLex->m_tok == TOK_Identifier)
+			{
+				while (pLex->m_tok == TOK_Identifier)
+				{
+					InString istrRwordLookup = pLex->m_istr;
+					TokNext(pLex);
+
+					if (istrRwordLookup == RWord::g_istrForeignDirective)
+					{
+						pStproc->m_grfstproc.AddFlags(FSTPROC_UseUnmangledName);
+						grftinproc.AddFlags(FTINPROC_IsForeign);
+
+						if (!FIsEndOfStatement(pLex) && pLex->m_tok == TOK_Identifier)
+						{
+							pStproc->m_pStnodForeignAlias = PStvalParseIdentifier(pParctx, pLex);
+						}
+					}
+					else if (istrRwordLookup == RWord::g_istrCDecl)
+					{
+						callconv = MCALLCON_CX86;
+						pStproc->m_grfstproc.AddFlags(FSTPROC_UseUnmangledName | FSTPROC_PublicLinkage);
+					}
+					else if (istrRwordLookup == RWord::g_istrStdCall)
+					{
+						callconv = MCALLCON_StdcallX86;	
+					}
+					else if (istrRwordLookup == RWord::g_istrInline)
+					{
+						inlinek = INLINEK_AlwaysInline;
+					}
+					else if (istrRwordLookup == RWord::g_istrNoInline)
+					{
+						inlinek = INLINEK_NoInline;
+					}
+					else if (istrRwordLookup == RWord::g_istrCommutative)
+					{
+						if (istrRword == RWord::g_istrOperator)
+						{
+							grftinproc.AddFlags(FTINPROC_IsCommutative);
+						}
+						else
+						{
+							EmitError(pParctx, LexSpan(pLex), ERRID_OnlyOperatorCanCommute,
+								"only operator overloads can be declared commutative, %s() is not an overload.\n", istrName.m_pChz);
+						}
+					}
+					else
+					{
+						EmitError(pParctx, LexSpan(pLex), ERRID_UnexpectedToken,
+							"Unexpected token following procedure declaration %s\n", istrRwordLookup);
+					}
+				}
+
+				if (pLex->m_tok != TOK('{'))
+				{
+					ExpectEndOfStatement(pParctx, pLex, "While parsing procedure qualifiers");
+				}
+			}
+
+			LexSpan lexspBody(pLex);
+			if (pLex->m_tok == TOK('{'))
+			{
+				auto pStnodScopePrev = pParctx->m_pStnodScope;
+				pParctx->m_pStnodScope = pStproc;
+				STNode * pStnodBody = PStnodParseCompoundStatement(pParctx, pLex, pSymtabProc);
+				pParctx->m_pStnodScope = pStnodScopePrev;
+
+				pStproc->m_pStnodBody = pStnodBody;
+			}
+
+			if (grftinproc.FIsSet(FTINPROC_IsForeign))
+			{
+				if (pStproc->m_pStnodBody != nullptr)
+				{
+					EmitError(pParctx, lexspBody, ERRID_ForeignProcDefinesBody,
+						"Procedure '%s' is marked foreign, but defines a procedure body.", istrName.m_pChz);
+					pStproc->m_pStnodBody = nullptr;
+				}
+			}
+			else if (pStproc->m_pStnodBody == nullptr)
+			{
+				EmitError(pParctx, lexspBody, ERRID_ProcBodyExpected, "Procedure definition for '%s' has no body", istrName.m_pChz);
+			}
+
+			int cStnodParams;
+			STNode ** ppStnodParams = PPStnodChildFromPark(pStnodParams, &cStnodParams, PARK_ParameterList);
+
+			STNode ** ppStnodReturn = &pStnodReturns;
+			int cStnodReturns = (pStnodReturns == nullptr) ? 0 : 1;
+
+			auto pTinproc = pSymtabParent->PTinprocAllocate(istrName, cStnodParams, cStnodReturns);
+
+			if (istrRword == RWord::g_istrOperator && FOperatorOverloadMustTakeReference(pStnodIdent->m_tok))
+			{
+				pTinproc->m_mpIptinGrfparmq[0].AddFlags(FPARMQ_ImplicitRef);
+			}
+
+			if (grftinproc.FIsSet(FTINPROC_IsCommutative))
+			{
+				if (cStnodParams != 2)
+				{
+					EmitError(pParctx, pStproc->m_lexsp, ERRID_OnlyTwoArgsCommute,
+						"Only operators with two arguments can be commutative ('%s' has %d)", istrName.m_pChz, cStnodParams);
+					grftinproc.Clear(FTINPROC_IsCommutative);
+				}
+			}
+
+			pTinproc->m_grftinproc = grftinproc;
+			pTinproc->m_pStnodDefinition = pStproc;
+			pTinproc->m_callconv = callconv;
+			pTinproc->m_inlinek = inlinek;
+
+			CheckTinprocGenerics(pParctx, pStproc, pTinproc);
+
+			STNode ** ppStnodParamMax = &ppStnodParams[cStnodParams];
+			for ( ; ppStnodParams != ppStnodParamMax; ++ppStnodParams)
+			{
+				STNode * pStnodParam = *ppStnodParams;
+				if (pStnodParam->m_park == PARK_VariadicArg)
+				{
+					pTinproc->m_grftinproc.AddFlags(FTINPROC_HasVarArgs);
+				}
+				else if (AST_FVERIFY(pParctx->m_pWork, pStnodParam, pStnodParam->m_park == PARK_Decl, "Expected decl"))
+				{
+					pTinproc->m_arypTinParams.Append(pStnodParam->m_pTin);
+				}
+			}
+
+			STNode ** ppStnodReturnMax = &ppStnodReturn[cStnodReturns];
+			for ( ; ppStnodReturn != ppStnodReturnMax; ++ppStnodReturn)
+			{
+				pTinproc->m_arypTinReturns.Append((*ppStnodReturn)->m_pTin);
+			}
+
+			pStproc->m_pTin = pTinproc;
+
+			if (pStproc->m_pStnodBody != nullptr)
+			{
+				bool fReturnsVoid = false;
+				if (MOE_FVERIFY(pStproc->m_pStnodReturnType != nullptr, "return type expected. implicit void should be set by here"))
+				{
+					STNode * pStnodReturn = pStproc->m_pStnodReturnType;
+					fReturnsVoid = FIsIdentifier(pStnodReturn, BuiltIn::g_istrVoid);
+				}
+
+				STNode * pStnodBody = pStproc->m_pStnodBody;
+
+				if (MOE_FVERIFY( pStnodBody->m_park == PARK_List, "Expected body list"))
+				{
+					STNode * pStnodLast = pStnodBody->PStnodChildSafe(pStnodBody->CPStnodChild()-1);
+
+					bool fHasReturn = pStnodLast && FIsIdentifier(pStnodLast, RWord::g_istrReturn);
+					if (!fHasReturn)
+					{
+						if (fReturnsVoid)
+						{
+							LexSpan lexsp(pLex);
+							auto pStvalReturn = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_ReservedWord, pLex, LexSpan(pLex));
+							pStvalReturn->m_tok = TOK_Identifier;
+							pStvalReturn->m_istr = RWord::g_istrReturn;
+
+							(void) pStnodBody->AppendChildToArray(pParctx->m_pAlloc, pStvalReturn);
+						}
+						else
+						{
+							EmitError(pParctx, LexSpan(pLex), ERRID_NoReturnStatement, 
+								"Procedure '%s' is missing return statement", istrName.m_pChz);
+						}
+					}
+				}
+			}
+
+			auto pErrman = pParctx->m_pWork->m_pErrman;
+			Symbol * pSymProc = pSymtabParent->PSymEnsure(pErrman, IstrFromIdentifier(pStnodIdent), pStproc, FSYM_VisibleWhenNested);
+			//pSymProc->m_pTin = pTinproc;
+			pStproc->m_pSymbase = pSymProc;
+
+			return pStproc;
+		}
+		else if (istrRword == RWord::g_istrEnum || istrRword == RWord::g_istrFlagEnum)
+		{
+			LexSpan lexsp(pLex);
+			auto pStenum = PStnodAlloc<STEnum>(pParctx->m_pAlloc, PARK_EnumDefinition, pLex, LexSpan(pLex));
+
+			pStenum->m_pStnodIdentifier = pStnodIdent;
+			pStenum->m_enumk = (istrRword == RWord::g_istrFlagEnum) ? ENUMK_FlagEnum : ENUMK_Basic;
+
+			STNode * pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "looseType", FPDECL_None);
+			pStenum->m_pStnodType = pStnodType;
+			
+			InString istrIdent = IstrFromIdentifier(pStnodIdent);
+			SymbolTable * pSymtabParent = pParctx->m_pSymtab;
+			SymbolTable * pSymtabEnum = PSymtabNew(pParctx->m_pAlloc, pSymtabParent, istrIdent);
+			STNode * pStnodConstantList = nullptr;
+
+			auto pErrman = pParctx->m_pWork->m_pErrman;
+			(void) pSymtabEnum->PSymEnsure(pErrman, IstrIntern("loose"), pStenum, FSYM_IsType | FSYM_VisibleWhenNested);
+			(void) pSymtabEnum->PSymEnsure(pErrman, IstrIntern("strict"), pStenum, FSYM_IsType | FSYM_VisibleWhenNested);
+
+			FExpect(pParctx, pLex, TOK('{'));
+
+			pSymtabEnum->m_iNestingDepth = pParctx->m_pSymtab->m_iNestingDepth + 1;
+			PushSymbolTable(pParctx, pSymtabEnum);
+			pStenum->m_pSymtab = pSymtabEnum;
+
+			pStnodConstantList = PStnodParseEnumConstantList(pParctx, pLex, pStenum);
+			pStenum->m_pStnodConstantList = pStnodConstantList;
+
+			SymbolTable * pSymtabPop = PSymtabPop(pParctx);
+			MOE_ASSERT(pSymtabEnum == pSymtabPop, "CSymbol table push/pop mismatch (enum)");
+
+			if (!FExpect(pParctx, pLex, TOK('}')))
+			{
+				TOK closeBracket = TOK('}');
+				SkipToToken(pLex, &closeBracket, 1, FLEXER_None);
+			}
+
+			// type info enum
+			int cConstant = pStenum->m_cConstantImplicit + pStenum->m_cConstantExplicit;
+			auto pTinenum = pSymtabParent->PTinenumAllocate(istrIdent, cConstant, pStenum->m_enumk, pStenum);
+
+			for (int ipStnod = 0; ipStnod < pStnodConstantList->CPStnodChild(); ++ipStnod) 
+			{
+				STNode * pStnodMember = pStnodConstantList->PStnodChild(ipStnod);
+
+				switch (pStnodMember->m_park)
+				{
+				case PARK_EnumConstant:
+					{
+						auto pTinlit = MOE_NEW(pSymtabParent->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+						pSymtabParent->AddManagedTin(pTinlit);
+						pTinlit->m_litty.m_litk = LITK_Enum;
+						pTinlit->m_pTinSource = pTinenum;
+						pStnodMember->m_pTin = pTinlit;
+					} break;
+				case PARK_CompoundLiteral:
+					{
+					} break;
+				default: MOE_ASSERT(false, "Expected enum child value");
+				}
+			}
+
+			GRFSYM grfsym(FSYM_IsType | FSYM_VisibleWhenNested);
+			Symbol * pSymEnum = pSymtabParent->PSymEnsure(pErrman, istrIdent, pStenum, grfsym, FSHADOW_NoShadowing);
+			//pSymEnum->m_pTin = pTinenum;
+
+			pStenum->m_pSymbase = pSymEnum;
+			pStenum->m_pTin = pTinenum;
+
+			return pStenum;
+		}
+		else if (istrRword == RWord::g_istrStruct)
+		{
+			auto pStstruct = PStnodAlloc<STStruct>(pParctx->m_pAlloc, PARK_StructDefinition, pLex, LexSpan(pLex));
+			pStstruct->m_pStnodIdentifier = pStnodIdent;
+
+			SymbolTable * pSymtabParent = pParctx->m_pSymtab;
+
+			InString istrIdent = IstrFromIdentifier(pStnodIdent);
+			SymbolTable * pSymtabStruct = PSymtabNew(pParctx->m_pAlloc, pSymtabParent, istrIdent);
+
+			if (FConsumeToken(pLex, TOK('(')))
+			{
+				STNode * pStnodParams = PStnodParseProcParameterList(pParctx, pLex, pSymtabStruct, false);
+
+				pStstruct->m_pStnodParameterList = pStnodParams;
+				FExpect(pParctx, pLex, TOK(')'));
+
+				if (!pStnodParams)
+				{
+					EmitError(pParctx, LexSpan(pLex), ERRID_StructureParamsExpected, "Structure definition has parameter list, but no parameters.");
+				}
+				else if (MOE_FVERIFY(pStnodParams->m_park == PARK_ParameterList, "expected parameter list"))
+				{
+					for (int ipStnodParam = 0; ipStnodParam < pStnodParams->CPStnodChild(); ++ipStnodParam)
+					{
+						auto pStnodParam = pStnodParams->PStnodChild(ipStnodParam);
+						switch (pStnodParam->m_park)
+						{
+						case PARK_Decl:
+							{
+								auto pStdecl = PStnodDerivedCast<STDecl*>(pStnodParam);
+								auto strIdent = IstrFromIdentifier(pStdecl->m_pStnodIdentifier);
+								if (!pStdecl->m_fIsBakedConstant && pStdecl->m_pStnodIdentifier)
+								{
+									// no need for named instances for values that won't be passed
+									EmitError(pParctx, pStnodParam->m_lexsp, ERRID_NonBakedStructParameter,
+										"Structure argument '%s' is neither be baked value or unnamed type argument", 
+										istrIdent.m_pChz);
+								}
+							} break;
+						default: 
+							EmitError(pParctx, pStnodParam->m_lexsp, ERRID_BadStructGenericParam, 
+								"unexpected generic struct parameter kind (%s)", PChzLongFromPark(pStnodParam->m_park));
+						}
+					}
+
+				}
+			}
+
+			FExpect(pParctx, pLex, TOK('{'));
+
+			// NOTE: struct symbol tables at the global scope should be unordered.
+//				if (!pParctx->m_pSymtab->m_grfsymtab.FIsSet(FSYMTAB_Ordered))
+//					pSymtabStruct->m_grfsymtab.Clear(FSYMTAB_Ordered);
+
+			pSymtabStruct->m_iNestingDepth = pParctx->m_pSymtab->m_iNestingDepth + 1;
+			PushSymbolTable(pParctx, pSymtabStruct);
+			pStstruct->m_pSymtab = pSymtabStruct;
+
+			STNode * pStnodDeclList = PStnodParseMemberDeclList(pParctx, pLex);
+
+			SymbolTable * pSymtabPop = PSymtabPop(pParctx);
+			MOE_ASSERT(pSymtabStruct == pSymtabPop, "CSymbol table push/pop mismatch (struct)");
+
+			if (pStnodDeclList)
+			{
+				pStstruct->m_pStnodDeclList = pStnodDeclList;
+			}
+			else
+			{
+				EmitError(pParctx, LexSpan(pLex), ERRID_EmptyStruct, 
+					"structure '%s' has no members - zero byte structures are not allowed", istrIdent.m_pChz);
+			}
+
+			// type info struct
+			int cpStnodMember;
+			STNode ** ppStnodMember = PPStnodChildFromPark(pStnodDeclList, &cpStnodMember, PARK_List);
+
+			int cStnodField = 0;
+			STNode * const * ppStnodMemberMax = &ppStnodMember[cpStnodMember];
+			for (auto ppStnodMemberIt = ppStnodMember; ppStnodMemberIt != ppStnodMemberMax; ++ppStnodMemberIt)
+			{
+				auto pStnodMemberIt = *ppStnodMemberIt;
+				switch (pStnodMemberIt->m_park)
+				{
+				case PARK_Decl:			
+					{
+						auto pStdecl = PStnodRtiCast<STDecl *>(pStnodMemberIt);
+						if (MOE_FVERIFY(pStdecl, "expected stdecl"))
+						{
+#ifdef MOEB_LATER
+							// fixme when we support compound decls again
+							if (pStdecl->m_iStnodChildMin == -1)	
+							{
+								++cStnodField; 
+							}
+							else
+							{
+								cStnodField += pStdecl->m_iStnodChildMax - pStdecl->m_iStnodChildMin;
+							}
+#else
+							++cStnodField;
+#endif
+						}
+					} break;
+				case PARK_ConstantDecl:		break;
+				case PARK_StructDefinition:	break;
+				case PARK_EnumDefinition:	break;
+				case PARK_Typedef:			break;
+				default: MOE_ASSERT(false, "Unexpected member in structure %s", istrIdent.m_pChz);
+				}
+			}
+
+			STNode * pStnodParameterList = pStstruct->m_pStnodParameterList;
+			size_t cpStnodParam = (pStnodParameterList) ? pStnodParameterList->CPStnodChild() : 0;
+			auto pSymtab = pParctx->m_pSymtab;
+
+			auto pTinstruct = pSymtab->PTinstructAllocate(istrIdent, cStnodField, cpStnodParam);
+			pTinstruct->m_pStnodStruct = pStstruct;
+
+			for ( ; ppStnodMember != ppStnodMemberMax; ++ppStnodMember)
+			{
+				STNode * pStnodMember = *ppStnodMember;
+				if (pStnodMember->m_park != PARK_Decl)
+					continue;
+
+				auto pStdecl = PStnodRtiCast<STDecl *>(pStnodMember);
+				if (MOE_FVERIFY(pStdecl, "expected stdecl"))
+				{
+					//if (pStdecl->m_iStnodChildMin == -1)	
+					{
+						auto pTypememb = pTinstruct->m_aryTypemembField.AppendNew();
+						pTypememb->m_pStdecl = pStdecl;
+					}
+#ifdef MOEB_LATER
+					else
+					{
+						int iStnodChildMax = pStdecl->m_iStnodChildMax;
+						for (int iStnod = pStdecl->m_iStnodChildMin; iStnod < iStnodChildMax; ++iStnod)
+						{
+							auto pTypememb = pTinstruct->m_aryTypemembField.AppendNew();
+							pTypememb->m_pStnod = pStnodMember->PStnodChild(iStnod);
+						}
+					}
+#endif
+				}
+
+				size_t cTypememb = pTinstruct->m_aryTypemembField.C();
+				for (size_t iTypememb = 0; iTypememb < cTypememb; ++iTypememb)
+				{
+					auto pTypememb = &pTinstruct->m_aryTypemembField[iTypememb];
+
+					auto pStdeclChild = pTypememb->m_pStdecl;
+					auto pStnodMemberIdent = pStdeclChild->m_pStnodIdentifier;
+					pTypememb->m_istrName = IstrFromIdentifier(pStnodMemberIdent);
+				}
+			}
+
+			auto pErrman = pParctx->m_pWork->m_pErrman;
+			GRFSYM grfsym(FSYM_IsType | FSYM_VisibleWhenNested);
+			Symbol * pSymStruct = pSymtabParent->PSymEnsure(pErrman, istrIdent, pStstruct, grfsym, FSHADOW_NoShadowing);
+			pStstruct->m_pSymbase = pSymStruct;
+			//pSymStruct->m_pTin = pTinstruct;
+			pStstruct->m_pTin = pTinstruct;
+
+			CheckTinstructGenerics(pParctx, pStstruct, pTinstruct);
+
+			FExpect(pParctx, pLex, TOK('}'));
+
+			return pStstruct;
+		}
+		else if (istrRword == RWord::g_istrTypedef)
+		{
+			InString istrIdent = IstrFromIdentifier(pStnodIdent);
+
+			// create a symbol table for any generic symbols that might be created by this typedef
+			SymbolTable * pSymtabTypedef = PSymtabNew(pParctx->m_pAlloc, pParctx->m_pSymtab, istrIdent);
+			pSymtabTypedef->m_iNestingDepth = pParctx->m_pSymtab->m_iNestingDepth + 1;
+			PushSymbolTable(pParctx, pSymtabTypedef);
+
+			auto pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "typedef", FPDECL_None);
+			ExpectEndOfStatement(pParctx, pLex);
+
+			SymbolTable * pSymtabPop = PSymtabPop(pParctx);
+			MOE_ASSERT(pSymtabTypedef == pSymtabPop, "CSymbol table push/pop mismatch (struct)");
+			
+			if (!pStnodType)
+			{
+				EmitError(pParctx, LexSpan(pLex), ERRID_TypeSpecifierExpected, "missing type value for typedef %s", istrIdent.m_pChz);
+
+				pParctx->m_pAlloc->MOE_DELETE(pStnodIdent);
+				return nullptr;
+			}
+
+			auto pStnodTypedef = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_Typedef, pLex, LexSpan(pLex));
+			pStnodTypedef->m_pSymtab = pSymtabTypedef;
+
+			STNode * aStnod[] = {pStnodIdent, pStnodType};
+			pStnodTypedef->CopyChildArray(pParctx->m_pAlloc, aStnod, MOE_DIM(aStnod));
+
+			SymbolTable * pSymtab = pParctx->m_pSymtab;
+			auto pErrman = pParctx->m_pWork->m_pErrman;
+
+			GRFSYM grfsym(FSYM_IsType | FSYM_VisibleWhenNested);
+			auto pSym = pSymtab->PSymEnsure(pErrman, istrIdent, pStnodTypedef, grfsym, FSHADOW_NoShadowing);
+			pStnodTypedef->m_pSymbase = pSym;
+
+			return pStnodTypedef;
+		}
+	}
+	return nullptr;
+}
+
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 {
 	STNode * pStnod = PStnodParseCompoundStatement(pParctx, pLex, nullptr);
@@ -2987,11 +4437,9 @@ STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 	if (pStnod)
 		return pStnod;
 
-#ifdef MOEB_LATER 
 	pStnod = PStnodParseDefinition(pParctx, pLex);
 	if (pStnod)
 		return pStnod;
-#endif
 
 	pStnod = PStnodParseExpressionStatement(pParctx, pLex);
 	if (pStnod)
@@ -3043,19 +4491,19 @@ bool FParseImportDirectives(ParseContext * pParctx, Lexer * pLex)
 	Workspace * pWork = pParctx->m_pWork;
 	Workspace::FILEK filek;
 	Moe::InString istrDirective = pLex->m_istr;
-	if (istrDirective == RWord::g_pChzImportDirective)
+	if (istrDirective == RWord::g_istrImportDirective)
 	{
 		filek = Workspace::FILEK_Source;
 	}
-	else if (istrDirective == RWord::g_pChzForeignLibraryDirective)
+	else if (istrDirective == RWord::g_istrForeignLibraryDirective)
 	{
 		filek = Workspace::FILEK_ForeignLibrary;
 	}
-	else if (istrDirective == RWord::g_pChzStaticLibraryDirective)
+	else if (istrDirective == RWord::g_istrStaticLibraryDirective)
 	{
 		filek = Workspace::FILEK_StaticLibrary;
 	}
-	else if (istrDirective == RWord::g_pChzDynamicLibraryDirective)
+	else if (istrDirective == RWord::g_istrDynamicLibraryDirective)
 	{
 		filek = Workspace::FILEK_DynamicLibrary;
 	}

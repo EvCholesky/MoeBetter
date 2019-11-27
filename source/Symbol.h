@@ -19,6 +19,7 @@
 #include "MoeTypes.h"
 
 struct ErrorManager;
+struct STEnum;
 struct STNode;
 struct TypeInfo;
 struct TypeRegistry;
@@ -203,7 +204,7 @@ public:
 	Symbol * 				PSymGenericInstantiate(Symbol * pSym, TypeInfo * pTinInstance);
 
 	Symbol *				PSymLookup(
-								const Moe::InString & istr,
+								Moe::InString istr,
 								const LexSpan & lexsp, 
 								GRFSYMLOOK grfsymlook = FSYMLOOK_Default,
 								SymbolTable ** ppSymtabOut = nullptr);
@@ -219,6 +220,9 @@ public:
 	TypeInfoPointer *		PTinptrAllocate(TypeInfo * pTinPointedTo, bool fIsImplicitRef = false);
 	TypeInfoQualifier *		PTinqualEnsure(TypeInfo * pTinTarget, GRFQUALK grfqualk);
 	TypeInfoQualifier *		PTinqualWrap(TypeInfo * pTinTarget, GRFQUALK grfqualk);
+	TypeInfoEnum *			PTinenumAllocate(Moe::InString istrName, int cConstant, ENUMK enumk, STEnum * pStenumDef);
+	TypeInfoProcedure *		PTinprocAllocate(Moe::InString istrName, size_t cParam, size_t cReturn);
+	TypeInfoStruct *		PTinstructAllocate(Moe::InString istrName, size_t cField, size_t cGenericParam);
 
 	template <typename T>
 	T *						PTinMakeUnique(T * pTin)

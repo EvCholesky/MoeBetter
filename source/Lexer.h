@@ -103,6 +103,7 @@ enum TOK
 		RW(True) STR(true) \
 		RW(False) STR(false) \
 		RW(New) STR(new) \
+		RW(Main) STR(main) \
 		RW(Delete) STR(delete) \
 		RW(Using) STR(using) \
 		RW(Operator) STR(operator) \
@@ -117,7 +118,9 @@ enum TOK
 		RW(CDecl) STR(#cdecl) \
 		RW(StdCall) STR(#stdcall)
 
-#define RW(x) extern const char * g_pChz##x;
+#define RW(x) \
+	extern const char * g_pChz##x; \
+	extern Moe::InString g_istr##x; 
 #define STR(x)
 namespace RWord
 {
@@ -125,6 +128,26 @@ namespace RWord
 }
 #undef STR
 #undef RW
+
+inline void InternReservedWordStrings()
+{
+#define RW(x) RWord::g_istr##x = IstrIntern(RWord::g_pChz##x);
+#define STR(x)
+	RESERVED_WORD_LIST
+#undef STR
+#undef RW
+}
+
+inline void ClearReservedWordStrings()
+{
+#define RW(x) RWord::g_istr##x = Moe::InString();
+#define STR(x)
+	RESERVED_WORD_LIST
+#undef STR
+#undef RW
+}
+
+
 
 enum FLEXER
 {

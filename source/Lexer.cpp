@@ -15,14 +15,20 @@
 
 #include "Lexer.h"
 
-#define RW(x) const char * g_pChz##x = 
-#define STR(x) #x;
 namespace RWord
 {
+#define RW(x) const char * g_pChz##x = 
+#define STR(x) #x;
 	RESERVED_WORD_LIST	
-}
 #undef STR
 #undef RW
+
+#define RW(x) Moe::InString g_istr##x;
+#define STR(x)
+	RESERVED_WORD_LIST	
+#undef STR
+#undef RW
+}
 
 static int TokSetTokinf(Lexer * pLex, TOK tok, const char * pChStart, const char * pChEnd)
 {

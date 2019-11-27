@@ -26,6 +26,7 @@
 //  - 
 
 struct GenericMap;
+struct STDecl;
 struct STNode;
 struct TypeInfoProcedure;
 
@@ -53,10 +54,20 @@ enum SCOPID : s32
 		BLTIN(U64) STR(u64)	\
 		BLTIN(F32) STR(f32)	\
 		BLTIN(F64) STR(f64)	\
-		BLTIN(String) STR(string)	
+		BLTIN(Void) STR(void) \
+		BLTIN(String) STR(string) \
+		BLTIN(EnumNil) STR(nil)	\
+		BLTIN(EnumMin) STR(nil)	\
+		BLTIN(EnumLast) STR(nil) \
+		BLTIN(EnumMax) STR(nil)	\
+		BLTIN(EnumNone) STR(nil) \
+		BLTIN(EnumAll) STR(nil)	\
+		BLTIN(EnumNames) STR(nil) \
+		BLTIN(EnumValues) STR(nil)	
 
-
-#define BLTIN(x) extern const char * g_pChz##x;
+#define BLTIN(x) \
+	extern const char * g_pChz##x; \
+	extern Moe::InString g_istr##x; 
 #define STR(x)
 namespace BuiltIn
 {
@@ -64,6 +75,26 @@ namespace BuiltIn
 }
 #undef STR
 #undef BLTIN
+
+inline void InternBuiltInTypeStrings()
+{
+#define BLTIN(x) BuiltIn::g_istr##x = IstrIntern(BuiltIn::g_pChz##x);
+#define STR(x)
+	BUILT_IN_TYPE_LIST
+#undef STR
+#undef BLTIN
+}
+
+inline void ClearBuiltInTypeStrings()
+{
+#define BLTIN(x) BuiltIn::g_istr##x = Moe::InString();
+#define STR(x)
+	BUILT_IN_TYPE_LIST
+#undef STR
+#undef BLTIN
+}
+
+
 
 enum TINK : s8
 {
@@ -76,13 +107,13 @@ enum TINK : s8
     TINK_Array		= 6,
     TINK_Null		= 7,			// no specialized type info
     TINK_Any		= 8,			// no specialized type info
-    TINK_Enum		= 9,
+    TINK_Enum		= 9, 
 	TINK_Qualifier	= 10,
 	TINK_Interface  = 11,
 	TINK_Type		= 12,			// first class 'TYPE' - not really useful or supported until we get compile time code.
 	TINK_ReflectedMax,
 
-	TINK_ForwardDecl= TINK_ReflectedMax,	// Type info added for resolving pointers to self during the type-check phase.
+	TINK_ForwardDecl = TINK_ReflectedMax,	// Type info added for resolving pointers to self during the type-check phase.
 	TINK_Literal,							// literal that hasn't been resolved to a specific type yet
 	TINK_Anchor,							// type for generic anchors that haven't been substituted
 	TINK_Flag,								// Type for enum flag assignments; no specialized type info
@@ -409,13 +440,13 @@ struct TypeStructMember	// tag = typememb
 					TypeStructMember()
 					:m_istrName()
 					,m_pTin(nullptr)
-					,m_pStnod(nullptr)
+					,m_pStdecl(nullptr)
 					,m_dBOffset(-1)
 						{ ;}
 
 	Moe::InString	m_istrName;
 	TypeInfo *		m_pTin;
-	STNode *		m_pStnod;		// syntax tree node for this member
+	STDecl *		m_pStdecl;		// syntax tree node for this member
 	s32				m_dBOffset;		// for bytecode GEP
 };
 
@@ -454,7 +485,7 @@ struct TypeInfoStruct : public TypeInfo	// tag = tinstruct
 
 int ITypemembLookup(TypeInfoStruct * pTinstruct, const Moe::InString & istrMemberName);
 
-struct STypeInfoEnumConstant // tag = tinecon
+struct TypeInfoEnumConstant // tag = tinecon
 {
 	Moe::InString		m_istrName;
 	BigInt				m_bintValue;
@@ -487,7 +518,7 @@ struct TypeInfoEnum : public TypeInfo	// tag = tinenum
 	BigInt				m_bintLatest;
 	TypeInfoStruct 		m_tinstructProduced;
 
-	Moe::CAllocAry<STypeInfoEnumConstant>	
+	Moe::CAllocAry<TypeInfoEnumConstant>	
 						m_aryTinecon;
 };
 

@@ -4,25 +4,22 @@ An experimental sketch version of the Moe compiler. (I'm trying to take the pati
 
 Changes:
 
+Recover from errors rather than aborting on first one
 Query based compilation  
-
 Multi-threaded
 
-Parsing should try to recover from errors as soon as possible and resume parsing
-
 AST
-	* ast tracks whitespace, should be able to reproduce original source
 
 String -> Using interred strings, just check pointer rather than HV, threads will need to use mutex when adding to the hash
 
 TypeInfo 
 	* All types should be unique from the start, don't set an AST node's type until it can be uniquely determined 
 
-collapse STypeInfoInt and STypeInfoFloat to STypeInfoNumeric 
+collapse TypeInfoInt and TypeInfoFloat to TypeInfoNumeric 
 
 Notation changes
 	* no leading S/C for structs or classes
-	* EWC macros/namespaces should change go MOE
+	* EWC macros/namespaces changed go MOE
 	* No more pCoz/pChz, all string code should handle UTF8
 
 Things I contemplated changing, but didn't
@@ -34,6 +31,13 @@ removing
 acast 
 
 
-TODO:
-[] "array references" -> array slice
-[] add module support
+TODO - little tasks:
+[ ] "array references" -> array slice
+[ ] unify Proc/Procedure naming - everything should be proc (I think it's just TypeInfoProcedure)
+[ ] fix error recovery stack to synch with multiple error outcomes ( ie. failure to parse expression list should recover to ',' or recover to '}'
+[ ] track nested constructs in error recovery?
+[ ] nested block comments
+
+
+TODO - Big Stuff:
+[ ] add module support

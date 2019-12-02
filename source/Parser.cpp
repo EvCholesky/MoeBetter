@@ -116,7 +116,7 @@ static ParkInfo s_mpParkParkinfo[] =
 	{ STEXK_Node,		"uninit", "Uninitializer" },
 	{ STEXK_Node,		"cast", "Cast" },
 	{ STEXK_Node,		"elem", "Array Element" },			// [array, index]
-	{ STEXK_Node,		"memb", "Member Lookup" },			// [struct, child]
+	{ STEXK_Operator,	"memb", "Member Lookup" },			// [struct, child]
 	{ STEXK_Node,		"call", "Procedure Call"},			// [procedure, arg0, arg1, ...]
 	{ STEXK_Node,		"specStruct", "Specialized Struct" },
 	{ STEXK_Node,		"list", "List", },
@@ -1572,6 +1572,8 @@ void STNode::SetChildArray(STNode ** apStnodChild, int cpStnodChild)
 void STNode::CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, int cpStnodChild)
 {
 	MOE_ASSERT(m_apStnodChild == nullptr, "leaking child array");
+	if (!cpStnodChild)
+		return;
 
 	size_t cB = sizeof(STNode *) * cpStnodChild;
 	m_apStnodChild = (STNode **)pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(STNode *));
@@ -1735,7 +1737,7 @@ static inline bool FIsValidStnod(STNode * pStnod)
 	return pStnod && pStnod->m_park != PARK_Error;
 }
 
-bool FExpect(ParseContext * pParctx, Lexer * pLex, TOK tokExpected, const char * pChzInfo = nullptr, ...)
+bool FExpectConsumeToken(ParseContext * pParctx, Lexer * pLex, TOK tokExpected, const char * pChzInfo = nullptr, ...)
 {
 	if (pLex->m_tok != tokExpected)
 	{
@@ -1770,20 +1772,7 @@ bool FIsEndOfStatement(Lexer * pLex)
 
 void ExpectEndOfStatement(ParseContext * pParctx, Lexer * pLex, const char * pChzInfo = nullptr, ...)
 {
-	if (FIsEndOfStatement(pLex))
-	{
-		if (pLex->m_tok == TOK(';'))
-		{
-			TokNext(pLex);
-
-			if (pLex->m_tok != TOK(';') && FIsEndOfStatement(pLex))
-			{
-				auto strUnexpected = StrUnexpectedToken(pLex);
-				EmitWarning(pParctx, LexSpan(pLex), ERRID_OldCStyle, "Unnecessary c-style ';' found before '%s'", strUnexpected.m_pChz);
-			}
-		}
-	}
-	else
+	if (!FIsEndOfStatement(pLex))
 	{
 		char aB[1024] = {0};
 		if (pChzInfo)
@@ -1800,7 +1789,21 @@ void ExpectEndOfStatement(ParseContext * pParctx, Lexer * pLex, const char * pCh
 
 		auto strUnexpected = StrUnexpectedToken(pLex);
 		EmitError(pParctx, LexSpan(pLex), ERRID_ExpectedEndOfLine, "Expected end-of-line or ';' before '%s' %s", strUnexpected.m_pChz, aB);
-		SkipToRecovery(pLex, pParctx->m_pLrecst);
+		(void) TokSkipToRecovery(pLex, pParctx->m_pLrecst);
+	}
+
+	if (FIsEndOfStatement(pLex))
+	{
+		if (pLex->m_tok == TOK(';'))
+		{
+			TokNext(pLex);
+
+			if (pLex->m_tok != TOK(';') && FIsEndOfStatement(pLex))
+			{
+				auto strUnexpected = StrUnexpectedToken(pLex);
+				EmitWarning(pParctx, LexSpan(pLex), ERRID_OldCStyle, "Unnecessary c-style ';' found before '%s'", strUnexpected.m_pChz);
+			}
+		}
 	}
 }
 STNode * PStnodParsePointerDecl(ParseContext * pParctx, Lexer * pLex)
@@ -1811,7 +1814,7 @@ STNode * PStnodParsePointerDecl(ParseContext * pParctx, Lexer * pLex)
 		SplitToken(pLex, TOK_Reference);
 	}
 
-	if (FConsumeToken(pLex, TOK_Reference))
+	if (FTryConsumeToken(pLex, TOK_Reference))
 	{
 		auto pStnod = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ReferenceDecl, pLex, LexSpan(pLex));
 		return pStnod;
@@ -1836,11 +1839,11 @@ STNode * PStnodParseQualifierDecl(ParseContext * pParctx, Lexer * pLex)
 
 STNode * PStnodParseArrayDecl(ParseContext * pParctx, Lexer * pLex, GRFPDECL grfpdecl)
 {
-	if (FConsumeToken(pLex, TOK('[')))
+	if (FTryConsumeToken(pLex, TOK('[')))
 	{
 		auto pStnodArray = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ArrayDecl, pLex, LexSpan(pLex));
 
-		if (FConsumeToken(pLex, TOK_PeriodPeriod))
+		if (FTryConsumeToken(pLex, TOK_PeriodPeriod))
 		{
 			;
 		}
@@ -1869,7 +1872,7 @@ STNode * PStnodParseArrayDecl(ParseContext * pParctx, Lexer * pLex, GRFPDECL grf
 			}
 		}
 
-		FExpect(pParctx, pLex, TOK(']'));
+		FExpectConsumeToken(pParctx, pLex, TOK(']'));
 		return pStnodArray;
 	}
 	return nullptr;
@@ -1880,14 +1883,14 @@ STNode * PStnodParseTypeSpecifier(ParseContext * pParctx, Lexer * pLex, const ch
 	STNode * pStnod = PStvalParseIdentifier(pParctx, pLex);
 	if (pStnod)
 	{
-		if (FConsumeToken(pLex, TOK('(')))
+		if (FTryConsumeToken(pLex, TOK('(')))
 		{
 			STNode * pStnodStructInst = nullptr;
 			{
 				LexRecoverAmbit lrecamb(pParctx->m_pLrecst, TOK(')'));
 				SymbolTable * pSymtabParent = pParctx->m_pSymtab;
 
-				auto pStnodStructInst = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_GenericStructSpec, pLex, LexSpan(pLex));
+				pStnodStructInst = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_GenericStructSpec, pLex, LexSpan(pLex));
 				
 				CDynAry<STNode *> arypStnodArg(pParctx->m_pAlloc, BK_Parse);
 				arypStnodArg.Append(pStnod);
@@ -1896,16 +1899,16 @@ STNode * PStnodParseTypeSpecifier(ParseContext * pParctx, Lexer * pLex, const ch
 				pStnodStructInst->CopyChildArray(pParctx->m_pAlloc, arypStnodArg.A(), int(arypStnodArg.C()));
 			}
 
-			if (!FExpect(pParctx, pLex, TOK(')')))
+			if (!FExpectConsumeToken(pParctx, pLex, TOK(')')))
 			{
-				SkipToRecovery(pLex, pParctx->m_pLrecst);
+				(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 			}
 			return pStnodStructInst;
 
 		}
 		else if (pLex->m_tok == TOK('.'))
 		{
-			while (FConsumeToken(pLex, TOK('.')))
+			while (FTryConsumeToken(pLex, TOK('.')))
 			{
 				LexSpan lexsp(pLex);
 
@@ -2051,7 +2054,7 @@ STNode * PStnodParseExpressionList(
 {
 	TOK aTok[] = {TOK(' '), TOK(',') };
 	aTok[0] = tokClosing;
-	auto pLrec = PLrecPush(pParctx->m_pLrecst, aTok, MOE_DIM(aTok), FLEXER_None);
+	auto pLrec = PLrecPush(pParctx->m_pLrecst, aTok);
 
 	LexSpan lexsp(pLex);
 
@@ -2065,7 +2068,7 @@ STNode * PStnodParseExpressionList(
 		CDynAry<STNode *> arypStnod(pParctx->m_pAlloc, BK_Parse);
 		arypStnod.Append(pStnodExp);
 
-		while (FConsumeToken(pLex, TOK(',')))
+		while (FTryConsumeToken(pLex, TOK(',')))
 		{
 			pStnodExp = PStnodParseExpression(pParctx, pLex, grfexp);
 
@@ -2082,9 +2085,9 @@ STNode * PStnodParseExpressionList(
 
 	PopLexRecover(pParctx->m_pLrecst, pLrec);
 
-	if (!FExpect(pParctx, pLex, TOK('}'), pChzContext))
+	if (!FExpectConsumeToken(pParctx, pLex, TOK('}'), pChzContext))
 	{
-		SkipToRecovery(pLex, pParctx->m_pLrecst);
+		(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 	}
 	return pStnodList;
 }
@@ -2139,7 +2142,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 				{
 					pStval = PStvalParseIdentifier(pParctx, pLex);
 
-					if (FConsumeToken(pLex, TOK_ColonColon))
+					if (FTryConsumeToken(pLex, TOK_ColonColon))
 					{
 #if 1
 						MOE_ASSERT(false, "Generic typespec shorthand is WIP");
@@ -2155,7 +2158,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 						{
 							auto pStnodTin = PStnodParseTypeSpecifier(pParctx, pLex, "generic specifier", FPDECL_None);
 							pStnodSpec->IAppendChild(pStnodTin);
-						} while (FConsumeToken(pLex, TOK(',')));
+						} while (FTryConsumeToken(pLex, TOK(',')));
 
 						return pStnodSpec;
 #endif
@@ -2275,7 +2278,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 				LexSpan lexsp(pLex);
 				STNode * pStnodType = nullptr;
 
-				if (FConsumeToken(pLex, TOK(':')))
+				if (FTryConsumeToken(pLex, TOK(':')))
 				{
 					// parse type specifier
 					pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "compound literal", FPDECL_AllowBakedTypes | FPDECL_AllowBakedValues);
@@ -2287,7 +2290,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 					}
 				}
 
-				if (FConsumeToken(pLex, TOK('{')))
+				if (FTryConsumeToken(pLex, TOK('{')))
 				{
 					// We're using a decl here... may need a custom structure
 					auto pStdeclLit = PStnodAlloc<STDecl>(pParctx->m_pAlloc, PARK_CompoundLiteral, pLex, lexsp);
@@ -2315,10 +2318,10 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 			{
 				TokNext(pLex); // consume '('
 
-				LexRecoverAmbit lrecamb(pParctx->m_pLrecst, TOK(')'), FLEXER_EndOfLine);
+				LexRecoverAmbit lrecamb(pParctx->m_pLrecst, TOK(')'), TOK_EndOfLine);
 
 				STNode * pStnodReturn = PStnodParseExpression(pParctx, pLex);
-				FExpect(pParctx, pLex, TOK(')'));
+				FExpectConsumeToken(pParctx, pLex, TOK(')'));
 				return pStnodReturn;
 			}
 
@@ -2328,8 +2331,8 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 
 void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> * parypStnodArgList, GRFARGLIST grfarglist)
 {
-	static const TOK s_aTok[] = {TOK(','), TOK(')') };
-	LexRecoverAmbit lrecamb(pParctx->m_pLrecst, s_aTok, MOE_DIM(s_aTok), FLEXER_EndOfLine);
+	static const TOK s_aTok[] = {TOK(','), TOK(')'), TOK_EndOfLine };
+	LexRecoverAmbit lrecamb(pParctx->m_pLrecst, s_aTok);
 
 	while (1)
 	{
@@ -2361,7 +2364,7 @@ void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> *
 				if (!pStnodIdent)
 				{
 					EmitError(pParctx, LexSpan(pLex), ERRID_MissingLabel, "Argument label did not specify an argument name");
-					SkipToRecovery(pLex, pParctx->m_pLrecst);
+					(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 				}
 				else
 				{
@@ -2369,7 +2372,7 @@ void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> *
 					arypStnodLabel.Append(pStnodIdent);
 				}
 
-				if (FConsumeToken(pLex, TOK('=')))
+				if (FTryConsumeToken(pLex, TOK('=')))
 				{
 					EmitError(pParctx, LexSpan(pLex), ERRID_UnexpectedToken, "Labeled arguments do not require an assignment operator");
 				}
@@ -2383,7 +2386,7 @@ void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> *
 					STNode * pStnodIdent = pStnodLabel->PStnodChildSafe(0);
 					EmitError(pParctx, LexSpan(pLex), ERRID_ExpectedExpression, 
 						"Labeled argument '%s' does not specify a value", IstrFromIdentifier(pStnodIdent).m_pChz);
-					SkipToRecovery(pLex, pParctx->m_pLrecst);
+					(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 				}
 				else
 				{
@@ -2399,7 +2402,7 @@ void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> *
 				break;
 		}
 
-		if (!FConsumeToken(pLex, TOK(',')))
+		if (!FTryConsumeToken(pLex, TOK(',')))
 			break;
 	}
 }
@@ -2420,7 +2423,7 @@ STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 		{
 		case TOK('['):		// [ expression ]
 			{
-				LexRecoverAmbit(pParctx->m_pLrecst, TOK(']'), FLEXER_EndOfLine);
+				LexRecoverAmbit(pParctx->m_pLrecst, TOK(']'), TOK_EndOfLine);
 				LexSpan lexsp(pLex);
 
 				// BB - Need to push a 'bail out' context... in case of error walk to next ']'
@@ -2434,7 +2437,7 @@ STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 				pStnodArray->CopyChildArray(pParctx->m_pAlloc, apStnod, MOE_DIM(apStnod));
 
 				pStnod = pStnodArray;
-				FExpect(pParctx, pLex, TOK(']'));
+				FExpectConsumeToken(pParctx, pLex, TOK(']'));
 			} break;
 		case TOK('('):		// ( )
 			{				// ( ArgumentExpressionList )
@@ -2462,7 +2465,7 @@ STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 				ParseArgumentList(pParctx, pLex, &arypStnodArg);
 				pStnod->CopyChildArray(pParctx->m_pAlloc, arypStnodArg.A(), int(arypStnodArg.C()));
 
-				if (!FExpect(
+				if (!FExpectConsumeToken(
 					pParctx,
 					pLex,
 					TOK(')'),
@@ -2470,7 +2473,7 @@ STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 					pStnodIdent ? IstrFromIdentifier(pStnodIdent).m_pChz : "unknown"))
 				{
 					// This is a comma-separated argument list, let's assume we missed a comma and the rest of the statement is garbage
-					SkipToRecovery(pLex, pParctx->m_pLrecst);
+					(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 				}
 			} 
 			break;
@@ -2537,22 +2540,22 @@ STNode * PStnodParseUnaryExpression(ParseContext * pParctx, Lexer * pLex)
 				TOK tokPrev = TOK(pLex->m_tok);	
 				auto pStvalRword = PStvalParseReservedWord(pParctx, pLex);
 
-				bool fIsOk = FExpect(pParctx, pLex, TOK('('));
+				bool fIsOk = FExpectConsumeToken(pParctx, pLex, TOK('('));
 
 				STNode * pStnodChild = PStnodParseUnaryExpression(pParctx, pLex);
 				if (!pStnodChild)
 				{
 					EmitError(pParctx, LexSpan(pLex), ERRID_MissingOperand, "%s missing argument.", pLex->m_istr.m_pChz);
-					SkipToRecovery(pLex, pParctx->m_pLrecst);
+					(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 					fIsOk = false;
 				}
 				
-				fIsOk &= FExpect(pParctx, pLex, TOK(')'));
+				fIsOk &= FExpectConsumeToken(pParctx, pLex, TOK(')'));
 					
 				if (pLex->m_istr == RWord::g_istrTypeof)
 				{
 					EmitError(pParctx, LexSpan(pLex), ERRID_FeatureNotImplemented, "typeof not implemented yet.");
-					SkipToRecovery(pLex, pParctx->m_pLrecst);
+					(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 					fIsOk = false;
 				}
 
@@ -2584,7 +2587,7 @@ STNode * PStnodParseUnaryExpression(ParseContext * pParctx, Lexer * pLex)
 					"Unary operator '%s' missing operand before %s",
 					PChzFromTok(tokPrev),
 					PChzCurrentToken(pLex));
-				SkipToRecovery(pLex, pParctx->m_pLrecst);
+				(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 				return nullptr;
 			}
 
@@ -2613,11 +2616,11 @@ STNode * PStnodParseCastExpression(ParseContext * pParctx, Lexer * pLex)
 	auto pStdecl = PStnodAlloc<STDecl>(pParctx->m_pAlloc, PARK_Cast, pLex, LexSpan(pLex));
 	//auto pStdecl = pStnodCast->PStmapEnsure<CSTDecl>(pParctx->m_pAlloc);
 
-	FExpect(pParctx, pLex, TOK('('));
+	FExpectConsumeToken(pParctx, pLex, TOK('('));
 
 	pStdecl->m_pStnodType = PStnodParseTypeSpecifier(pParctx, pLex, "cast", FPDECL_None);
 
-	FExpect(pParctx, pLex, TOK(')'));
+	FExpectConsumeToken(pParctx, pLex, TOK(')'));
 
 	pStdecl->m_pStnodInit = PStnodParseCastExpression(pParctx, pLex);
 	//pStdecl->m_pStnodInit = pStnodCast->IAppendChild(pStnodChild);
@@ -2625,7 +2628,7 @@ STNode * PStnodParseCastExpression(ParseContext * pParctx, Lexer * pLex)
 	if (pStdecl->m_pStnodInit == nullptr)
 	{
 		EmitError(pParctx, pStnodCast->m_lexsp, ERRID_UnknownError, "Cast statement missing right hand side");
-		SkipToRecovery(pLex, pParctx->m_pLrecst);
+		(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 	}
 	return pStnodCast;
 }
@@ -2649,17 +2652,15 @@ STNode * PStnodHandleExpressionRHS(
 			PChzFromTok(tokExpression),
 			PChzCurrentToken(pLex));
 
-		SkipToRecovery(pLex, pParctx->m_pLrecst);
+		(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 		return pStnodLhs;
 	}
 
-	STNode * pStnodExp = PStnodAlloc<STOperator>(pParctx->m_pAlloc, parkExpression, pLex, LexSpan(pLex));
-	//STNode * pStnodExp = MOE_NEW(pParctx->m_pAlloc, CSTNode) CSTNode(pParctx->m_pAlloc, lexloc);
-	pStnodExp->m_tok = tokExpression;
-
-	STNode * apStnod[] = {pStnodLhs, pStnodRhs};
-	pStnodExp->CopyChildArray(pParctx->m_pAlloc, apStnod, MOE_DIM(apStnod));
-	return pStnodExp;
+	STOperator * pStopExp = PStnodAlloc<STOperator>(pParctx->m_pAlloc, parkExpression, pLex, LexSpan(pLex));
+	pStopExp->m_tok = tokExpression;
+	pStopExp->m_pStnodLhs = pStnodLhs;
+	pStopExp->m_pStnodRhs = pStnodRhs;
+	return pStopExp;
 }
 
 STNode * PStnodParseShiftExpression(ParseContext * pParctx, Lexer * pLex)
@@ -2935,7 +2936,7 @@ STNode * PStnodParseJumpStatement(ParseContext * pParctx, Lexer * pLex)
 
 STNode * PStnodParseExpressionStatement(ParseContext * pParctx, Lexer * pLex)
 {
-	if (FConsumeToken(pLex, TOK(';')))
+	if (FTryConsumeToken(pLex, TOK(';')))
 	{
 		// return empty statement
 
@@ -2955,7 +2956,7 @@ STNode * PStnodParseCompoundStatement(ParseContext * pParctx, Lexer * pLex, Symb
 {
 	STNode * pStnodList = nullptr;
 
-	if (FConsumeToken(pLex, TOK('{')))
+	if (FTryConsumeToken(pLex, TOK('{')))
 	{
 		CDynAry<STNode *> arypStnod(pParctx->m_pAlloc, BK_Parse);
 		pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_List, pLex, LexSpan(pLex));
@@ -2967,8 +2968,8 @@ STNode * PStnodParseCompoundStatement(ParseContext * pParctx, Lexer * pLex, Symb
 		pStnodList->m_pSymtab = pSymtab;
 		PushSymbolTable(pParctx, pSymtab);
 
-		static const TOK s_aTok[] = {TOK(';'), TOK('}') };
-		LexRecoverAmbit lrecamb(pParctx->m_pLrecst, s_aTok, MOE_DIM(s_aTok), FLEXER_EndOfLine);
+		static const TOK s_aTok[] = {TOK(';'), TOK('}'), TOK_EndOfLine };
+		LexRecoverAmbit lrecamb(pParctx->m_pLrecst, s_aTok);
 
 		while (pLex->m_tok != TOK('}'))
 		{
@@ -2994,7 +2995,7 @@ STNode * PStnodParseCompoundStatement(ParseContext * pParctx, Lexer * pLex, Symb
 
 		SymbolTable * pSymtabPop = PSymtabPop(pParctx);
 		MOE_ASSERT(pSymtab == pSymtabPop, "CSymbol table push/pop mismatch (list)");
-		FExpect(pParctx, pLex, TOK('}'));
+		FExpectConsumeToken(pParctx, pLex, TOK('}'));
 	}
 
 	return pStnodList;
@@ -3048,7 +3049,7 @@ STNode * PStnodParseParameter(
 	{
 		if (fAllowBakedValues)
 		{
-			(void)FConsumeToken(&lexPeek, TOK_Generic); // ignore baked constant marks
+			(void)FTryConsumeToken(&lexPeek, TOK_Generic); // ignore baked constant marks
 		}
 
 		if (lexPeek.m_tok != TOK_Identifier)
@@ -3066,7 +3067,7 @@ STNode * PStnodParseParameter(
 		++cIdent;
 		TokNext(&lexPeek);
 
-		if (fAllowCompoundDecl && FConsumeToken(&lexPeek, TOK(',')))
+		if (fAllowCompoundDecl && FTryConsumeToken(&lexPeek, TOK(',')))
 			continue;
 
 		if (FConsumeIdentifier(pLex, RWord::g_istrImmutable))
@@ -3083,7 +3084,7 @@ STNode * PStnodParseParameter(
 	do
 	{
 		bool fIsBakedConstant = false;
-		if (fAllowBakedValues && FConsumeToken(pLex, TOK_Generic))
+		if (fAllowBakedValues && FTryConsumeToken(pLex, TOK_Generic))
 		{
 			fIsBakedConstant = true;
 		}
@@ -3158,11 +3159,11 @@ STNode * PStnodParseParameter(
 			}
 		}
 
-		if (FConsumeToken(pLex, TOK_ColonEqual))
+		if (FTryConsumeToken(pLex, TOK_ColonEqual))
 		{
 			pStnodInit = PStnodParseExpression(pParctx, pLex);
 		}
-		else if (FConsumeToken(pLex, TOK(':')))
+		else if (FTryConsumeToken(pLex, TOK(':')))
 		{
 			if (pStnodCompound)
 			{
@@ -3197,9 +3198,9 @@ STNode * PStnodParseParameter(
 				cTypeNeeded = 0;
 			}
 
-			if (FConsumeToken(pLex, TOK('=')))
+			if (FTryConsumeToken(pLex, TOK('=')))
 			{
-				if (FConsumeToken(pLex, TOK_TripleMinus))
+				if (FTryConsumeToken(pLex, TOK_TripleMinus))
 				{
 					if (!grfpdecl.FIsSet(FPDECL_AllowUninitializer))
 					{
@@ -3220,7 +3221,7 @@ STNode * PStnodParseParameter(
 			}
 		}
 
-	} while (fAllowCompoundDecl && FConsumeToken(pLex, TOK(',')));
+	} while (fAllowCompoundDecl && FTryConsumeToken(pLex, TOK(',')));
 
 	auto pStdeclReturn = PStnodDerivedCast<STDecl *>(pStnodReturn);
 	pStdeclReturn->m_pStnodInit = pStnodInit;
@@ -3230,7 +3231,6 @@ STNode * PStnodParseParameter(
 	(void)pStdeclReturn->FCheckIsValid(pParctx->PErrman());
 	return pStnodReturn;
 }
-
 
 STNode * PStnodParseDecl(ParseContext * pParctx, Lexer * pLex)
 {
@@ -3444,7 +3444,7 @@ ERRID ErridCheckOverloadSignature(TOK tok, TypeInfoProcedure * pTinproc, ErrorMa
 
 STNode * PStnodParseReturnArrow(ParseContext * pParctx, Lexer * pLex, SymbolTable * pSymtabProc)
 {
-	if (FConsumeToken(pLex, TOK_Arrow))
+	if (FTryConsumeToken(pLex, TOK_Arrow))
 	{
 		// TODO : handle multiple return types
 		ProcSymtabStack procss(pParctx);
@@ -3498,30 +3498,21 @@ STNode * PStnodParseProcParameterList(ParseContext * pParctx, Lexer * pLex, Symb
 	}
 
 	GRFPDECL grfpdecl = FPDECL_AllowVariadic | FPDECL_AllowBakedTypes | FPDECL_AllowBakedValues | FPDECL_AllowUsing | FPDECL_AllowUnnamed;
-	STNode * pStnodParam = PStnodParseParameter(pParctx, pLex, pSymtabProc, grfpdecl);
-	STNode * pStnodList = nullptr;
-	bool fHasVarArgs = pStnodParam && pStnodParam->m_park == PARK_VariadicArg;
+	bool fHasVarArgs = false;
+	bool fNeedsDefaultArg = false;
+	CDynAry<STNode *> arypStnodArg(pParctx->m_pAlloc, BK_Parse);
 
-	if (pStnodParam)
+	while (pLex->m_tok != TOK(')'))
 	{
-		pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ParameterList, pLex, LexSpan(pLex));
-		pStnodList->m_pSymtab = pSymtabProc;
+		static const TOK s_aTok[] = {TOK(')'), TOK(','), TOK_EndOfLine};
+		LexRecoverAmbit lrecamb(pParctx->m_pLrecst, s_aTok);
 
-		CDynAry<STNode *> arypStnodArg(pParctx->m_pAlloc, BK_Parse);
-		arypStnodArg.Append(pStnodParam);
+		auto pStnodParam = PStnodParseParameter(pParctx, pLex, pSymtabProc, grfpdecl);
 
-		auto pStdeclParam = PStnodRtiCast<STDecl *>(pStnodParam);
-		bool fNeedsDefaultArg = pStdeclParam && pStdeclParam->m_pStnodInit;
-		while (FConsumeToken(pLex, TOK(',')))
+		if (pStnodParam)
 		{
-			pStnodParam = PStnodParseParameter(pParctx, pLex, pSymtabProc, grfpdecl);
-
-			if (!pStnodParam)
-			{
-				auto pChzUnexpected = PChzUnexpectedToken(pLex);
-				EmitError(pParctx, LexSpan(pLex), ERRID_ExpectedParameter, "expected parameter declaration before '%s'", pChzUnexpected);
-				break;
-			}
+			fHasVarArgs |= pStnodParam->m_park == PARK_VariadicArg;
+			arypStnodArg.Append(pStnodParam);
 
 			auto pStdecl = PStnodRtiCast<STDecl *>(pStnodParam);
 			if (pStnodParam->m_park == PARK_Decl && MOE_FVERIFY(pStdecl, "expected parameter to be PARK_Decl"))
@@ -3542,12 +3533,31 @@ STNode * PStnodParseProcParameterList(ParseContext * pParctx, Lexer * pLex, Symb
 
 				fNeedsDefaultArg |= fHasDefaultArg;
 			}
-
-			fHasVarArgs |= pStnodParam->m_park == PARK_VariadicArg;
-			//pStnodList->IAppendChild(pStnodParam);
-			arypStnodArg.Append(pStnodParam);
+		}
+		else
+		{
+			auto pChzUnexpected = PChzUnexpectedToken(pLex);
+			EmitError(pParctx, LexSpan(pLex), ERRID_ExpectedParameter, "expected parameter declaration before '%s'", pChzUnexpected);
+			(void) TokSkipToRecovery(pLex, pParctx->m_pLrecst);	
 		}
 
+		if (pLex->m_tok != TOK(')') && !FTryConsumeToken(pLex, TOK(',')))
+		{
+			auto strUnexpected = StrUnexpectedToken(pLex);
+			EmitError(pParctx, LexSpan(pLex), ERRID_MissingToken, "Expected ',' before '%s'", strUnexpected.m_pChz);
+
+			(void) TokSkipToRecovery(pLex, pParctx->m_pLrecst);	
+
+			if (!FTryConsumeToken(pLex, TOK(',')))
+				break;
+		}
+	}
+
+	STNode * pStnodList = nullptr;
+	if (!arypStnodArg.FIsEmpty())
+	{
+		pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ParameterList, pLex, LexSpan(pLex));
+		pStnodList->m_pSymtab = pSymtabProc;
 		pStnodList->CopyChildArray(pParctx->m_pAlloc, arypStnodArg.A(), int(arypStnodArg.C()));
 	}
 
@@ -3784,7 +3794,7 @@ STNode * PStnodParseEnumConstant(ParseContext * pParctx, Lexer * pLex)
 	pSym = pSymtab->PSymEnsure(pErrman, istrIdent, pStdeclConstant, FSYM_VisibleWhenNested);
 	pStdeclConstant->m_pSymbase = pSym;
 
-	if (FConsumeToken(pLex, TOK_ColonEqual))
+	if (FTryConsumeToken(pLex, TOK_ColonEqual))
 	{
 		STNode * pStnodExp = PStnodParseExpression(pParctx, pLex);
 		if (pStnodExp)
@@ -3797,6 +3807,12 @@ STNode * PStnodParseEnumConstant(ParseContext * pParctx, Lexer * pLex)
 
 STNode * PStnodParseEnumConstantList(ParseContext * pParctx, Lexer * pLex, STEnum * pStenum)
 {
+	if (!FExpectConsumeToken(pParctx, pLex, TOK('{')))
+	{
+		(void) TokSkipToRecovery(pLex, pParctx->m_pLrecst);	
+		return nullptr;
+	}
+
 	LexSpan lexsp(pLex);
 	auto pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_List, pLex, lexsp);
 	pStnodList->m_tok = TOK('{');
@@ -3822,40 +3838,99 @@ STNode * PStnodParseEnumConstantList(ParseContext * pParctx, Lexer * pLex, STEnu
 		}
 	}
 
-	while (1)
+	static const TOK s_aTok[] = {TOK(','), TOK('}') };
+	LexRecoverAmbit lrecamb(pParctx->m_pLrecst, s_aTok);
+
+	while (pLex->m_tok != TOK('}'))
 	{
 		STNode * pStnod = PStnodParseEnumConstant(pParctx, pLex);
-		if (!pStnod)
-			break;
+		if (pStnod)
+		{
+			arypStnod.Append(pStnod);
+			++pStenum->m_cConstantExplicit;
+		}
+		else
+		{
+			auto strUnexpected = StrUnexpectedToken(pLex);
+			EmitError(pParctx, LexSpan(pLex), ERRID_EnumConstantExpected, "Expected enum constant but found '%s'", strUnexpected.m_pChz);
+			(void) TokSkipToRecovery(pLex, pParctx->m_pLrecst);	
+		}
 
-		arypStnod.Append(pStnod);
-		++pStenum->m_cConstantExplicit;
+		if (pLex->m_tok != TOK('}'))
+		{
+			if (!FTryConsumeToken(pLex, TOK(',')))
+			{
+				auto strUnexpected = StrUnexpectedToken(pLex);
+				EmitError(pParctx, LexSpan(pLex), ERRID_MissingToken, "Expected ',' but found '%s'", strUnexpected.m_pChz);
+				(void) TokSkipToRecovery(pLex, pParctx->m_pLrecst);	
 
-		if (!FConsumeToken(pLex, TOK(',')))
-			break;
+				if (!FTryConsumeToken(pLex, TOK(',')))
+					break;
+			}
+		}
+	}
+
+	if (!FExpectConsumeToken(pParctx, pLex, TOK('}')))
+	{
+		(void) TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 	}
 
 	pStnodList->CopyChildArray(pParctx->m_pAlloc, arypStnod.A(), int(arypStnod.C()));
 	return pStnodList;
 }
 
+bool FTrySkipContinuation(ParseContext * pParctx, Lexer * pLex, TOK tokContinue, TOK tokNext)
+{
+	if (pLex->m_tok == tokNext)
+		return true;
+
+	if (!FTryConsumeToken(pLex, tokContinue))
+	{
+		auto strUnexpected = StrUnexpectedToken(pLex);
+		EmitError(pParctx, LexSpan(pLex), ERRID_MissingToken, 
+			"Expected '%s' but found '%s'", PChzFromTok(tokContinue), strUnexpected.m_pChz);
+		(void) TokSkipToRecovery(pLex, pParctx->m_pLrecst);	
+
+		if (!FTryConsumeToken(pLex, TOK(',')))
+			return false;
+	}
+	return true;	
+}
+
 STNode * PStnodParseMemberDeclList(ParseContext * pParctx, Lexer * pLex)
 {
+	static const TOK s_aTok[] = {TOK('}'), TOK(';'), TOK_EndOfLine };
+	LexRecoverAmbit lrecamb(pParctx->m_pLrecst, s_aTok);
+
 	STNode * pStnodList = nullptr;
 	CDynAry<STNode *> arypStnod(pParctx->m_pAlloc, BK_Parse);
 
 	LexSpan lexsp(pLex);
-	while (1)
+	while (pLex->m_tok != TOK('}'))
 	{
+
 		STNode * pStnod = PStnodParseDecl(pParctx, pLex);
 		if (!pStnod)
 		{
 			pStnod = PStnodParseDefinition(pParctx, pLex);
 		}
-		if (!pStnod)
-			break;
 
-		arypStnod.Append(pStnod);
+		if (!pStnod && FTryConsumeToken(pLex, TOK(';')))
+		{
+			pStnod = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_Nop, pLex, LexSpan(pLex));
+		}
+
+		if (pStnod)
+		{
+			arypStnod.Append(pStnod);
+		}
+		else
+		{
+			auto strUnexpected = StrUnexpectedToken(pLex);
+			EmitError(pParctx, LexSpan(pLex), ERRID_UnexpectedToken, 
+				"Expected member declaration or definition but found '%s'", strUnexpected.m_pChz);
+			(void) TokSkipToRecovery(pLex, pParctx->m_pLrecst);	
+		}
 	}
 
 	if (!arypStnod.FIsEmpty())
@@ -3931,7 +4006,7 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 		// function definition
 		if (istrRword == RWord::g_istrProc || istrRword == RWord::g_istrOperator)
 		{
-			FExpect(pParctx, pLex, TOK('('));
+			FExpectConsumeToken(pParctx, pLex, TOK('('));
 
 			auto pStproc = PStnodAlloc<STProc>(pParctx->m_pAlloc, PARK_ProcedureDefinition, pLex, LexSpan(pLex));
 			pStproc->m_grfstnod.AddFlags(FSTNOD_EntryPoint);
@@ -3951,7 +4026,7 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 
 			STNode * pStnodParams = PStnodParseProcParameterList(pParctx, pLex, pSymtabProc, istrRword == RWord::g_istrOperator);
 			pStproc->m_pStnodParameterList = pStnodParams;
-			FExpect(pParctx, pLex, TOK(')'));
+			FExpectConsumeToken(pParctx, pLex, TOK(')'));
 
 			auto pStnodReturns = PStnodParseReturnArrow(pParctx, pLex, pSymtabProc);
 			pStproc->m_pStnodReturnType = pStnodReturns;
@@ -4159,8 +4234,6 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 			(void) pSymtabEnum->PSymEnsure(pErrman, IstrIntern("loose"), pStenum, FSYM_IsType | FSYM_VisibleWhenNested);
 			(void) pSymtabEnum->PSymEnsure(pErrman, IstrIntern("strict"), pStenum, FSYM_IsType | FSYM_VisibleWhenNested);
 
-			FExpect(pParctx, pLex, TOK('{'));
-
 			pSymtabEnum->m_iNestingDepth = pParctx->m_pSymtab->m_iNestingDepth + 1;
 			PushSymbolTable(pParctx, pSymtabEnum);
 			pStenum->m_pSymtab = pSymtabEnum;
@@ -4171,17 +4244,12 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 			SymbolTable * pSymtabPop = PSymtabPop(pParctx);
 			MOE_ASSERT(pSymtabEnum == pSymtabPop, "CSymbol table push/pop mismatch (enum)");
 
-			if (!FExpect(pParctx, pLex, TOK('}')))
-			{
-				TOK closeBracket = TOK('}');
-				SkipToToken(pLex, &closeBracket, 1, FLEXER_None);
-			}
-
 			// type info enum
 			int cConstant = pStenum->m_cConstantImplicit + pStenum->m_cConstantExplicit;
 			auto pTinenum = pSymtabParent->PTinenumAllocate(istrIdent, cConstant, pStenum->m_enumk, pStenum);
 
-			for (int ipStnod = 0; ipStnod < pStnodConstantList->CPStnodChild(); ++ipStnod) 
+			int cpStnodChild = (pStnodConstantList) ? pStnodConstantList->CPStnodChild() : 0;
+			for (int ipStnod = 0; ipStnod < cpStnodChild; ++ipStnod) 
 			{
 				STNode * pStnodMember = pStnodConstantList->PStnodChild(ipStnod);
 
@@ -4221,12 +4289,12 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 			InString istrIdent = IstrFromIdentifier(pStnodIdent);
 			SymbolTable * pSymtabStruct = PSymtabNew(pParctx->m_pAlloc, pSymtabParent, istrIdent);
 
-			if (FConsumeToken(pLex, TOK('(')))
+			if (FTryConsumeToken(pLex, TOK('(')))
 			{
 				STNode * pStnodParams = PStnodParseProcParameterList(pParctx, pLex, pSymtabStruct, false);
 
 				pStstruct->m_pStnodParameterList = pStnodParams;
-				FExpect(pParctx, pLex, TOK(')'));
+				FExpectConsumeToken(pParctx, pLex, TOK(')'));
 
 				if (!pStnodParams)
 				{
@@ -4260,7 +4328,7 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 				}
 			}
 
-			FExpect(pParctx, pLex, TOK('{'));
+			FExpectConsumeToken(pParctx, pLex, TOK('{'));
 
 			// NOTE: struct symbol tables at the global scope should be unordered.
 //				if (!pParctx->m_pSymtab->m_grfsymtab.FIsSet(FSYMTAB_Ordered))
@@ -4320,6 +4388,7 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 				case PARK_StructDefinition:	break;
 				case PARK_EnumDefinition:	break;
 				case PARK_Typedef:			break;
+				case PARK_Nop:				break;
 				default: MOE_ASSERT(false, "Unexpected member in structure %s", istrIdent.m_pChz);
 				}
 			}
@@ -4378,7 +4447,7 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 
 			CheckTinstructGenerics(pParctx, pStstruct, pTinstruct);
 
-			FExpect(pParctx, pLex, TOK('}'));
+			FExpectConsumeToken(pParctx, pLex, TOK('}'));
 
 			return pStstruct;
 		}
@@ -4449,7 +4518,7 @@ STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 #ifdef MOEB_LATER
 	STIdentifier * pStidentLabel = nullptr;
 
-	if (FConsumeToken(pLex, TOK_Label))
+	if (FTryConsumeToken(pLex, TOK_Label))
 	{
 		if (pLex->m_tok != TOK_Identifier)
 		{
@@ -4544,7 +4613,7 @@ void ExecuteParseJob(Compilation * pComp, Workspace * pWork, Job * pJob)
 	ParseContext * pParctx = &pParjd->m_parctx;
 	Lexer * pLex = &pParjd->m_lex;
 
-	LexRecoverAmbit lrecamb(pParctx->m_pLrecst, TOK(';'), FLEXER_EndOfLine);
+	LexRecoverAmbit lrecamb(pParctx->m_pLrecst, TOK(';'), TOK_EndOfLine);
 	// load the first token
 	TokNext(pLex);
 
@@ -4559,7 +4628,7 @@ void ExecuteParseJob(Compilation * pComp, Workspace * pWork, Job * pJob)
 		if (!pStnod)
 		{
 			EmitError(pWork, LexSpan(pLex), ERRID_UnexpectedToken, "Unexpected token at global scope '%s'", PChzCurrentToken(pLex));
-			SkipToRecovery(pLex, pParctx->m_pLrecst);
+			(void)TokSkipToRecovery(pLex, pParctx->m_pLrecst);
 			continue;
 		}
 

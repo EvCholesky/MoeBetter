@@ -67,6 +67,8 @@ enum TOK
 	TOK_Label = '`',
 	TOK_Generic = '$',
 
+	TOK_EndOfLine,		// never reported by the lexer, just used for error recovery
+
 	TOK_SimpleMax = TOK_Eof,
 };
 
@@ -162,22 +164,41 @@ MOE_DEFINE_GRF(GRFLEXER, FLEXER, u8);
 
 LexRecoverStack * PLrecstAlloc(Moe::Alloc * pAlloc);
 void FreeLexRecoverStack(Moe::Alloc * pAlloc, LexRecoverStack * pLrecst);
-LexRecover * PLrecPush(LexRecoverStack * pLrecst, TOK tok, GRFLEXER grflexer = FLEXER_None);
-LexRecover * PLrecPush(LexRecoverStack * pLrecst, const TOK * aTok, int cTok, GRFLEXER grflexer = FLEXER_None);
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, TOK tok);
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, TOK tokA, TOK tokB);
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, const TOK * aTok, int cTok);
+
+template <typename T, size_t CELEM>
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, const T (&aTok) [CELEM])
+{
+	return PLrecPush(pLrecst, aTok, CELEM);
+}
+
 void PopLexRecover(LexRecoverStack * pLrecst, LexRecover * pLrec);
-void SkipToRecovery(Lexer * pLex, LexRecoverStack * lrecst);
+TOK TokSkipToRecovery(Lexer * pLex, LexRecoverStack * lrecst);
 
 struct LexRecoverAmbit  // tag = lrecamb
 {
-				LexRecoverAmbit(LexRecoverStack * pLrecst, TOK tok, GRFLEXER grflexer = FLEXER_None)
+				LexRecoverAmbit(LexRecoverStack * pLrecst, TOK tok)
 					{
 						m_pLrecst = pLrecst;
-						m_pLrec = PLrecPush(m_pLrecst, tok, grflexer);
+						m_pLrec = PLrecPush(m_pLrecst, tok);
 					}
-				LexRecoverAmbit(LexRecoverStack * pLrecst, const TOK * aTok, int cTok, GRFLEXER grflexer = FLEXER_None)
+				LexRecoverAmbit(LexRecoverStack * pLrecst, TOK tokA, TOK tokB)
 					{
 						m_pLrecst = pLrecst;
-						m_pLrec = PLrecPush(m_pLrecst, aTok, cTok, grflexer);
+						m_pLrec = PLrecPush(m_pLrecst, tokA, tokB);
+					}
+				template<int CELEM>
+				LexRecoverAmbit(LexRecoverStack * pLrecst, const TOK (&aTok) [CELEM])
+					{
+						m_pLrecst = pLrecst;
+						m_pLrec = PLrecPush(m_pLrecst, aTok, CELEM);
+					}
+				LexRecoverAmbit(LexRecoverStack * pLrecst, const TOK * aTok, int cTok)
+					{
+						m_pLrecst = pLrecst;
+						m_pLrec = PLrecPush(m_pLrecst, aTok, cTok);
 					}
 				~LexRecoverAmbit()
 					{ PopLexRecover(m_pLrecst, m_pLrec); }
@@ -260,7 +281,7 @@ struct LexSpan // tag = lexsp
 };
 
 void InitLexer(Lexer * pLex, const char * pChInput, const char * pChInputEnd, char * aChStorage, u32 cChStorage);
-bool FConsumeToken(Lexer * pLex, TOK tok);
+bool FTryConsumeToken(Lexer * pLex, TOK tok);
 bool FConsumeIdentifier(Lexer * pLex, Moe::InString istr);
 int TokNext(Lexer * pLex);
 

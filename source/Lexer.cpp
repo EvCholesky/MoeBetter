@@ -327,7 +327,7 @@ void SplitToken(Lexer * pLex, TOK tokSplit)
 	pLex->m_pChParse = pChIt;
 }
 
-bool FConsumeToken(Lexer * pLex, TOK tok)
+bool FTryConsumeToken(Lexer * pLex, TOK tok)
 {
 	if (pLex->m_tok == tok)
 	{
@@ -766,8 +766,8 @@ void SkipToToken(Lexer * pLex, TOK const * const aTok, int cTok, GRFLEXER grflex
 
 struct LexRecover // tag = lrec
 {
-	Moe::CFixAry<TOK, 4>	m_aryTok;	
-	GRFLEXER				m_grflexer;
+	Moe::CFixAry<TOK, 6>	m_aryTok;	
+//	GRFLEXER				m_grflexer;
 };
 
 struct LexRecoverStack // tag = lrecst
@@ -790,19 +790,25 @@ void FreeLexRecoverStack(Moe::Alloc * pAlloc, LexRecoverStack * pLrecst)
 	pAlloc->MOE_DELETE(pLrecst);
 }
 
-LexRecover * PLrecPush(LexRecoverStack * pLrecst, TOK tok, GRFLEXER grflexer)
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, TOK tok)
 {
 	auto pLrec = pLrecst->m_aryLrec.AppendNew();
 	pLrec->m_aryTok.Append(tok);
-	pLrec->m_grflexer = grflexer;
 	return pLrec;
 }
 
-LexRecover * PLrecPush(LexRecoverStack * pLrecst, const TOK * aTok, int cTok, GRFLEXER grflexer)
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, TOK tokA, TOK tokB)
+{
+	auto pLrec = pLrecst->m_aryLrec.AppendNew();
+	pLrec->m_aryTok.Append(tokA);
+	pLrec->m_aryTok.Append(tokB);
+	return pLrec;
+}
+
+LexRecover * PLrecPush(LexRecoverStack * pLrecst, const TOK * aTok, int cTok)
 {
 	auto pLrec = pLrecst->m_aryLrec.AppendNew();
 	pLrec->m_aryTok.Append(aTok, cTok);
-	pLrec->m_grflexer = grflexer;
 	return pLrec;
 }
 
@@ -812,28 +818,29 @@ void PopLexRecover(LexRecoverStack * pLrecst, LexRecover * pLrec)
 	pLrecst->m_aryLrec.PopLast();
 }
 
-void SkipToRecovery(Lexer * pLex, LexRecoverStack * pLrecst)
+TOK TokSkipToRecovery(Lexer * pLex, LexRecoverStack * pLrecst)
 {
 	auto pLrec = pLrecst->m_aryLrec.PLast();
 
-	auto grflexer = pLrec->m_grflexer;
 	TOK * pTokMin = pLrec->m_aryTok.A();
 	TOK * pTokMax = pLrec->m_aryTok.PMac();
 
 	while (1)
 	{
-		bool fFound = (grflexer != FLEXER_None) && pLex->m_grflexer.FIsSet(grflexer);
+		bool fEndOfLine (pLex->m_grflexer.FIsSet(FLEXER_EndOfLine));
+
 		TOK tok = (TOK)pLex->m_tok;
 		if (tok == TOK_Eof)
-			break;
+			return tok;
+		if (tok == TOK_EndOfLine && fEndOfLine)
+			return tok;
 
 		for (TOK * pTok = pTokMin; pTok != pTokMax; ++pTok)
 		{
-			fFound |= (tok == *pTok);
+			if (tok == *pTok)
+				return tok;
 		}
 
-		if (fFound)
-			break;
 		TokNext(pLex);
 	}
 }

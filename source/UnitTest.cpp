@@ -289,7 +289,7 @@ char * PChzParseInside(TestContext * pTesctx, Lexer * pLex, TOK tokBegin, TOK to
 
 bool FExpectToken(TestContext * pTesctx, SLexer * pLex, TOK tok)
 {
-	if (!FConsumeToken(pLex, tok))
+	if (!FTryConsumeToken(pLex, tok))
 	{
 		ParseError(pTesctx, pLex, "Expected '%s', but encountered '%s'", PChzFromTok(tok), PChzCurrentToken(pLex));
 		return false;
@@ -456,7 +456,7 @@ Option * POptParse(TestContext * pTesctx, Lexer * pLex)
 						TokNext(pLex);
 					}
 
-					if (!FConsumeToken(pLex, TOK(',')))
+					if (!FTryConsumeToken(pLex, TOK(',')))
 						break;
 				}
 				FExpectToken(pTesctx, pLex, TOK(')'));
@@ -535,7 +535,7 @@ static Permutation * PPermParse(TestContext * pTesctx, Lexer * pLex)
 	pPerm->m_lexsp = lexloc;
 	TokNext(pLex);
 
-	if (FConsumeToken(pLex, TOK('(')))
+	if (FTryConsumeToken(pLex, TOK('(')))
 	{
 		while (1)
 		{
@@ -558,7 +558,7 @@ static Permutation * PPermParse(TestContext * pTesctx, Lexer * pLex)
 	(void)FExpectToken(pTesctx, pLex, TOK(')'));
 
 	// parse child permutations
-	if (FConsumeToken(pLex, TOK('+')))
+	if (FTryConsumeToken(pLex, TOK('+')))
 	{
 		auto pPermChild = PPermParse(pTesctx, pLex);
 		if (!pPermChild)
@@ -570,7 +570,7 @@ static Permutation * PPermParse(TestContext * pTesctx, Lexer * pLex)
 			pPerm->m_arypPermChild.Append(pPermChild);
 		}
 	}
-	else if (FConsumeToken(pLex, TOK('{')))
+	else if (FTryConsumeToken(pLex, TOK('{')))
 	{
 		do
 		{
@@ -587,7 +587,7 @@ static Permutation * PPermParse(TestContext * pTesctx, Lexer * pLex)
 
 			pPerm->m_arypPermChild.Append(pPermChild);
 		}
-		while (FConsumeToken(pLex, TOK(',')));
+		while (FTryConsumeToken(pLex, TOK(',')));
 
 		(void) FExpectToken(pTesctx, pLex, TOK('}'));
 	}
@@ -605,7 +605,7 @@ static void ParsePermuteString(TestContext * pTesctx, SLexer * pLex, SUnitTest *
 
 		pUtest->m_arypPerm.Append(pPerm);
 	}
-	while (FConsumeToken(pLex, TOK(',')));
+	while (FTryConsumeToken(pLex, TOK(',')));
 
 	FExpectToken(pTesctx, pLex, TOK('}'));
 }

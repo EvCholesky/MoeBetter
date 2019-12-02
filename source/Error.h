@@ -78,6 +78,7 @@ enum ERRID
 	ERRID_ProcBodyExpected			= 1042,
 	ERRID_OnlyTwoArgsCommute		= 1043,
 	ERRID_StructureParamsExpected	= 1044,
+	ERRID_EnumConstantExpected		= 1044,
 	ERRID_ParserMax					= 2000,
 
 	ERRID_TypeCheckMin				= ERRID_ParserMax,

@@ -860,6 +860,19 @@ void WriteSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, G
 	AppendChz(pStrbuf, "(");
 	WriteStnodFromSewk(pStrbuf, pStnod, sewk, grfsew);
 
+	// don't print trailing null children
+	while (cpStnodChild > 0)
+	{
+		if(pStnod->m_apStnodChild[cpStnodChild-1] == nullptr)
+		{
+			--cpStnodChild;
+		}
+		else
+		{
+			break;
+		}
+	}
+
 	for (size_t ipStnod = 0; ipStnod < cpStnodChild; ++ipStnod)
 	{
 		if (MOE_FVERIFY(CBFree(*pStrbuf) > 1, "debug string overflow"))
@@ -2018,7 +2031,7 @@ STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InS
 	if (pLex->m_tok != TOK_Identifier || !FIsReservedWord(pLex->m_istr))
 		return nullptr;
 
-	if (!istrRwordExpected.FIsNull() && pLex->m_istr == istrRwordExpected)
+	if (!istrRwordExpected.FIsNull() && pLex->m_istr != istrRwordExpected)
 	{
 		EmitError(pParctx, LexSpan(pLex), ERRID_MissingRWord, "Expected %s before %s", istrRwordExpected.m_pChz, pLex->m_istr.m_pChz);
 		return nullptr;
@@ -2080,7 +2093,7 @@ STNode * PStnodParseExpressionList(
 			arypStnod.Append(pStnodExp);
 		}
 
-		pStnodList->SetChildArray(arypStnod.A(), int(arypStnod.C()));
+		pStnodList->CopyChildArray(pParctx->m_pAlloc, arypStnod.A(), int(arypStnod.C()));
 	}
 
 	PopLexRecover(pParctx->m_pLrecst, pLrec);
@@ -2091,8 +2104,6 @@ STNode * PStnodParseExpressionList(
 	}
 	return pStnodList;
 }
-
-
 
 STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 {
@@ -2107,36 +2118,43 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 		case TOK_Identifier:
 			{
 				STValue * pStval;
-				if (pLex->m_istr == RWord::g_istrTrue)
+				if (FIsReservedWord(pLex->m_istr))
 				{
-					pStval = PStvalParseReservedWord(pParctx, pLex);
-					//pStval->SetU64(true);
-				}
-				else if (pLex->m_istr == RWord::g_istrFalse)
-				{
-					pStval = PStvalParseReservedWord(pParctx, pLex);
-					//pStval->SetU64(false);
-				}
-				else if (pLex->m_istr == RWord::g_istrNull)
-				{
-					pStval = PStvalParseReservedWord(pParctx, pLex);
-					//pStval->SetU64(u32(0));
-				}
-				else if (pLex->m_istr == RWord::g_istrFileDirective)
-				{
-					pStval = PStvalParseReservedWord(pParctx, pLex);
+					if (pLex->m_istr == RWord::g_istrTrue)
+					{
+						pStval = PStvalParseReservedWord(pParctx, pLex);
+						//pStval->SetU64(true);
+					}
+					else if (pLex->m_istr == RWord::g_istrFalse)
+					{
+						pStval = PStvalParseReservedWord(pParctx, pLex);
+						//pStval->SetU64(false);
+					}
+					else if (pLex->m_istr == RWord::g_istrNull)
+					{
+						pStval = PStvalParseReservedWord(pParctx, pLex);
+						//pStval->SetU64(u32(0));
+					}
+					else if (pLex->m_istr == RWord::g_istrFileDirective)
+					{
+						pStval = PStvalParseReservedWord(pParctx, pLex);
 
-					auto pStvalChild = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, pStval->m_lexsp);
-					pStvalChild->SetIstr(pStval->m_lexsp.m_istrFilename);
-				}
-				else if (pLex->m_istr == RWord::g_istrLineDirective)
-				{
-					pStval = PStvalParseReservedWord(pParctx, pLex);
+						auto pStvalChild = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, pStval->m_lexsp);
+						pStvalChild->SetIstr(pStval->m_lexsp.m_istrFilename);
+					}
+					else if (pLex->m_istr == RWord::g_istrLineDirective)
+					{
+						pStval = PStvalParseReservedWord(pParctx, pLex);
 
-					LexLookup lexlook(pParctx->m_pWork, pStval);
+						LexLookup lexlook(pParctx->m_pWork, pStval);
 
-					auto pStvalChild = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, pStval->m_lexsp);
-					pStvalChild->SetS64(lexlook.m_iLine);
+						auto pStvalChild = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, pStval->m_lexsp);
+						pStvalChild->SetS64(lexlook.m_iLine);
+					}
+					else
+					{
+						return nullptr;
+					}
 				}
 				else
 				{
@@ -2894,44 +2912,6 @@ STNode * PStnodParseExpression(ParseContext * pParctx, Lexer * pLex, GRFEXP grfe
 	}
 
 	return pStnodExp;
-}
-
-
-STNode * PStnodParseJumpStatement(ParseContext * pParctx, Lexer * pLex)
-{
-	if (pLex->m_istr == RWord::g_istrContinue ||
-		pLex->m_istr == RWord::g_istrBreak ||
-		pLex->m_istr == RWord::g_istrFallthrough)
-	{
-		STNode * pStnod = PStvalParseReservedWord(pParctx, pLex);
-		if (pLex->m_tok == TOK_Identifier)
-		{
-			STValue * pStlit = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, LexSpan(pLex));
-			pStlit->m_istr = pLex->m_istr;
-			pStnod->CopyChildArray(pParctx->m_pAlloc, pStlit);
-			TokNext(pLex);
-		}
-
-		ExpectEndOfStatement(pParctx, pLex);
-		return pStnod;
-	}
-	else if (pLex->m_istr == RWord::g_istrReturn)
-	{
-		STNode * pStnodReturn = PStvalParseReservedWord(pParctx, pLex);
-		if (pStnodReturn)
-		{
-			if (!FIsEndOfStatement(pLex))
-			{
-				STNode * pStnodExp = PStnodParseExpression(pParctx, pLex);
-				pStnodReturn->CopyChildArray(pParctx->m_pAlloc, pStnodExp);
-			}
-		}
-
-		ExpectEndOfStatement(pParctx, pLex);
-		return pStnodReturn;
-	}
-
-	return nullptr;
 }
 
 STNode * PStnodParseExpressionStatement(ParseContext * pParctx, Lexer * pLex)
@@ -4493,6 +4473,298 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 	return nullptr;
 }
 
+STNode * PStnodExpectCompoundStatement(ParseContext * pParctx, Lexer * pLex, const char * pChzPriorStatement)
+{
+	if (pLex->m_tok != TOK('{'))
+	{
+		EmitError(pParctx, LexSpan(pLex), ERRID_CurlyBraceExpected, "Expected '{' after %s'", pChzPriorStatement);
+
+		static const TOK s_aTok[] = {TOK('{'), TOK_EndOfLine };
+		LexRecoverAmbit lrecamb(pParctx->m_pLrecst, s_aTok);
+		(void) TokSkipToRecovery(pLex, pParctx->m_pLrecst);
+
+		if (pLex->m_tok != TOK('{'))
+		{
+			// just take a swing at parsing a one line statement - not actually safe, just trying to generate the next error.
+			return PStnodParseStatement(pParctx, pLex);
+		}
+	}
+
+	return PStnodParseCompoundStatement(pParctx, pLex, nullptr);
+}
+
+void FinishSwitchList(ParseContext * pParctx, Lexer * pLex, STNode * pStnodList, CDynAry<STNode *> * parypStnodList)
+{
+	if (!pStnodList)
+		return;
+
+	if (!parypStnodList->FIsEmpty())
+	{
+		pStnodList->CopyChildArray(pParctx->m_pAlloc, parypStnodList->A(), int(parypStnodList->C()));
+		parypStnodList->Clear();
+	}
+
+	SymbolTable * pSymtabPop = PSymtabPop(pParctx);
+	MOE_ASSERT(pStnodList->m_pSymtab == pSymtabPop, "CSymbol table push/pop mismatch (list)");
+}
+
+void CreateSwitchList(ParseContext * pParctx, Lexer * pLex, STNode ** ppStnodList, CDynAry<STNode *> * parypStnodList)
+{
+	auto pStnodList = *ppStnodList;
+	FinishSwitchList(pParctx, pLex, pStnodList, parypStnodList);
+
+	pStnodList = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_List, pLex, LexSpan(pLex));
+	pStnodList->m_tok = TOK('{');
+	pStnodList->m_pSymtab = PSymtabNew(pParctx->m_pAlloc, pParctx->m_pSymtab, RWord::g_istrCase);
+	PushSymbolTable(pParctx, pStnodList->m_pSymtab);
+	*ppStnodList = pStnodList;
+}
+
+STNode * PStnodParseSwitchStatement(ParseContext * pParctx, Lexer * pLex)
+{
+	STValue * pStvalSwitch = PStvalParseReservedWord(pParctx, pLex, RWord::g_istrSwitch);
+	STNode * pStnodExp = PStnodParseExpression(pParctx, pLex);
+
+	if (!pStnodExp)
+	{
+		EmitError(pParctx, LexSpan(pLex), ERRID_SwitchExpressionExpected, "switch statement missing expression");
+
+		pParctx->m_pAlloc->MOE_DELETE(pStvalSwitch);
+		return nullptr;
+	}
+
+	CDynAry<STNode *> arypStnodSwitch(pParctx->m_pAlloc, BK_Parse);
+	CDynAry<STNode *> arypStnodList(pParctx->m_pAlloc, BK_Parse);
+	arypStnodSwitch.Append(pStnodExp);
+
+	if (!FTryConsumeToken(pLex, TOK('{')))
+	{
+		EmitError(pParctx, LexSpan(pLex), ERRID_CurlyBraceExpected, "Expected '{' for case statements'");
+
+		pParctx->m_pAlloc->MOE_DELETE(pStvalSwitch); // pStnodExp will be deleted in dtor
+		return nullptr;
+	}
+
+	static const TOK s_aTok[] = {TOK('}'), TOK(';'), TOK_EndOfLine };
+	LexRecoverAmbit lrecamb(pParctx->m_pLrecst, s_aTok);
+
+	STNode * pStnodList = nullptr;
+	bool fInvalidSwitch = false;
+	while (pLex->m_tok != TOK('}') && !fInvalidSwitch)
+	{
+		//RWORD rword = RwordLookup(pLex);
+		InString istrRword = pLex->m_istr;
+		//switch(rword)
+		{
+			if (istrRword == RWord::g_istrCase)
+			{
+				STNode * pStnodCase = PStvalParseReservedWord(pParctx, pLex, RWord::g_istrCase);
+				arypStnodSwitch.Append(pStnodCase);
+
+				CDynAry<STNode *> arypStnodCase(pParctx->m_pAlloc, BK_Parse);
+
+				while (1)
+				{
+					auto pStnodValue = PStnodParseExpression(pParctx, pLex);
+					if (!pStnodValue)
+					{
+						EmitError(pParctx, LexSpan(pLex), ERRID_LabelExpected, "case statement missing it's label");
+					}
+
+					arypStnodCase.Append(pStnodValue);
+
+					if (pLex->m_tok != TOK(','))
+						break;
+
+					TokNext(pLex);
+				}
+
+				FExpectConsumeToken(pParctx, pLex, TOK(':'), "Following 'case' statement");
+				CreateSwitchList(pParctx, pLex, &pStnodList, &arypStnodList);
+
+				arypStnodCase.Append(pStnodList);
+				pStnodCase->CopyChildArray(pParctx->m_pAlloc, arypStnodCase.A(), int(arypStnodCase.C()));
+			}
+			else if (istrRword == RWord::g_istrElse)
+			{
+				STValue * pStnodDefault = PStvalParseReservedWord(pParctx, pLex, RWord::g_istrElse);
+				arypStnodSwitch.Append(pStnodDefault);
+
+				FExpectConsumeToken(pParctx, pLex, TOK(':'), "Following switch 'else' statement");
+				CreateSwitchList(pParctx, pLex, &pStnodList, &arypStnodList);
+
+				pStnodDefault->CopyChildArray(pParctx->m_pAlloc, pStnodList);
+			}
+			else
+			{
+				STNode * pStnod = PStnodParseStatement(pParctx, pLex);
+				if (!pStnod)
+				{
+					EmitError(pParctx, LexSpan(pLex), ERRID_LabelExpected, "missing 'case' or 'default' label");
+					fInvalidSwitch = true;
+				}
+				else
+				{
+					arypStnodList.Append(pStnod);
+				}
+			}
+		}
+	}
+
+	FinishSwitchList(pParctx, pLex, pStnodList, &arypStnodList);
+	FExpectConsumeToken(pParctx, pLex, TOK('}'));
+
+	for (int ipStnodCase = 1; ipStnodCase < arypStnodSwitch.C(); ++ipStnodCase)
+	{
+		STNode * pStnodCase = arypStnodSwitch[ipStnodCase];
+		if (!MOE_FVERIFY(pStnodCase, "case should have value, list children"))
+			continue;
+
+		int ipStnodList = pStnodCase->CPStnodChild() - 1; 
+		auto pStnodListCheck = pStnodCase->PStnodChildSafe(ipStnodList);
+		if (pStnodListCheck && pStnodListCheck->m_park == PARK_List && pStnodListCheck->CPStnodChild() == 0)
+		{
+			EmitError(pParctx, pStnodCase->m_lexsp, ERRID_EmptyCase, 
+				"empty switch case must contain at least one statement. Multiple case values are comma separated");
+		}
+	}
+
+	pStvalSwitch->CopyChildArray(pParctx->m_pAlloc, arypStnodSwitch.A(), int(arypStnodSwitch.C()));
+	if (pStvalSwitch->CPStnodChild() < 2)
+	{
+		EmitError(pParctx, LexSpan(pLex), ERRID_EmptySwitch, "switch statement contains no 'case' or 'default' labels");
+		pParctx->m_pAlloc->MOE_DELETE(pStvalSwitch); // pStnodExp will be deleted in dtor
+		return nullptr;
+	}
+
+	return pStvalSwitch;
+}
+
+STNode * PStnodParseJumpStatement(ParseContext * pParctx, Lexer * pLex)
+{
+	InString istr = pLex->m_istr;
+	if (istr == RWord::g_istrContinue || istr == RWord::g_istrBreak || istr == RWord::g_istrFallthrough)
+	{
+		STNode * pStnod = PStvalParseReservedWord(pParctx, pLex);
+		if (pLex->m_tok == TOK_Identifier)
+		{
+			STValue * pStvalIdent = PStvalParseIdentifier(pParctx, pLex);
+			pStnod->CopyChildArray(pParctx->m_pAlloc, pStvalIdent);
+		}
+
+		ExpectEndOfStatement(pParctx, pLex);
+
+		return pStnod;
+	}
+	else if (istr == RWord::g_istrReturn)
+	{
+		STNode * pStnodReturn = PStvalParseReservedWord(pParctx, pLex);
+		if (MOE_FVERIFY(pStnodReturn, "error parsing return"))
+		{
+			if (!FIsEndOfStatement(pLex))
+			{
+				STNode * pStnodExp = PStnodParseExpression(pParctx, pLex);
+				pStnodReturn->CopyChildArray(pParctx->m_pAlloc, pStnodExp);
+			}
+		}
+
+		ExpectEndOfStatement(pParctx, pLex);
+		return pStnodReturn;
+	}
+
+	return nullptr;
+}
+
+STNode * PStnodParseSelectionStatement(ParseContext * pParctx, Lexer * pLex, STValue ** ppStvalLabel)
+{
+	if (pLex->m_istr == RWord::g_istrIf)
+	{
+		//if expression statement
+		//if expression statement else statement
+
+		auto pStvalIf = PStvalParseReservedWord(pParctx, pLex);
+		STNode * pStnodExp = PStnodParseExpression(pParctx, pLex);
+		if (!pStnodExp)
+		{
+			EmitError(pParctx, LexSpan(pLex), ERRID_ExpectedExpression, 
+				"If statement has no condition expression");
+		}
+
+		CDynAry<STNode *> arypStnodIf(pParctx->m_pAlloc, BK_Parse);
+
+		arypStnodIf.Append(pStnodExp);
+		//pStvalIf->CopyChildArray(pParctx->m_pAlloc, pStnodExp);
+		
+		STNode * pStnodStatement = PStnodExpectCompoundStatement(pParctx, pLex, RWord::g_pChzIf);
+		if (!pStnodStatement)
+		{
+			EmitError(pParctx, LexSpan(pLex), ERRID_UnexpectedToken, 
+				"Error parsing if statement. unexpected token '%s'", PChzFromTok((TOK)pLex->m_tok));
+
+			// move the lexer forward until it has some hope of generating decent errors
+			static const TOK s_aTok[] = {TOK(';'), TOK('{') };
+			SkipToToken(pLex, s_aTok, MOE_DIM(s_aTok), FLEXER_EndOfLine);
+		}
+		else
+		{
+			if (pStnodStatement->m_grfstnod.FIsSet(FSTNOD_EntryPoint))
+			{
+				MOE_ASSERT(pStnodStatement->m_park == PARK_ProcedureDefinition, "Unknown entry point park");
+				EmitError( pParctx, LexSpan(pLex), ERRID_CurlyBraceExpected, "Local functions not directly allowed under conditional, add {}");
+			}
+			else
+			{
+				arypStnodIf.Append(pStnodStatement);
+			}
+
+			//RWORD rwordElse = RwordLookup(pLex);
+			if (pLex->m_istr == RWord::g_istrElse)
+			{
+				STNode * pStnodElse = PStvalParseReservedWord(pParctx, pLex);
+
+				InString istrRword = pLex->m_istr;
+				STNode * pStnodStatement = (istrRword == RWord::g_istrIf) ? 
+												PStnodParseSelectionStatement(pParctx, pLex, nullptr) :
+												PStnodExpectCompoundStatement(pParctx, pLex, istrRword.m_pChz);
+
+				if (pStnodStatement->m_grfstnod.FIsSet(FSTNOD_EntryPoint))
+				{
+					MOE_ASSERT(pStnodStatement->m_park == PARK_ProcedureDefinition, "Unknown entry point park");
+					EmitError( pParctx, LexSpan(pLex), ERRID_CurlyBraceExpected, 
+						"Local functions not directly allowed under conditional, add {}");
+				}
+				else
+				{
+					pStnodElse->CopyChildArray(pParctx->m_pAlloc, pStnodStatement);
+					arypStnodIf.Append(pStnodElse);
+				}
+			}
+		}
+
+		pStvalIf->CopyChildArray(pParctx->m_pAlloc, arypStnodIf.A(), int(arypStnodIf.C()));
+		return pStvalIf;
+	}
+
+	if (pLex->m_istr == RWord::g_istrSwitch)
+	{
+		auto pStnodSw = PStnodParseSwitchStatement(pParctx, pLex);
+
+#ifdef MOEB_LATER
+		// uh, how do we handle labels now that m_pStident is no longer a thing
+		if (ppStvalLabel)
+		{
+			MOE_ASSERT(!pStnodSw->m_pStident, "expected null identifier");
+			pStnodSw->m_pStident = *ppStvalLabel;
+			*ppStvalLabel = nullptr;
+		}
+#endif
+
+		return pStnodSw;
+
+	}
+	return nullptr;
+}
+
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 {
 	STNode * pStnod = PStnodParseCompoundStatement(pParctx, pLex, nullptr);
@@ -4515,8 +4787,7 @@ STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 		return pStnod;
 
 	// handle label for switches or loops
-#ifdef MOEB_LATER
-	STIdentifier * pStidentLabel = nullptr;
+	STValue * pStvalLabel = nullptr;
 
 	if (FTryConsumeToken(pLex, TOK_Label))
 	{
@@ -4526,14 +4797,13 @@ STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 		}
 		else
 		{
-			pStidentLabel = MOE_NEW(pParctx->m_pAlloc, CSTIdentifier) CSTIdentifier();
-			pStidentLabel->m_str = pLex->m_str;
-			TokNext(pLex);
+			pStvalLabel = PStvalParseIdentifier(pParctx, pLex);
 		}
 	}
 
-	pStnod = PStnodParseSelectionStatement(pParctx, pLex, &pStidentLabel);
+	pStnod = PStnodParseSelectionStatement(pParctx, pLex, &pStvalLabel);
 	
+#ifdef MOEB_LATER
 	if (!pStnod)
 	{
 		pStnod = PStnodParseIterationStatement(pParctx, pLex, &pStidentLabel);
@@ -4544,11 +4814,11 @@ STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 		EmitError(pParctx, pLex, ERRID_FloatingLabel, "Label directive should precede loop or switch statement.");
 		pParctx->m_pAlloc->MOE_FREE(pStidentLabel);
 	}
+#endif
 
 	if (pStnod)
 		return pStnod;
 
-#endif
 	return PStnodParseJumpStatement(pParctx, pLex);
 }
 

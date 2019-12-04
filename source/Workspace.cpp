@@ -107,6 +107,9 @@ void PrintErrorLine(Error * pError, const char * pChzPrefix, const LexSpan & lex
 	
 	if (pChz)
 	{
+		ConsoleColorAmbit ccolamb;
+		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0));
+
 		vprintf(pChz, ap);
 		printf("\n");
 	}

@@ -79,6 +79,10 @@ enum ERRID
 	ERRID_OnlyTwoArgsCommute		= 1043,
 	ERRID_StructureParamsExpected	= 1044,
 	ERRID_EnumConstantExpected		= 1044,
+	ERRID_CurlyBraceExpected		= 1045,
+	ERRID_SwitchExpressionExpected	= 1046,
+	ERRID_EmptySwitch				= 1046,
+	ERRID_LabelExpected				= 1047,
 	ERRID_ParserMax					= 2000,
 
 	ERRID_TypeCheckMin				= ERRID_ParserMax,

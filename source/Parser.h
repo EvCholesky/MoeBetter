@@ -61,6 +61,7 @@ enum PARK : s8 // PARse Kind
 	PARK_GenericTypeSpec,	// list of types to specify a generic procedure/struct instantiation
 	PARK_If,
 	PARK_Else,
+	PARK_For,
 
 	PARK_ArrayDecl,
 	PARK_ReferenceDecl,		// used in type specification, not used for the unary address-of operator

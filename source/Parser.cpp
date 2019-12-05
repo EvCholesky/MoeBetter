@@ -125,6 +125,7 @@ static ParkInfo s_mpParkParkinfo[] =
 	{ STEXK_Node,		"genType", "Generic Type Spec" },
 	{ STEXK_Node,		"if" ,"If" },
 	{ STEXK_Node,		"else", "Else" },
+	{ STEXK_For,		"for", "For" },
 	{ STEXK_Node,		"aryDecl", "Array Decl" },
 	{ STEXK_Node,		"refDecl", "Reference Decl" },
 	{ STEXK_Node,		"qualDecl", "Qualifier Decl" },
@@ -4765,6 +4766,95 @@ STNode * PStnodParseSelectionStatement(ParseContext * pParctx, Lexer * pLex, STV
 	return nullptr;
 }
 
+STNode * PStnodParseIterationStatement(ParseContext * pParctx, Lexer * pLex, STValue ** ppStvalLabel)
+{
+	InString istrRword = pLex->m_istr;
+	if (istrRword == RWord::g_istrFor)
+	{
+		STFor * pStfor = PStnodAlloc<STFor>(pParctx->m_pAlloc, PARK_For, pLex, LexSpan(pLex));
+		TokNext(pLex);
+		//STValue * pStvalFor = PStvalParseReservedWord(pParctx, pLex);
+
+		LexSpan lexsp(pLex);
+		if (pLex->m_tok == TOK('('))
+		{
+			EmitError(pParctx->m_pWork, lexsp, ERRID_OldCStyle, "Parens are not needed for C-Style for loop");
+			TokNext(pLex);
+		}
+
+		//auto pStfor = pStvalFor->PStmapEnsure<CSTFor>(pParctx->m_pAlloc);
+
+		if (ppStvalLabel)
+		{
+#ifdef MOEB_LATER
+			pStvalFor->m_pStident = *ppStidentLabel;
+#endif
+			*ppStvalLabel = nullptr;
+		}
+
+		SymbolTable * pSymtabLoop = PSymtabNew(pParctx->m_pAlloc, pParctx->m_pSymtab, RWord::g_istrFor);
+		pStfor->m_pSymtab = pSymtabLoop;
+
+		PushSymbolTable(pParctx, pSymtabLoop);
+
+		GRFPDECL grfpdecl = FPDECL_AllowUninitializer | FPDECL_AllowCompoundDecl;
+		auto * pStnodDecl =  PStnodParseParameter(pParctx, pLex, pParctx->m_pSymtab, grfpdecl);
+		if (pStnodDecl)
+			ExpectEndOfStatement(pParctx, pLex);
+		else
+		{
+			pStnodDecl = PStnodParseExpression(pParctx, pLex);
+			FExpectConsumeToken(pParctx, pLex, TOK(';'));
+		}
+		pStfor->m_pStnodDecl = pStnodDecl;
+
+		STNode * pStnodPred = PStnodParseExpression(pParctx, pLex);
+		if (pStnodPred)
+			ExpectEndOfStatement(pParctx, pLex);
+		else
+			FExpectConsumeToken(pParctx, pLex, TOK(';'));
+		pStfor->m_pStnodPredicate = pStnodPred;
+
+		STNode * pStnodIncrement = PStnodParseExpression(pParctx, pLex);
+		if (pStnodIncrement)
+			ExpectEndOfStatement(pParctx, pLex);
+		else
+			FExpectConsumeToken(pParctx, pLex, TOK(';'));
+		pStfor->m_pStnodIncrement = pStnodIncrement;
+
+		STNode * pStnodBody = PStnodExpectCompoundStatement(pParctx, pLex, RWord::g_pChzFor);
+		pStfor->m_pStnodBody = pStnodBody;
+
+		SymbolTable * pSymtabPop = PSymtabPop(pParctx);
+		MOE_ASSERT(pSymtabLoop == pSymtabPop, "CSymbol table push/pop mismatch (list)");
+
+		return pStfor;
+	}
+
+	if (istrRword == RWord::g_istrWhile)
+	{
+		STValue * pStvalWhile = PStvalParseReservedWord(pParctx, pLex);
+		STNode * pStnodExp = PStnodParseExpression(pParctx, pLex);
+		
+		if (ppStvalLabel)
+		{
+#ifdef MOEB_LATER
+			pStvalWhile->m_pStident = *ppStidentLabel;
+#endif
+			*ppStvalLabel = nullptr;
+		}
+		
+		STNode * pStnodStatement = PStnodExpectCompoundStatement(pParctx, pLex, RWord::g_pChzWhile);
+
+		STNode * apStnod[] = {pStnodExp, pStnodStatement};	
+		pStvalWhile->CopyChildArray(pParctx->m_pAlloc, apStnod, MOE_DIM(apStnod));
+		return pStvalWhile;
+	}
+
+	return nullptr;
+}
+
+
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 {
 	STNode * pStnod = PStnodParseCompoundStatement(pParctx, pLex, nullptr);
@@ -4803,18 +4893,16 @@ STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex)
 
 	pStnod = PStnodParseSelectionStatement(pParctx, pLex, &pStvalLabel);
 	
-#ifdef MOEB_LATER
 	if (!pStnod)
 	{
-		pStnod = PStnodParseIterationStatement(pParctx, pLex, &pStidentLabel);
+		pStnod = PStnodParseIterationStatement(pParctx, pLex, &pStvalLabel);
 	}
 
-	if (pStidentLabel)
+	if (pStvalLabel)
 	{
-		EmitError(pParctx, pLex, ERRID_FloatingLabel, "Label directive should precede loop or switch statement.");
-		pParctx->m_pAlloc->MOE_FREE(pStidentLabel);
+		EmitError(pParctx, pStvalLabel->m_lexsp, ERRID_FloatingLabel, "Label directive should precede loop or switch statement.");
+		pParctx->m_pAlloc->MOE_FREE(pStvalLabel);
 	}
-#endif
 
 	if (pStnod)
 		return pStnod;

@@ -15,6 +15,9 @@
 
 #pragma once
 
-class CWorkspace;
+struct Workspace;
 
-bool FUnitTestFile(CWorkspace * pWork, const char * pChzFilenameIn, unsigned grfcompile);
+void InternUnitTestStrings();
+void ClearUnitTestStrings();
+
+bool FUnitTestFile(Workspace * pWork, const char * pChzFilenameIn, unsigned grfcompile);

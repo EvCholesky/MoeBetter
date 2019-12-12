@@ -854,3 +854,18 @@ void EndWorkspace(Workspace * pWork)
 		pAlloc->PrintAllocations();
 	}
 }
+
+void Workspace::CopyUnitTestFiles(Workspace * pWorkOther)
+{
+	File ** ppFileMax = pWorkOther->m_arypFile.PMac();
+	for (auto ppFile = pWorkOther->m_arypFile.A(); ppFile != ppFileMax; ++ppFile)
+	{
+		auto pFileOld = *ppFile;
+		if (pFileOld->m_filek != FILEK_UnitTest)
+			continue; 
+
+		auto pFileNew = PFileEnsure(pFileOld->m_istrFilename, pFileOld->m_filek);
+		*pFileNew = *pFileOld;
+	}
+}
+

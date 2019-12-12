@@ -14,7 +14,6 @@
 | OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
 
 
-#if MOEB_LATER
 #include "UnitTest.h"
 
 #include "Error.h"
@@ -23,17 +22,75 @@
 #include "MoeTypes.h"
 #include "Lexer.h"
 #include "Parser.h"
+#include "Request.h"
+#include "Workspace.h"
 
 #include <cstdarg>
 #include <stdio.h>
 
 using namespace Moe;
 
+#define UNIT_TEST_KEYWORD_LIST \
+		UTK(Errid) STR(errid) \
+		UTK(Test) STR(test)	\
+		UTK(Builtin) STR(builtin) \
+		UTK(Prereq) STR(prereq)	\
+		UTK(Input) STR(input) \
+		UTK(Parse) STR(parse) \
+		UTK(TypeCheck) STR(typecheck) \
+		UTK(Values) STR(values) \
+		UTK(ByteCode) STR(bytecode) \
+		UTK(TestFlags) STR(testflags) \
+		UTK(Global) STR(global) \
+		UTK(Local) STR(local) \
+		UTK(Lexer) STR(lexer) \
+		UTK(Signed65) STR(signed65) \
+		UTK(Unicode) STR(unicode) \
+		UTK(UniqueNames) STR(uniqueNames) \
+		UTK(BlockList) STR(blockList) 
+
+namespace UTest
+{
+#define UTK(x) const char * g_pChz##x = 
+#define STR(x) #x;
+	UNIT_TEST_KEYWORD_LIST	
+#undef STR
+#undef UTK
+
+#define UTK(x) Moe::InString g_istr##x;
+#define STR(x)
+	UNIT_TEST_KEYWORD_LIST	
+#undef STR
+#undef UTK
+}
+
+
+void InternUnitTestStrings()
+{
+#define UTK(x) UTest::g_istr##x = IstrIntern(UTest::g_pChz##x);
+#define STR(x)
+	UNIT_TEST_KEYWORD_LIST	
+#undef STR
+#undef UTK
+}
+
+void ClearUnitTestStrings()
+{
+#define UTK(x) UTest::g_istr##x = Moe::InString();
+#define STR(x)
+	UNIT_TEST_KEYWORD_LIST	
+#undef STR
+#undef UTK
+}
+
+
 
 extern bool FTestLexing();
+#if MOEB_LATER
 extern bool FTestSigned65();
 extern bool FTestUnicode();
 extern bool FTestUniqueNames(Alloc * pAlloc);
+#endif
 
 
 static const int s_cErridOptionMax = 4; //max error ids per option
@@ -96,9 +153,9 @@ enum UTESTK
 	MOE_MAX_MIN_NIL(UTESTK)
 };
 
-struct SUnitTest // tag = utest
+struct UnitTest // tag = utest
 {
-							SUnitTest(Alloc * pAlloc)
+							UnitTest(Alloc * pAlloc)
 							:m_istrName()
 							,m_pChzPrereq(nullptr)
 							,m_pChzInput(nullptr)
@@ -146,7 +203,7 @@ struct SUnitTest // tag = utest
 
 
 
-struct SSubstitution // tag = sub
+struct Substitution // tag = sub
 {
 	Moe::InString	m_istrVar;
 	Option	*		m_pOpt;
@@ -167,22 +224,9 @@ enum TESTRES	// TEST RESults
 	MOE_MAX_MIN_NIL(TESTRES)
 };
 
-enum FCOMPILE
-{
-	FCOMPILE_PrintIR	= 0x1,
-	FCOMPILE_FastIsel	= 0x2,
-	FCOMPILE_Native		= 0x4,
-	FCOMPILE_Bytecode	= 0x8,
+typedef CFixAry<Substitution, 64> SubStack;
 
-	FCOMPILE_None		= 0x0,
-	FCOMPILE_All		= 0xF,
-};
-
-MOE_DEFINE_GRF(GRFCOMPILE, FCOMPILE, u32);
-
-typedef CFixAry<SSubstitution, 64> CSubStack;
-
-struct TestContext // tag= tesctx
+struct TestContext // tag = tesctx
 {
 						TestContext(Moe::Alloc * pAlloc, ErrorManager * pErrman, Workspace * pWork, GRFCOMPILE grfcompile)
 						:m_pAlloc(pAlloc)
@@ -198,7 +242,7 @@ struct TestContext // tag= tesctx
 
 	GRFCOMPILE			m_grfcompile;
 	int					m_mpTestresCResult[TESTRES_Max];
-	CSubStack			m_arySubStack;
+	SubStack			m_arySubStack;
 };
 
 static bool FConsumeIdentifier(TestContext * pTesctx, Lexer  * pLex, const Moe::InString & istrIdent)
@@ -213,34 +257,32 @@ static bool FConsumeIdentifier(TestContext * pTesctx, Lexer  * pLex, const Moe::
 	return true;
 }
 
-void ParseError(TestContext * pTesctx, const LexSpan & lexsp, const char * pChzFormat, ...)
+
+void EmitError(TestContext * pTesctx, const LexSpan & lexsp, ERRID errid, const char * pChzFormat, va_list ap)
 {
-	va_list ap;
-	va_start(ap, pChzFormat);
-	EmitError(pTesctx->m_pErrman, lexsp, ERRID_UnknownError, pChzFormat, ap);
+	EmitError(pTesctx->m_pErrman, lexsp, errid, pChzFormat, ap);
 }
 
-void ParseError(TestContext * pTesctx, Lexer * pLex, const char * pChzFormat, ...)
+void EmitError(TestContext * pTesctx, const LexSpan & lexsp, ERRID errid, const char * pChzFormat, ...)
 {
-	LexSpan lexsp(pLex);
 	va_list ap;
 	va_start(ap, pChzFormat);
-	EmitError(pTesctx->m_pErrman, lexsp, ERRID_UnknownError, pChzFormat, ap);
+	EmitError(pTesctx->m_pErrman, lexsp, errid, pChzFormat, ap);
 }
 
-void ParseWarning(TestContext * pTesctx, Lexer * pLex, const char * pChzFormat, ...)
+void EmitWarning(TestContext * pTesctx, const LexSpan & lexsp, ERRID errid, const char * pChzFormat, ...)
 {
-	LexSpan lexsp(pLex);
 	va_list ap;
 	va_start(ap, pChzFormat);
-	EmitWarning(pTesctx->m_pErrman, lexsp, ERRID_UnknownWarning, pChzFormat, ap);
+	EmitWarning(pTesctx->m_pErrman, lexsp, errid, pChzFormat, ap);
 }
 
 char * PChzExpectString(TestContext * pTesctx, Lexer * pLex)
 {
 	if (pLex->m_tok != TOK_Literal || pLex->m_litk != LITK_String)
 	{
-		ParseError(pTesctx, pLex, "Expected string literal but encountered '%s'", PChzCurrentToken(pLex));
+		EmitError(pTesctx, LexSpan(pLex), ERRID_StringLiteralExpected, 
+			"Expected string literal but encountered '%s'", PChzCurrentToken(pLex));
 		return nullptr;
 	}
 
@@ -256,7 +298,8 @@ char * PChzParseInside(TestContext * pTesctx, Lexer * pLex, TOK tokBegin, TOK to
 {
 	if (pLex->m_tok != tokBegin)
 	{
-		ParseError(pTesctx, pLex, "Expected '%s' but encountered '%s'", PChzFromTok(tokBegin), PChzCurrentToken(pLex));
+		EmitError(pTesctx, LexSpan(pLex), ERRID_UnexpectedToken, 
+			"Expected '%s' but encountered '%s'", PChzFromTok(tokBegin), PChzCurrentToken(pLex));
 		return nullptr;
 	}
 
@@ -281,29 +324,30 @@ char * PChzParseInside(TestContext * pTesctx, Lexer * pLex, TOK tokBegin, TOK to
 	LexSpan lexspEnd(pLex);
 	TokNext(pLex);
 
-	size_t cB = lexspEnd.m_dB - lexspBegin.m_dB + 1;
+	size_t cB = lexspEnd.m_iB - lexspBegin.m_iB + 1;
 	char * pChzReturn = (char*)pTesctx->m_pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(char));
 	Moe::CBCopyChz(pChzInput, pChzReturn, cB);
 	return pChzReturn;
 }
 
-bool FExpectToken(TestContext * pTesctx, SLexer * pLex, TOK tok)
+bool FExpectToken(TestContext * pTesctx, Lexer * pLex, TOK tok)
 {
 	if (!FTryConsumeToken(pLex, tok))
 	{
-		ParseError(pTesctx, pLex, "Expected '%s', but encountered '%s'", PChzFromTok(tok), PChzCurrentToken(pLex));
+		EmitError(pTesctx, LexSpan(pLex), ERRID_UnexpectedToken, 
+			"Expected '%s', but encountered '%s'", PChzFromTok(tok), PChzCurrentToken(pLex));
 		return false;
 	}
 
 	return true;
 }
 
-void PromoteStringEscapes(TestContext * pTesctx, const LexSpan & lexsp, const char * pChzInput, SStringEditBuffer * pSeb)
+void PromoteStringEscapes(TestContext * pTesctx, const LexSpan & lexsp, const char * pChzInput, StringEditBuffer * pSeb)
 {
 	const char * pChzIn = pChzInput;
 	if (*pChzIn != '"')
 	{
-		ParseError(pTesctx, pLexloc, "missing opening string quote for string literal (%s) ", pChzInput);
+		EmitError(pTesctx, lexsp, ERRID_MissingQuote, "missing opening string quote for string literal (%s) ", pChzInput);
 	}
 	else
 	{
@@ -314,7 +358,7 @@ void PromoteStringEscapes(TestContext * pTesctx, const LexSpan & lexsp, const ch
 	{
 		if (*pChzIn == '\0')
 		{
-			ParseError(pTesctx, lexsp, "missing closing quote for string literal (%s) ", pChzInput);
+			EmitError(pTesctx, lexsp, ERRID_MissingQuote, "missing closing quote for string literal (%s) ", pChzInput);
 			break;
 		}
 
@@ -352,8 +396,8 @@ char * PChzAllocateSubstitution(
 	TestContext * pTesctx,
 	const LexSpan & lexsp,
 	const char * pChzInput,
-	const CSubStack & arySub,
-	SSubstitution * pSubSelf = nullptr)
+	const SubStack & arySub,
+	Substitution * pSubSelf = nullptr)
 {
 	if (!pChzInput)
 	{
@@ -377,7 +421,7 @@ char * PChzAllocateSubstitution(
 			}
 
 			auto pSubMax = arySub.PMac();
-			const SSubstitution * pSub = nullptr;
+			const Substitution * pSub = nullptr;
 			for (auto pSubIt = arySub.A(); pSubIt != pSubMax; ++pSubIt)
 			{
 				if (FAreChzEqual(pSubIt->m_istrVar.m_pChz, pChzIt, cCodepoint) && CCodepoint(pSubIt->m_istrVar.m_pChz) == cCodepoint)
@@ -389,13 +433,15 @@ char * PChzAllocateSubstitution(
 
 			if (!pSub)
 			{
-				Moe::InString istrName(pChzIt, pChzEnd - pChzIt +1);
-				ParseError(pTesctx, lexsp, "Unable to find substitution for ?%s in string %s", istrName.m_pChz, pChzInput);
+				Moe::InString istrName = IstrInternCopy(pChzIt, pChzEnd - pChzIt +1);
+				EmitError(pTesctx, lexsp, ERRID_CantFindSubstitution, 
+					"Unable to find substitution for ?%s in string %s", istrName.m_pChz, pChzInput);
 				return nullptr;
 			}
 			else if (pSub == pSubSelf)
 			{
-				ParseError(pTesctx, lexsp, "Cannot substitute ?%s recursively in option %s", pSubSelf->m_istrVar.m_pChz, pChzInput);
+				EmitError(pTesctx, lexsp, ERRID_NoRecursiveSubstitute, 
+					"Cannot substitute ?%s recursively in option %s", pSubSelf->m_istrVar.m_pChz, pChzInput);
 				return nullptr;
 			}
 
@@ -413,12 +459,13 @@ char * PChzAllocateSubstitution(
 
 Option * POptParse(TestContext * pTesctx, Lexer * pLex)
 {
-	//LexSpan lexsp(pLex);
+	LexSpan lexsp(pLex);
 	const char * pChzMin = pLex->m_pChBegin;
 	const char * pChzMax = pChzMin;
 	const char * pChzErridMin = nullptr;
 	const char * pChzErridMax = nullptr;
 
+	InString istrErrid = UTest::g_istrErrid;
 	Moe::CFixAry<ERRID, s_cErridOptionMax> aryErrid;
 	ERRID errid = ERRID_Nil;
 	while (pLex->m_tok != TOK('|') && pLex->m_tok != TOK(')'))
@@ -429,9 +476,10 @@ Option * POptParse(TestContext * pTesctx, Lexer * pLex)
 
 			TokNext(pLex);
 
-			if (!FConsumeIdentifier(pTesctx, pLex, "errid"))
+			if (!FConsumeIdentifier(pTesctx, pLex, istrErrid))
 			{
-				ParseError(pTesctx, pLex, "expected ?errid, encountered '%s'", PChzCurrentToken(pLex));
+				EmitError(pTesctx, LexSpan(pLex), ERRID_ErridExpected,
+					"expected ?errid, encountered '%s'", PChzCurrentToken(pLex));
 				break;
 			}
 			
@@ -441,13 +489,15 @@ Option * POptParse(TestContext * pTesctx, Lexer * pLex)
 				{
 					if (pLex->m_tok != TOK_Literal)
 					{
-						ParseError(pTesctx, pLex, "expected ?errid number, encountered '%s'", PChzCurrentToken(pLex));
+						EmitError(pTesctx, LexSpan(pLex), ERRID_ErridExpected, 
+							"expected ?errid number, encountered '%s'", PChzCurrentToken(pLex));
 					}
 					else
 					{
 						if (aryErrid.C() >= aryErrid.CMax())
 						{
-							ParseError(pTesctx, pLex, "too many error ids for this option, limit is %d", aryErrid.CMax());
+							EmitError(pTesctx, LexSpan(pLex), ERRID_TooManyErrids, 
+								"too many error ids for this option, limit is %d", aryErrid.CMax());
 						}
 						else
 						{
@@ -486,7 +536,7 @@ Option * POptParse(TestContext * pTesctx, Lexer * pLex)
 	}
 	if (cBPrefix + cBPostfix <= 0)
 	{
-		ParseError(pTesctx, pLex, "expected option string");
+		EmitError(pTesctx, LexSpan(pLex), ERRID_OptionStringExpected, "expected option string");
 	}
 	char * pChzOption = (char*)pTesctx->m_pAlloc->MOE_ALLOC(cBPrefix + cBPostfix+1, MOE_ALIGN_OF(char));
 
@@ -502,7 +552,7 @@ Option * POptParse(TestContext * pTesctx, Lexer * pLex)
 	if (pChzOption[0] == '"')
 	{
 		StringEditBuffer seb(pTesctx->m_pAlloc);
-		PromoteStringEscapes(pTesctx, &lexloc, pChzOption, &seb);
+		PromoteStringEscapes(pTesctx, lexsp, pChzOption, &seb);
 		pTesctx->m_pAlloc->MOE_DELETE(pChzOption);
 		pChzOption = seb.PChzAllocateCopy(pTesctx->m_pAlloc);
 		pOpt->m_fAllowSubstitution = true;
@@ -526,13 +576,14 @@ static Permutation * PPermParse(TestContext * pTesctx, Lexer * pLex)
 
 	if (pLex->m_tok != TOK_Identifier)
 	{
-		ParseError(pTesctx, pLex, "Expected variable name (following '?'), but encountered '%s'", PChzCurrentToken(pLex));
+		EmitError(pTesctx, LexSpan(pLex), ERRID_ExpectedTestVar, 
+			"Expected variable name (following '?'), but encountered '%s'", PChzCurrentToken(pLex));
 		return nullptr;
 	}
 
 	Permutation * pPerm = MOE_NEW(pTesctx->m_pAlloc, Permutation) Permutation(pTesctx->m_pAlloc);
-	pPerm->m_istrVar = pLex->m_str;
-	pPerm->m_lexsp = lexloc;
+	pPerm->m_istrVar = pLex->m_istr;
+	pPerm->m_lexsp = lexsp;
 	TokNext(pLex);
 
 	if (FTryConsumeToken(pLex, TOK('(')))
@@ -552,7 +603,8 @@ static Permutation * PPermParse(TestContext * pTesctx, Lexer * pLex)
 	}
 	else
 	{
-		ParseError(pTesctx, pLex, "Expected permutation options, but encountered '%s'", PChzCurrentToken(pLex));
+		EmitError(pTesctx, LexSpan(pLex), ERRID_PermutationExpected, 
+			"Expected permutation options, but encountered '%s'", PChzCurrentToken(pLex));
 	}
 
 	(void)FExpectToken(pTesctx, pLex, TOK(')'));
@@ -563,7 +615,8 @@ static Permutation * PPermParse(TestContext * pTesctx, Lexer * pLex)
 		auto pPermChild = PPermParse(pTesctx, pLex);
 		if (!pPermChild)
 		{
-			ParseError(pTesctx, pLex, "Expected permutation, but encountered '%s'", PChzCurrentToken(pLex));
+			EmitError(pTesctx, LexSpan(pLex), ERRID_PermutationExpected,
+				"Expected permutation, but encountered '%s'", PChzCurrentToken(pLex));
 		}
 		else
 		{
@@ -581,7 +634,8 @@ static Permutation * PPermParse(TestContext * pTesctx, Lexer * pLex)
 			auto pPermChild = PPermParse(pTesctx, pLex);
 			if (!pPermChild)
 			{
-				ParseError(pTesctx, pLex, "Expected permutation, but encountered '%s'", PChzCurrentToken(pLex));
+				EmitError(pTesctx, LexSpan(pLex), ERRID_PermutationExpected, 
+					"Expected permutation, but encountered '%s'", PChzCurrentToken(pLex));
 				break;
 			}
 
@@ -594,7 +648,7 @@ static Permutation * PPermParse(TestContext * pTesctx, Lexer * pLex)
 
 	return pPerm;
 }
-static void ParsePermuteString(TestContext * pTesctx, SLexer * pLex, SUnitTest * pUtest)
+static void ParsePermuteString(TestContext * pTesctx, Lexer * pLex, UnitTest * pUtest)
 {
 	FExpectToken(pTesctx, pLex, TOK('{'));
 	do
@@ -610,19 +664,18 @@ static void ParsePermuteString(TestContext * pTesctx, SLexer * pLex, SUnitTest *
 	FExpectToken(pTesctx, pLex, TOK('}'));
 }
 
-static SUnitTest * PUtestParse(TestContext * pTesctx, SLexer * pLex)
+static UnitTest * PUtestParse(TestContext * pTesctx, Lexer * pLex)
 {
-	if (!FConsumeIdentifier(pTesctx, pLex, "test"))
+	if (!FConsumeIdentifier(pTesctx, pLex, UTest::g_istrTest))
 	{
-		ParseError(pTesctx, pLex, "Expected 'test' directive, but encountered '%s'", PChzCurrentToken(pLex));
+		EmitError(pTesctx, LexSpan(pLex), ERRID_TestExpected, "Expected 'test' directive, but encountered '%s'", PChzCurrentToken(pLex));
 		return nullptr;
 	}
 
-	SLexerLocation lexloc(pLex);
-	SUnitTest * pUtest = MOE_NEW(pTesctx->m_pAlloc, SUnitTest) SUnitTest(pTesctx->m_pAlloc);
+	UnitTest * pUtest = MOE_NEW(pTesctx->m_pAlloc, UnitTest) UnitTest(pTesctx->m_pAlloc);
 
 	auto pChzDirective = "test";
-	if (pLex->m_str == "builtin")
+	if (pLex->m_istr == UTest::g_istrBuiltin)
 	{
 		TokNext(pLex);
 		pUtest->m_utestk = UTESTK_Builtin;
@@ -630,37 +683,38 @@ static SUnitTest * PUtestParse(TestContext * pTesctx, SLexer * pLex)
 	}
 	if (pLex->m_tok != TOK_Identifier)
 	{
-		ParseError(pTesctx, pLex, "Expected test name to follow %s directive, but encountered '%s'", pChzDirective, PChzCurrentToken(pLex));
+		EmitError(pTesctx, LexSpan(pLex), ERRID_TestExpected,
+			"Expected test name to follow %s directive, but encountered '%s'", pChzDirective, PChzCurrentToken(pLex));
 		return nullptr;
 	}
 
 
-	pUtest->m_istrName = pLex->m_str;
+	pUtest->m_istrName = pLex->m_istr;
 	TokNext(pLex);
 
 	while (1)
 	{
-		if (FConsumeIdentifier(pTesctx, pLex, "prereq"))
+		if (FConsumeIdentifier(pTesctx, pLex, UTest::g_istrPrereq))
 		{
 			pUtest->m_pChzPrereq = PChzExpectString(pTesctx, pLex);
 		}
-		else if (FConsumeIdentifier(pTesctx, pLex, "input"))
+		else if (FConsumeIdentifier(pTesctx, pLex, UTest::g_istrInput))
 		{
 			pUtest->m_pChzInput = PChzExpectString(pTesctx, pLex);
 		}
-		else if (FConsumeIdentifier(pTesctx, pLex, "parse"))
+		else if (FConsumeIdentifier(pTesctx, pLex, UTest::g_istrParse))
 		{
 			pUtest->m_pChzParse = PChzExpectString(pTesctx, pLex);
 		}
-		else if (FConsumeIdentifier(pTesctx, pLex, "typecheck"))
+		else if (FConsumeIdentifier(pTesctx, pLex, UTest::g_istrTypeCheck))
 		{
 			pUtest->m_pChzTypeCheck = PChzExpectString(pTesctx, pLex);
 		}
-		else if (FConsumeIdentifier(pTesctx, pLex, "values"))
+		else if (FConsumeIdentifier(pTesctx, pLex, UTest::g_istrValues))
 		{
 			pUtest->m_pChzValues = PChzExpectString(pTesctx, pLex);
 		}
-		else if (FConsumeIdentifier(pTesctx, pLex, "bytecode"))
+		else if (FConsumeIdentifier(pTesctx, pLex, UTest::g_istrByteCode))
 		{
 			pUtest->m_pChzBytecode = PChzExpectString(pTesctx, pLex);
 		}
@@ -670,13 +724,14 @@ static SUnitTest * PUtestParse(TestContext * pTesctx, SLexer * pLex)
 		}
 		else
 		{
-			if ((pLex->m_tok == TOK_Identifier && pLex->m_str == CString("test")) ||
+			if ((pLex->m_tok == TOK_Identifier && pLex->m_istr == IstrIntern("test")) ||
 				pLex->m_tok == TOK_Eof)
 			{
 				break;
 			}
 
-			ParseError(pTesctx, pLex, "unknown token encountered '%s' during test %s", PChzCurrentToken(pLex), pUtest->m_istrName.m_pChz);
+			EmitError(pTesctx, LexSpan(pLex), ERRID_UnexpectedToken, 
+				"unknown token encountered '%s' during test %s", PChzCurrentToken(pLex), pUtest->m_istrName.m_pChz);
 			TokNext(pLex);
 			SkipRestOfLine(pLex);
 		}
@@ -692,25 +747,26 @@ static SUnitTest * PUtestParse(TestContext * pTesctx, SLexer * pLex)
 			pUtest->m_pChzBytecode || 
 			pUtest->m_arypPerm.C())
 		{
-			ParseError(pTesctx, pLex, "permute string test is not allowed for test %s", pUtest->m_istrName.m_pChz);
+			EmitError(pTesctx, LexSpan(pLex), ERRID_NotPermuteTest,
+				"permute string test is not allowed for test %s", pUtest->m_istrName.m_pChz);
 		}
 	}
 	
 	return pUtest;
 }
 
-void ParseMoetestFile(TestContext * pTesctx, SLexer * pLex, CDynAry<SUnitTest *> * parypUtest)
+void ParseMoetestFile(TestContext * pTesctx, Lexer * pLex, CDynAry<UnitTest *> * parypUtest)
 {
 	// load the first token
 	TokNext(pLex);
 
 	while (pLex->m_tok != TOK_Eof)
 	{
-		SUnitTest * pUtest = PUtestParse(pTesctx, pLex);
+		UnitTest * pUtest = PUtestParse(pTesctx, pLex);
 
 		if (!pUtest)
 		{
-			ParseError(pTesctx, pLex, "Unexpected token '%s' in test definition", PChzCurrentToken(pLex));
+			EmitError(pTesctx, LexSpan(pLex), ERRID_UnexpectedToken, "Unexpected token '%s' in test definition", PChzCurrentToken(pLex));
 			break;
 		}
 
@@ -718,11 +774,48 @@ void ParseMoetestFile(TestContext * pTesctx, SLexer * pLex, CDynAry<SUnitTest *>
 	}
 }
 
+void PrintHighlightMatch(const char * pChzPrint, const char * pChzMatch, GRFCCOL grfccolMatch, GRFCCOL grfccolMismatch)
+{
+	ConsoleColorAmbit ccolamb;
+
+	bool fMatchPrev = true;
+	SetConsoleTextColor(grfccolMatch);
+
+	while (*pChzPrint != '\0')
+	{
+		bool fMatch = pChzMatch && *pChzMatch == *pChzPrint;
+		if (fMatch != fMatchPrev)
+		{
+			fMatchPrev = fMatch;
+			SetConsoleTextColor((fMatch) ? grfccolMatch : grfccolMismatch );
+		}
+
+		printf("%c", *pChzPrint);
+		++pChzPrint;
+
+		if (pChzMatch)
+		{
+			++pChzMatch;
+
+			if (*pChzMatch == '\0')
+			{
+				pChzMatch = nullptr;
+			}
+		}
+	}
+}
+
 void PrintTestError(const char * pChzIn, const char * pChzOut, const char * pChzExpected)
 {
+	ConsoleColorAmbit ccolamb;
+	GRFCCOL grfccolWhite = GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0);
+
 	printf("in : %s\n", pChzIn);
-	printf("out: %s\n", pChzOut);
-	printf("exp: %s\n", pChzExpected);
+	printf("out: ");
+	PrintHighlightMatch(pChzOut, pChzExpected, ccolamb.m_grfccol, grfccolWhite);
+	printf("\nout: ");
+	PrintHighlightMatch(pChzExpected, pChzOut, ccolamb.m_grfccol, grfccolWhite);
+	printf("\n");
 
 	printf("   : ");
 	auto pChOut = pChzOut;
@@ -740,6 +833,7 @@ void PrintTestError(const char * pChzIn, const char * pChzOut, const char * pChz
 			}
 		}
 
+		SetConsoleTextColor(GRFCCOL_FgIntenseRed | (ccolamb.m_grfccol.m_raw & 0xF0));
 		printf("%c", (fAreSame) ? ' ' : '^');
 
 		pChOut += cBOut;
@@ -762,7 +856,7 @@ void PrintTestError(const char * pChzIn, const char * pChzOut, const char * pChz
 	printf("\n\n");
 }
 
-bool FCheckForExpectedErrors(SErrorManager * pErrman, ERRID erridMin, ERRID erridMax, TESTRES * pTestres)
+bool FCheckForExpectedErrors(ErrorManager * pErrman, ERRID erridMin, ERRID erridMax, TESTRES * pTestres)
 {
 	auto paryErrcExpected = pErrman->m_paryErrcExpected;
 	if (!paryErrcExpected)
@@ -788,9 +882,24 @@ bool FCheckForExpectedErrors(SErrorManager * pErrman, ERRID erridMin, ERRID erri
 	return false;
 }
 
+void HideDebugStringForEntries(Workspace * pWork, s64 cBHiddenMax)
+{
+	// hide entrys before a given point (for omitting the prereq from a unit test)
+
+	BlockListEntry::CIterator iter(&pWork->m_blistEntry);
+	while (WorkspaceEntry * pEntry = iter.Next())
+	{
+		auto pStnod = pEntry->m_pStnod;
+		if (pStnod && pStnod->m_lexsp.m_iB < cBHiddenMax)
+		{
+			pEntry->m_fHideDebugString = true;
+		}
+	}
+}
+
 TESTRES TestresRunUnitTest(
-	CWorkspace * pWorkParent,
-	SUnitTest * pUtest,
+	Workspace * pWorkParent,
+	UnitTest * pUtest,
 	GRFCOMPILE grfcompile,
 	const char * pChzPrereq,
 	const char * pChzIn,
@@ -832,14 +941,16 @@ TESTRES TestresRunUnitTest(
 	work.m_pAlloc->SetAltrac(pAltrac);
 #endif
 
+	Compilation comp(work.m_pAlloc);
+
 	BeginWorkspace(&work);
 
 	StringEditBuffer sebFilename(work.m_pAlloc);
 	StringEditBuffer sebInput(work.m_pAlloc);
-	Workspace::SFile * pFile = nullptr;
+	Workspace::File * pFile = nullptr;
 
-	sebFilename.AppendChz(pUtest->m_istrName.PChz());
-	pFile = work.PFileEnsure(sebFilename.PChz(), Workspace::FILEK_Source);
+	sebFilename.AppendChz(pUtest->m_istrName.m_pChz);
+	pFile = work.PFileEnsure(IstrInternCopy(sebFilename.PChz()), Workspace::FILEK_Source);
 
 	size_t cbPrereq = 0;
 	if (pChzPrereq)
@@ -856,13 +967,21 @@ TESTRES TestresRunUnitTest(
 
 	pFile->m_pChzFileBody = sebInput.PChz();
 
-	Lexer lex;
-	BeginParse(&work, &lex, sebInput.PChz(), sebFilename.PChz());
-	work.m_pErrman->Clear();
+
+	//Lexer lex;
+	//BeginParse(&work, &lex, sebInput.PChz(), sebFilename.PChz());
+	//work.m_pErrman->Clear();
 
 	// Parse
-	ParseGlobalScope(&work, &lex, work.m_grfunt);
-	EndParse(&work, &lex);
+	auto pJobParse = PJobCreateParse(&comp, &work, pFile->m_pChzFileBody, pFile->m_istrFilename);
+	WaitForJob(&comp, &work, pJobParse);
+	//ParseGlobalScope(&work, &lex, work.m_grfunt);
+	//EndParse(&work, &lex);
+
+	if (pJobParse->m_pFnCleanup)
+	{
+		(*pJobParse->m_pFnCleanup)(&work, pJobParse);
+	}
 
 	HideDebugStringForEntries(&work, cbPrereq);
 
@@ -870,7 +989,7 @@ TESTRES TestresRunUnitTest(
 	if (work.m_pErrman->FHasErrors())
 	{
 		printf("Unexpected error parsing error during test %s\n", pUtest->m_istrName.m_pChz);
-		printf("input = \"%s\"\n", sebInput.m_pChz);
+		printf("input = \"%s\"\n", sebInput.PChz());
 		testres = TESTRES_SourceError;
 	}
 
@@ -884,7 +1003,7 @@ TESTRES TestresRunUnitTest(
 	{
 		if (!FIsEmptyString(pChzParseExpected))
 		{
-			WriteDebugStringForEntries(&work, pCh, pChMax, FDBGSTR_Name);
+			WriteSExpressionForEntries(&work, pCh, pChMax, SEWK_Parse, FSEW_None);
 
 			if (!FAreChzEqual(aCh, pChzParseExpected))
 			{
@@ -896,6 +1015,7 @@ TESTRES TestresRunUnitTest(
 		}
 	}
 
+	/*
 	if (testres == TESTRES_Success && !work.m_pErrman->FHasHiddenErrors())
 	{
 		// Type Check
@@ -911,7 +1031,7 @@ TESTRES TestresRunUnitTest(
 
 		if (!fHasExpectedErr && testres == TESTRES_Success && !FIsEmptyString(pChzTypeCheckExpected))
 		{
-			WriteDebugStringForEntries(&work, pCh, pChMax, FDBGSTR_Type | FSEW_LiteralSize | FSEW_NoWhitespace);
+			WriteSExpressionForEntries(&work, pCh, pChMax, FDBGSTR_Type | FSEW_LiteralSize | FSEW_NoWhitespace);
 
 			size_t cB = CBChz(pChzTypeCheckExpected);
 			char * aChExpected = (char *)work.m_pAlloc->MOE_ALLOC(cB, 1);
@@ -929,7 +1049,7 @@ TESTRES TestresRunUnitTest(
 
 		if (!fHasExpectedErr && testres == TESTRES_Success && !FIsEmptyString(pChzValuesExpected))
 		{
-			WriteDebugStringForEntries(&work, pCh, pChMax, FDBGSTR_Values);
+			WriteSExpressionForEntries(&work, pCh, pChMax, FDBGSTR_Values);
 
 			if (!FAreChzEqual(aCh, pChzValuesExpected))
 			{
@@ -963,7 +1083,6 @@ TESTRES TestresRunUnitTest(
 			CDynAry<void *> arypDll(work.m_pAlloc, BK_ForeignFunctions);
 			if (!BCode::LoadForeignLibraries(&work, &hashHvPFn, &arypDll))
 			{
-				SLexerLocation lexloc;
 				printf("Failed loading foreign libraries.\n");
 				testres = TESTRES_TypeCheckMismatch;
 			}
@@ -1009,18 +1128,19 @@ TESTRES TestresRunUnitTest(
 			BCode::UnloadForeignLibraries(&arypDll);
 		}
 	}
+	*/
 
 	(void) FCheckForExpectedErrors(&errmanTest, ERRID_CodeGenMin, ERRID_Max, &testres);
 
 	sebFilename.Resize(0, 0, 0);
 	sebInput.Resize(0, 0, 0);
 	
-
+	/*
 	if (pFile && pFile->m_pDif)
 	{
 		work.m_pAlloc->MOE_DELETE(pFile->m_pDif);
 		pFile->m_pDif = nullptr;
-	}
+	}*/
 
 	pWorkParent->m_pErrman->AddChildErrors(&errmanTest);
 	errmanTest.m_aryErrid.Clear();
@@ -1037,16 +1157,13 @@ TESTRES TestresRunUnitTest(
 }
 
 
-void TestPermutation(TestContext * pTesctx, Permutation * pPerm, SUnitTest * pUtest)
+void TestPermutation(TestContext * pTesctx, Permutation * pPerm, UnitTest * pUtest)
 {
 	auto pSub = pTesctx->m_arySubStack.AppendNew();
 	pSub->m_istrVar = pPerm->m_istrVar;
 	pSub->m_pChzOption = nullptr;
 
-	static const char * s_pChzTestFlags = "testflags";
-	static const char * s_pChzGlobalFlag = "global";
-	static const char * s_pChzLocalFlag = "local";
-	bool fIsFlagPermutation = (pPerm->m_istrVar == s_pChzTestFlags);
+	bool fIsFlagPermutation = (pPerm->m_istrVar == UTest::g_istrTestFlags);
 
 	char * pChzSub = nullptr;
 	auto ppOptMax = pPerm->m_arypOpt.PMac();
@@ -1058,17 +1175,17 @@ void TestPermutation(TestContext * pTesctx, Permutation * pPerm, SUnitTest * pUt
 		{
 			// BB - need parsing for handling flag combinations
 			GRFUNT grfunt(grfuntPrev);
-			if (FAreChzEqual(pSub->m_pOpt->m_pChzOption, s_pChzGlobalFlag))
+			if (FAreChzEqual(pSub->m_pOpt->m_pChzOption, UTest::g_pChzGlobal))
 			{
 				grfunt.Clear(FUNT_ImplicitProc);
 			}
-			else if (FAreChzEqual(pSub->m_pOpt->m_pChzOption, s_pChzLocalFlag))
+			else if (FAreChzEqual(pSub->m_pOpt->m_pChzOption, UTest::g_pChzLocal))
 			{
 				grfunt.AddFlags(FUNT_ImplicitProc);
 			}
 			else
 			{
-				printf("unhandled permutation '%s' in '%s' \n", pSub->m_pOpt->m_pChzOption, s_pChzTestFlags);
+				printf("unhandled permutation '%s' in '%s' \n", pSub->m_pOpt->m_pChzOption, UTest::g_pChzTestFlags);
 				++pTesctx->m_mpTestresCResult[TESTRES_SourceError];
 				continue;
 			}
@@ -1077,7 +1194,7 @@ void TestPermutation(TestContext * pTesctx, Permutation * pPerm, SUnitTest * pUt
 
 		if (pSub->m_pOpt->m_fAllowSubstitution)
 		{
-			pChzSub = PChzAllocateSubstitution(pTesctx, &pPerm->m_lexsp, pSub->m_pOpt->m_pChzOption, pTesctx->m_arySubStack, pSub);
+			pChzSub = PChzAllocateSubstitution(pTesctx, pPerm->m_lexsp, pSub->m_pOpt->m_pChzOption, pTesctx->m_arySubStack, pSub);
 			pSub->m_pChzOption = pChzSub;
 		}
 		else
@@ -1096,7 +1213,7 @@ void TestPermutation(TestContext * pTesctx, Permutation * pPerm, SUnitTest * pUt
 		}
 		else
 		{
-			CDynAry<SErrorCount> aryErrcExpected(pTesctx->m_pAlloc, BK_UnitTest);
+			CDynAry<ErrorCount> aryErrcExpected(pTesctx->m_pAlloc, BK_UnitTest);
 			auto pSubMax = pTesctx->m_arySubStack.PMac();
 			for (auto pSubIt = pTesctx->m_arySubStack.A(); pSubIt != pSubMax; ++pSubIt)
 			{
@@ -1115,12 +1232,12 @@ void TestPermutation(TestContext * pTesctx, Permutation * pPerm, SUnitTest * pUt
 			//printf("\n");
 
 			{
-				auto pChzPrereq = PChzAllocateSubstitution(pTesctx, &pPerm->m_lexsp, pUtest->m_pChzPrereq, pTesctx->m_arySubStack);
-				auto pChzInput = PChzAllocateSubstitution(pTesctx, &pPerm->m_lexsp, pUtest->m_pChzInput, pTesctx->m_arySubStack);
-				auto pChzParse = PChzAllocateSubstitution(pTesctx, &pPerm->m_lexsp, pUtest->m_pChzParse, pTesctx->m_arySubStack);
-				auto pChzTypeCheck = PChzAllocateSubstitution(pTesctx, &pPerm->m_lexsp, pUtest->m_pChzTypeCheck, pTesctx->m_arySubStack);
-				auto pChzValues = PChzAllocateSubstitution(pTesctx, &pPerm->m_lexsp, pUtest->m_pChzValues, pTesctx->m_arySubStack);
-				auto pChzBytecode = PChzAllocateSubstitution(pTesctx, &pPerm->m_lexsp, pUtest->m_pChzBytecode, pTesctx->m_arySubStack);
+				auto pChzPrereq = PChzAllocateSubstitution(pTesctx, pPerm->m_lexsp, pUtest->m_pChzPrereq, pTesctx->m_arySubStack);
+				auto pChzInput = PChzAllocateSubstitution(pTesctx, pPerm->m_lexsp, pUtest->m_pChzInput, pTesctx->m_arySubStack);
+				auto pChzParse = PChzAllocateSubstitution(pTesctx, pPerm->m_lexsp, pUtest->m_pChzParse, pTesctx->m_arySubStack);
+				auto pChzTypeCheck = PChzAllocateSubstitution(pTesctx, pPerm->m_lexsp, pUtest->m_pChzTypeCheck, pTesctx->m_arySubStack);
+				auto pChzValues = PChzAllocateSubstitution(pTesctx, pPerm->m_lexsp, pUtest->m_pChzValues, pTesctx->m_arySubStack);
+				auto pChzBytecode = PChzAllocateSubstitution(pTesctx, pPerm->m_lexsp, pUtest->m_pChzBytecode, pTesctx->m_arySubStack);
 
 				if (!pChzInput || !pChzParse || !pChzTypeCheck || !pChzValues)
 				{
@@ -1257,43 +1374,45 @@ bool FTestBlockList(Alloc * pAlloc)
 	return true;
 }
 
-bool FRunBuiltinTest(const CString & strName, Alloc * pAlloc)
+bool FRunBuiltinTest(Moe::InString istrName, Alloc * pAlloc)
 {
 	bool fReturn;
-	if (strName == "Lexer")
+	if (istrName == UTest::g_istrLexer)
 	{
 		fReturn = FTestLexing();
 	}
-	else if (strName == "Signed65")
+	/*
+	else if (istrName == UTest::g_istrSigned65)
 	{
 		fReturn = FTestSigned65();
 	}
-	else if (strName == "Unicode")
+	else if (istrName == UTest::g_istrUnicode)
 	{
 		fReturn = FTestUnicode();
 	}
-	else if (strName == "UniqueNames")
+	else if (istrName == UTest::g_istrUniqueNames)
 	{
 		fReturn = FTestUniqueNames(pAlloc);
 	}
-	else if (strName == "BlockList")
+	else if (istrName == UTest::g_istrBlockList)
 	{
 		fReturn = FTestBlockList(pAlloc);
 	}
+	*/
 	else
 	{
-		printf("ERROR: Unknown built in test %s\n", strName.m_pChz);
+		printf("ERROR: Unknown built in test %s\n", istrName.m_pChz);
 		fReturn = false;
 	}
 	
 	return fReturn;
 }
 
-void ParseAndTestMoetestFile(Moe::Alloc * pAlloc, SErrorManager * pErrman, Lexer * pLex, GRFCOMPILE grfcompile)
+void ParseAndTestMoetestFile(Moe::Alloc * pAlloc, ErrorManager * pErrman, Lexer * pLex, GRFCOMPILE grfcompile)
 {
 	TestContext tesctx(pAlloc, pErrman, pErrman->m_pWork, grfcompile);
 	pErrman->m_pWork->m_grfunt = GRFUNT_DefaultTest;
-	CDynAry<SUnitTest *> arypUtest(pAlloc, BK_UnitTest);
+	CDynAry<UnitTest *> arypUtest(pAlloc, BK_UnitTest);
 
 	ParseMoetestFile(&tesctx, pLex, &arypUtest);
 	if (pErrman->FHasErrors())
@@ -1304,10 +1423,10 @@ void ParseAndTestMoetestFile(Moe::Alloc * pAlloc, SErrorManager * pErrman, Lexer
 		return;
 	}
 	
-	SUnitTest ** ppUtestMax = arypUtest.PMac();
+	UnitTest ** ppUtestMax = arypUtest.PMac();
 	for (auto ppUtest = arypUtest.A(); ppUtest != ppUtestMax; ++ppUtest)
 	{
-		SUnitTest * pUtest = *ppUtest;
+		UnitTest * pUtest = *ppUtest;
 
 		if (pUtest->m_utestk == UTESTK_Builtin)
 		{
@@ -1356,27 +1475,34 @@ void ParseAndTestMoetestFile(Moe::Alloc * pAlloc, SErrorManager * pErrman, Lexer
 		cTests += tesctx.m_mpTestresCResult[testres];
 	}
 
+	ConsoleColorAmbit ccolamb;
 	if (tesctx.m_mpTestresCResult[TESTRES_Success] == cTests)
+	{
+		SetConsoleTextColor(GRFCCOL_FgIntenseYellow);
 		printf("\nSUCCESS: ");
+	}
 	else
+	{
+		SetConsoleTextColor(GRFCCOL_FgIntenseRed);
 		printf("\nFailure: ");
+	}
 
 	printf("%d / %d tests succeeded\n", tesctx.m_mpTestresCResult[TESTRES_Success], cTests);
 }
 
-bool FUnitTestFile(CWorkspace * pWork, const char * pChzFilenameIn, unsigned grfcompile)
+bool FUnitTestFile(Workspace * pWork, const char * pChzFilenameIn, unsigned grfcompile)
 {
 	Alloc * pAlloc = pWork->m_pAlloc;
 	if (!pChzFilenameIn)
 		pChzFilenameIn = "";
 	
-	auto pFile = pWork->PFileEnsure(pChzFilenameIn, CWorkspace::FILEK_UnitTest);
+	auto pFile = pWork->PFileEnsure(IstrIntern(pChzFilenameIn), Workspace::FILEK_UnitTest);
 	pFile->m_pChzFileBody = nullptr;
 
-	char aChFilenameOut[CWorkspace::s_cBFilenameMax];
-	(void)CChConstructFilename(pFile->m_strFilename.m_pChz, Workspace::s_pChzUnitTestExtension, aChFilenameOut, MOE_DIM(aChFilenameOut));
+	char aChFilenameOut[Workspace::s_cBFilenameMax];
+	(void)CChConstructFilename(pFile->m_istrFilename.m_pChz, Workspace::s_pChzUnitTestExtension, aChFilenameOut, MOE_DIM(aChFilenameOut));
 
-	pFile->m_pChzFileBody = pWork->PChzLoadFile(aChFilenameOut, pWork->m_pAlloc);
+	pFile->m_pChzFileBody = pWork->PChzLoadFile(IstrIntern(aChFilenameOut), pWork->m_pAlloc);
 	if (!pFile->m_pChzFileBody)
 	{
 		return false;
@@ -1384,16 +1510,14 @@ bool FUnitTestFile(CWorkspace * pWork, const char * pChzFilenameIn, unsigned grf
 
 	const char * pChzFileBody = PChzSkipUnicodeBOM(pFile->m_pChzFileBody);
 
-	printf("Testing %s\n", pFile->m_strFilename.PCoz());
+	printf("Testing %s\n", pFile->m_istrFilename.m_pChz);
 
 	static const size_t cChStorage = 1024 * 8;
 	char * aChStorage = (char *)pAlloc->MOE_ALLOC(cChStorage, 4);
 	Lexer lex;
-	InitLexer(&lex, pChzFileBody, &pChzFileBody[CBCoz(pChzFileBody)-1], aChStorage, cChStorage);
-	lex.m_pChzFilename = pFile->m_strFilename.m_pChz;
+	InitLexer(&lex, pChzFileBody, &pChzFileBody[CBChz(pChzFileBody)-1], aChStorage, cChStorage);
+	lex.m_istrFilename = pFile->m_istrFilename;
 
 	ParseAndTestMoetestFile(pAlloc, pWork->m_pErrman, &lex, grfcompile);
 	return !pWork->m_pErrman->FHasErrors();
 }
-
-#endif // MOEB_LATER	

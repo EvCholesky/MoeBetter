@@ -1,0 +1,112 @@
+// Copyright (C) 2019 Evan Christensen
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated 
+// documentation files (the "Software"), to deal in the Software without restriction, including without limitation the 
+// rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit 
+// persons to whom the Software is furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in all copies or substantial portions of the 
+// Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE 
+// WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR 
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
+
+
+
+// Permute string format is a nested series of "permute" objects:
+//	?perm(foo|bar)   	defines a permutation of the variable ?perm with options "foo" and "bar"
+//
+//						option strings are separated by the '|' character and can be wrapped in quotes
+//						option strings can contain substitution variables defined by any ancestor permutation
+//						option strings can supply an expected error with "?errid(1234)" meaning this option must cause error #1234
+// We test each permutation option against all of the permutation's children's options
+// permutations options are added with '+' for a single child or curly braces for multiple comma separated child permutations
+
+// Note: Int## is a stand in for platform specific int sizes (any ## will be replaced with 32 or 64 depending on the platform)
+
+// [ ] Add support for named test command line arg
+
+
+// ToTest: sizeof operator
+// ToTest: typedefs
+
+
+
+// Built in tests
+
+test builtin lexer
+//test builtin signed65
+//test builtin unicode
+//test builtin uniqueNames
+//test builtin blockList
+
+// Operator precedence:
+
+test OperatorPrecedence
+	input "n: = false || true && 0 ?rel 123 ?add 456 ?mul 789 ?shift 2"
+	parse "(decl, n, null, (op||, false, (op&&, true, (op?rel, 0, (op?add, 123, (op?mul, 456, (op?shift, 789, 2)))))))"
+	{
+		?shift("<<"|">>") + ?mul("*"|"/"|"%"|"&") + ?add("+"|"-"|"|"|"^") + ?rel("<"|">"|"<="|">="|"=="|"!=")
+	}
+
+test OperatorPrecedence2
+	input "n: = 2 ?shift 789 ?mul 456 ?add 123 ?rel 0 && true || false"
+	parse "(decl, n, null, (op||, (op&&, (op?rel, (op?add, (op?mul, (op?shift, 2, 789), 456), 123), 0), true), false))"
+	{
+		?shift("<<"|">>") + ?mul("*"|"/"|"%"|"&") + ?add("+"|"-"|"|"|"^") + ?rel("<"|">"|"<="|">="|"=="|"!=")
+	}
+
+// Declaration Tests:
+
+test DeclareAssign
+	input "v : ?type = ?init"
+	parse "(decl, v, ?type, ?initp)"
+//	typecheck "(?type v ?type Literal:?littype)"
+	{
+		?init(2.200000?errid(2001)) + ?initp("?init")
+		{
+			?type(int) + ?littype(Int##),
+			?type(s32|u32) + ?littype(Int32),
+			?type(s64|u64) + ?littype(Int64),
+		},
+
+		?init(int?errid(2009)) + ?initp("?init") + ?type(int) + ?littype(Int32),	// make sure we can't assign a type as an RVal
+		?init(":s32"?errid(2001)) + ?initp("(typeArg, s32)") + ?type("s32") + ?littype(Int32),
+
+		?littype(Int8) + ?type(u8|s8)
+		{
+			?init(2|1000?errid(2001)) + ?initp("?init"),
+			?init("'\\0'") + ?initp(0),
+			?init("'a'") +?initp(97),
+		},
+	}
+
+test DeclareSigned
+	input "n : s?bits = -1"
+	parse "(decl, n, s?bits, (op-, 1))"
+//	typecheck "(s?bits n s?bits (Literal:Int?bits Literal:Int))"
+	{
+		?bits(8|16|32|64)
+	}
+
+test DeclareHex
+	input "n := ?init"
+	parse "(decl, n, null, ?dec)"
+	//typecheck "(int n Literal:Int64)"
+	{
+		?init(0x0) + ?dec(0),
+		?init(0xFFFF) + ?dec(65535),
+		?init(0xFFFFFFFF) + ?dec(4294967295),
+		?init(0xFFFFFFFFFFFFFFF) + ?dec(1152921504606846975)
+	}
+
+test DeclareAssignString
+	input "v : ?type = \"hello world\""
+	parse "(decl, .v, ?ptype, \"hello world\")"
+	//typecheck "(?tctype v (?tctype (?tcinit u8)) Literal:String)"
+	{
+		?type(&const u8) + ?ptype("(refDecl, (const, u8))") + ?tctype("&const.u8") + ?tcinit(const.u8),
+		?type(const&u8) + ?ptype("(const, (refDecl, u8))") + ?tctype("const.&u8") + ?tcinit(&u8),
+	}

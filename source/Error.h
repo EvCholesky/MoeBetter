@@ -24,6 +24,7 @@ namespace Moe
 struct GenericMap;
 struct LexSpan;
 struct ParseContext;
+struct TestContext;
 struct Workspace;
 
 enum ERRID
@@ -128,6 +129,20 @@ enum ERRID
 	ERRID_ZeroSizeInstance			= 3005,
 	ERRID_UndefinedForeignFunction  = 3006,
 	ERRID_CodeGenMax				= 4000,
+
+	ERRID_TestMin					= ERRID_CodeGenMax,
+	ERRID_MissingQuote				= 4001,
+	ERRID_CantFindSubstitution		= 4002,
+	ERRID_NoRecursiveSubstitute		= 4003,
+	ERRID_ErridExpected				= 4004,
+	ERRID_TooManyErrids				= 4005,
+	ERRID_StringLiteralExpected		= 4006,
+	ERRID_OptionStringExpected		= 4007,
+	ERRID_ExpectedTestVar			= 4008,
+	ERRID_PermutationExpected		= 4009,
+	ERRID_TestExpected				= 4010,
+	ERRID_NotPermuteTest			= 4011,
+	ERRID_TestMax					= 5000,
 	ERRID_ErrorMax					= 10000,
 
 	ERRID_WarningMin				= 10000,

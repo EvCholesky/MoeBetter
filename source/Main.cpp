@@ -18,6 +18,7 @@
 #include "MoeString.h"
 #include "MoeTypes.h"
 #include "Request.h"
+#include "UnitTest.h"
 #include "Workspace.h"
 
 #include "stdio.h"
@@ -198,7 +199,7 @@ CommandLineManager::Option::Option(const char * pChzOpt, const char * pChzHelp, 
 	pCmdlineman->RegisterOption(this);
 }
 
-static CommandLineManager::Option s_optTest("-test", "Run compiler unit test file (*.moetest)");
+static CommandLineManager::Option s_optTest("-test", "Run compiler unit test file (*.moetest)", CommandLineManager::OPTK_String);
 static CommandLineManager::Option s_optHelp("-help", "List the compiler options");
 static CommandLineManager::Option s_optNoLink("-nolink", "Skip the linker step");
 static CommandLineManager::Option s_optUseLLD("-useLLD", "Use the LLVM linker LLD");
@@ -212,13 +213,15 @@ void InitInternStrings(Moe::Alloc * pAlloc)
 {
 	Moe::StaticInitStrings(pAlloc);
 	InternReservedWordStrings();
+	InternUnitTestStrings();
 	InternBuiltInTypeStrings();
 }
 
 void ShutdownInternStrings(Moe::Alloc * pAlloc)
 {
-	ClearReservedWordStrings();
+	ClearUnitTestStrings();
 	ClearBuiltInTypeStrings();
+	ClearReservedWordStrings();
 	Moe::StaticShutdownStrings(pAlloc);
 }
 
@@ -266,15 +269,15 @@ int main(int cpChzArg, const char * apChzArg[])
 	u8 * aBError = new u8[s_cBError];
 	Alloc allocError(aBError, s_cBError);
 
-	if (pCmdlineman->FHasCommand(s_optTest))
+	GRFCOMPILE grfcompile;
+	if (CommandLineManager::Command * pCom = pCmdlineman->PComLookup(s_optTest))
 	{
 		InitInternStrings(&allocString);
 
 		ErrorManager errman(&allocError);
 		Workspace work(&allocHeap, &errman);
-#if MOEB_LATER
-		FUnitTestFile(&work, comline.m_pChzFilename, grfcompile.m_raw);
-#endif
+
+		FUnitTestFile(&work, pCom->m_pChzValue, grfcompile.m_raw);
 
 		ShutdownInternStrings(&allocString);
 	}

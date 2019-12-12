@@ -122,6 +122,7 @@ struct Workspace	// tag = work
 
 						Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman);
 
+	void				CopyUnitTestFiles(Workspace * pWorkOther);
 	char *				PChzLoadFile(const Moe::InString & istrFilename, Moe::Alloc * pAlloc);
 	void				AppendEntry(STNode * pStnod, SymbolTable * pSymtab);
 
@@ -171,6 +172,19 @@ enum FCCOL // Console color
 	GRFCCOL_FgIntenseYellow		= FCCOL_FgRed | FCCOL_FgGreen | FCCOL_FgIntense,
 	GRFCCOL_FgIntenseWhite		= FCCOL_FgRed | FCCOL_FgGreen | FCCOL_FgBlue | FCCOL_FgIntense,
 };
+
+enum FCOMPILE
+{
+	FCOMPILE_PrintIR	= 0x1,
+	FCOMPILE_FastIsel	= 0x2,
+	FCOMPILE_Native		= 0x4,
+	FCOMPILE_Bytecode	= 0x8,
+
+	FCOMPILE_None		= 0x0,
+	FCOMPILE_All		= 0xF,
+};
+
+MOE_DEFINE_GRF(GRFCOMPILE, FCOMPILE, u32);
 
 MOE_DEFINE_GRF(GRFCCOL, FCCOL, u16);
 

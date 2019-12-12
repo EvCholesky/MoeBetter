@@ -56,6 +56,8 @@ STNode * PStnodParseLogicalOrExpression(ParseContext * pParctx, Lexer * pLex);
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex);
 STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex);
 
+STNode * PStnodCopy(Alloc * pAlloc, STNode * pStnodSrc, Moe::CHash<STNode *, STNode *> * pmpPStnodSrcPStnodDst = nullptr);
+
 static int g_nSymtabVisitId = 1; // visit index used by symbol table collision walks
 
 struct ProcSymtabStack // tag = procss
@@ -127,7 +129,7 @@ static ParkInfo s_mpParkParkinfo[] =
 	{ STEXK_For,		"for", "For" },
 	{ STEXK_Node,		"aryDecl", "Array Decl" },
 	{ STEXK_Node,		"refDecl", "Reference Decl" },
-	{ STEXK_Node,		"qualDecl", "Qualifier Decl" },
+	{ STEXK_Value,		"qualDecl", "Qualifier Decl" },
 	{ STEXK_Node,		"procDecl", "Procedure Reference Decl" },
 	{ STEXK_Decl,		"decl", "Decl" },
 	{ STEXK_Decl,		"constDecl", "Constant Decl" },
@@ -682,7 +684,12 @@ bool FTryWriteValueSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStval->m_g);								break;
 	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStval->m_nSigned);						break;
 	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStval->m_nUnsigned);					break;
-	case STVALK_String:			FormatChz(pStrbuf, "'%s'", pStval->m_istr.m_pChz);					break;
+	case STVALK_String:			
+		{
+			bool fWrapInQuotes = (pStval->m_park == PARK_Literal);
+			const char * pChzFormat = (fWrapInQuotes) ? "\"%s\"" : "%s";
+			FormatChz(pStrbuf, pChzFormat, pStval->m_istr.m_pChz);
+		} break;
 	default: 
 		return false;
 	}
@@ -913,6 +920,60 @@ InString IstrSExpression(STNode * pStnod, SEWK sewk, GRFSEW grfsew)
 	WriteSExpression(&strbuf, pStnod, sewk, grfsew);
 	return IstrInternCopy(aCh);
 }
+
+void WriteSExpressionForEntries(Workspace * pWork, char * pCo, char * pCoMax, SEWK sewk, GRFSEW grfsew)
+{
+	auto cB = pCoMax - pCo;
+
+#define TEST_STNODE_COPY 1
+#if TEST_STNODE_COPY
+	auto pCoCopy = (char *)alloca(cB);
+	Moe::StringBuffer strbufCopy(pCoCopy, cB);
+#endif
+
+	Moe::StringBuffer strbuf(pCo, cB);
+
+	int ipStnod = 0;
+	int cEntry = (int)pWork->m_blistEntry.C();
+
+	BlockListEntry::CIterator iter(&pWork->m_blistEntry);
+	while (WorkspaceEntry * pEntry = iter.Next())
+	{
+		++ipStnod;
+		if (pEntry->m_fHideDebugString)
+			continue;
+
+		STNode * pStnod = pEntry->m_pStnod;
+		WriteSExpression(&strbuf, pStnod, sewk, grfsew);
+
+		if ((CBFree(strbuf) > 0) & (ipStnod != cEntry))
+		{
+			*strbuf.m_pChzAppend++ = ' ';
+		}
+
+#if TEST_STNODE_COPY
+		STNode * pStnodCopy = PStnodCopy(pWork->m_pAlloc, pStnod);
+		WriteSExpression(&strbufCopy, pStnodCopy, sewk, grfsew);
+
+		CleanupStnodeRecursive(pWork->m_pAlloc, pStnodCopy);
+		pWork->m_pAlloc->MOE_DELETE(pStnodCopy);
+
+		if ((CBFree(strbufCopy) > 0) & (ipStnod != cEntry))
+		{
+			*strbufCopy.m_pChzAppend++ = ' ';
+		}
+#endif
+	}
+
+	EnsureTerminated(&strbuf, '\0');
+
+#if TEST_STNODE_COPY
+	EnsureTerminated(&strbufCopy, '\0');
+	MOE_ASSERT(FAreChzEqual(strbuf.m_pChzBegin, strbufCopy.m_pChzBegin), "AST copy failed to produce an identical copy.");
+#endif
+}
+
+
 
 void PushSymbolTable(ParseContext * pParctx, SymbolTable * pSymtab)
 {
@@ -1536,6 +1597,61 @@ T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, Lexer * pLex, const LexSpan & le
 	return pStnod;
 }
 
+template <typename T>
+T * PStnodAllocCopy(Moe::Alloc * pAlloc, T * pT)
+{
+	T * pStnod = StexAlloc<T>::PStnodAlloc(pAlloc, pT->m_park, pT->m_lexsp);
+	
+	auto apStnodChildNew = pStnod->m_apStnodChild;
+	*pStnod = *pT;
+	pStnod->m_apStnodChild = apStnodChildNew;
+	
+	return pStnod;
+}
+
+STNode * PStnodCopy(Alloc * pAlloc, STNode * pStnodSrc, Moe::CHash<STNode *, STNode *> * pmpPStnodSrcPStnodDst)
+{
+	STNode * pStnodDst;
+	switch (StexkFromPark(pStnodSrc->m_park))
+	{
+	case STEXK_For:			pStnodDst = PStnodAllocCopy<STFor>(pAlloc, (STFor*)pStnodSrc);			break;
+	case STEXK_Decl:		pStnodDst = PStnodAllocCopy<STDecl>(pAlloc, (STDecl*)pStnodSrc);		break;
+	case STEXK_Enum:		pStnodDst = PStnodAllocCopy<STEnum>(pAlloc, (STEnum*)pStnodSrc);		break;
+	case STEXK_Struct:		pStnodDst = PStnodAllocCopy<STStruct>(pAlloc, (STStruct*)pStnodSrc);	break;
+	case STEXK_Proc:		pStnodDst = PStnodAllocCopy<STProc>(pAlloc, (STProc*)pStnodSrc);		break;
+	case STEXK_Value:		pStnodDst = PStnodAllocCopy<STValue>(pAlloc, (STValue*)pStnodSrc);		break;
+	case STEXK_Operator:	pStnodDst = PStnodAllocCopy<STOperator>(pAlloc, (STOperator*)pStnodSrc); break;
+
+	default:				MOE_ASSERT(false, "unhandled stexk"); // fallthough;
+	case STEXK_Node:		pStnodDst = PStnodAllocCopy<STNode>(pAlloc, pStnodSrc);		break;
+	}
+
+	// allocate space for child nodes (this copies the old pointers, but we'll just overwrite them)
+	if (pStnodSrc->m_grfstnod.FIsSet(FSTNOD_ChildArrayOnHeap))
+	{
+		pStnodDst->CopyChildArray(pAlloc, pStnodSrc->m_apStnodChild, pStnodSrc->m_cpStnodChild); 
+	}
+
+	int cpStnodChild = pStnodSrc->CPStnodChild();
+	for (size_t ipStnod = 0; ipStnod < cpStnodChild; ++ipStnod)
+	{
+		STNode * pStnodChildSrc = pStnodSrc->m_apStnodChild[ipStnod];
+		STNode * pStnodChildCopy = nullptr;
+		if (pStnodChildSrc)
+		{
+			pStnodChildCopy = PStnodCopy(pAlloc, pStnodChildSrc, pmpPStnodSrcPStnodDst);
+		}
+		pStnodDst->m_apStnodChild[ipStnod] = pStnodChildCopy;
+	}
+
+	if (pmpPStnodSrcPStnodDst)
+	{
+		(void)pmpPStnodSrcPStnodDst->InresEnsureKeyAndValue(pStnodSrc, pStnodDst);
+	}
+
+	return pStnodDst;
+}
+
 STNode::~STNode()
 {
 	MOE_ASSERT(m_cpStnodChild == 0 && m_apStnodChild == nullptr, "failed to cleanup STNode");
@@ -1893,7 +2009,15 @@ STNode * PStnodParseArrayDecl(ParseContext * pParctx, Lexer * pLex, GRFPDECL grf
 
 STNode * PStnodParseTypeSpecifier(ParseContext * pParctx, Lexer * pLex, const char * pChzErrorContext, GRFPDECL grfpdecl)
 {
-	STNode * pStnod = PStvalParseIdentifier(pParctx, pLex);
+	STNode * pStnod = nullptr;
+	if (pLex->m_tok == TOK_Identifier)
+	{
+		if (!FIsReservedWord(pLex->m_istr))
+		{
+			pStnod = PStvalParseIdentifier(pParctx, pLex);
+		}
+	}
+
 	if (pStnod)
 	{
 		if (FTryConsumeToken(pLex, TOK('(')))

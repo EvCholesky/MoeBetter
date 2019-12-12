@@ -1,4 +1,4 @@
-/* Copyright (C) 2017 Evan Christensen
+﻿/* Copyright (C) 2017 Evan Christensen
 |
 | Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated 
 | documentation files (the "Software"), to deal in the Software without restriction, including without limitation the 
@@ -86,12 +86,7 @@ void ClearUnitTestStrings()
 
 
 extern bool FTestLexing();
-#if MOEB_LATER
-extern bool FTestSigned65();
 extern bool FTestUnicode();
-extern bool FTestUniqueNames(Alloc * pAlloc);
-#endif
-
 
 static const int s_cErridOptionMax = 4; //max error ids per option
 
@@ -1374,6 +1369,164 @@ bool FTestBlockList(Alloc * pAlloc)
 	return true;
 }
 
+#define MOE_ASSERT_EQUALS(LHS, RHS) AssertEquals(LHS, RHS, __FILE__, __LINE__)
+
+void AssertEquals(const BigInt & bintLhs, const BigInt & bintRhs, const char * pChzFile, u32 nLine)
+{
+	MOE_ASSERT(FAreEqual(bintLhs, bintRhs),
+		"%s (%d): expected %s%llu but calculated %s%llu",
+		pChzFile, nLine,
+		(bintLhs.m_fIsNegative) ? "-" : "", bintLhs.m_nAbs,
+		(bintRhs.m_fIsNegative) ? "-" : "", bintRhs.m_nAbs);
+}
+
+bool FTestSigned65()
+{
+	/* Failing on x64, shifting by 64 bits is undefined behavior
+	s64 x = 0xFFFFFFFFFFFFFFFF << 64;
+
+	s64 nL = -400000000;
+	s64 nR = 0;
+	s64 shift = nL >> nR;
+	MOE_ASSERT_EQUALS(BintShiftRight(BintFromInt(nL), BintFromInt(nR)), BintFromInt(nL >> nR));
+	*/
+
+	s64 s_aNSigned[] = { 0, 1, -1, 400000000, -400000000 }; //, LLONG_MAX, LLONG_MIN + 1
+
+	// NOTE: This does not replicate s64 overflow exactly, Signed65 structs overflow like a u64 but maintaining sign 
+	// values. It's not clear that this is the wrong behavior for literals... it should probably throw an overflow
+	// error (?)
+
+	MOE_ASSERT_EQUALS(BintShiftRight(BintFromInt(-1), BintFromInt(1)), BintFromInt(-1 >> 1));
+	MOE_ASSERT_EQUALS(BintSub(BintFromInt(0), BintFromInt(LLONG_MIN+1)), BintFromInt(LLONG_MAX));
+
+	for (int iNLhs = 0; iNLhs < MOE_DIM(s_aNSigned); ++iNLhs)
+	{
+		for (int iNRhs = 0; iNRhs < MOE_DIM(s_aNSigned); ++iNRhs)
+		{
+			s64 nLhs = s_aNSigned[iNLhs];
+			s64 nRhs = s_aNSigned[iNRhs];
+			MOE_ASSERT_EQUALS(BintAdd(BintFromInt(nLhs), BintFromInt(nRhs)), BintFromInt(nLhs + nRhs));
+			MOE_ASSERT_EQUALS(BintSub(BintFromInt(nLhs), BintFromInt(nRhs)), BintFromInt(nLhs - nRhs));
+			MOE_ASSERT_EQUALS(BintMul(BintFromInt(nLhs), BintFromInt(nRhs)), BintFromInt(nLhs * nRhs));
+
+			MOE_ASSERT_EQUALS(BintBitwiseOr(BintFromInt(nLhs), BintFromInt(nRhs)), BintFromInt(nLhs | nRhs));
+			MOE_ASSERT_EQUALS(BintBitwiseAnd(BintFromInt(nLhs), BintFromInt(nRhs)), BintFromInt(nLhs & nRhs));
+
+			if (nRhs >= 0)
+			{
+				// shifting by more than the number of bits in a type results in undefined behavior
+				auto nRhsClamp = (nRhs > 31) ? 31 : nRhs;
+			
+				MOE_ASSERT_EQUALS(BintShiftRight(BintFromInt(nLhs), BintFromInt(nRhsClamp)), BintFromInt(nLhs >> nRhsClamp));
+				MOE_ASSERT_EQUALS(BintShiftLeft(BintFromInt(nLhs), BintFromInt(nRhsClamp)), BintFromInt(nLhs << nRhsClamp));
+			}
+
+			if (nRhs != 0)
+			{
+				MOE_ASSERT_EQUALS(BintDiv(BintFromInt(nLhs), BintFromInt(nRhs)), BintFromInt(nLhs / nRhs));
+				MOE_ASSERT_EQUALS(BintRemainder(BintFromInt(nLhs), BintFromInt(nRhs)), BintFromInt(nLhs % nRhs));
+			}
+		}
+	}
+
+	
+	u64 s_aNUnsigned[] = { 0, 1, 400000000, ULLONG_MAX };
+
+	for (int iNLhs = 0; iNLhs < MOE_DIM(s_aNUnsigned); ++iNLhs)
+	{
+		for (int iNRhs = 0; iNRhs < MOE_DIM(s_aNUnsigned); ++iNRhs)
+		{
+			u64 nLhs = s_aNUnsigned[iNLhs];
+			u64 nRhs = s_aNUnsigned[iNRhs];
+			MOE_ASSERT_EQUALS(BintAdd(BintFromUint(nLhs), BintFromUint(nRhs)), BintFromUint(nLhs + nRhs));
+
+			MOE_ASSERT_EQUALS(BintBitwiseOr(BintFromUint(nLhs), BintFromUint(nRhs)), BintFromUint(nLhs | nRhs));
+			MOE_ASSERT_EQUALS(BintBitwiseAnd(BintFromUint(nLhs), BintFromUint(nRhs)), BintFromUint(nLhs & nRhs));
+
+			// shifting by more than the number of bits in a type results in undefined behavior
+			auto nRhsClamp = (nRhs > 31) ? 31 : nRhs;
+		
+			MOE_ASSERT_EQUALS(BintShiftRight(BintFromUint(nLhs), BintFromUint(nRhsClamp)), BintFromUint(nLhs >> nRhsClamp));
+			MOE_ASSERT_EQUALS(BintShiftLeft(BintFromUint(nLhs), BintFromUint(nRhsClamp)), BintFromUint(nLhs << nRhsClamp));
+
+			// does not replicate unsigned underflow, because the sign bit is tracked seperately
+			if (nLhs >= nRhs)
+			{
+				MOE_ASSERT_EQUALS(BintSub(BintFromUint(nLhs), BintFromUint(nRhs)), BintFromUint(nLhs - nRhs));
+			}
+
+			MOE_ASSERT_EQUALS(BintMul(BintFromUint(nLhs), BintFromUint(nRhs)), BintFromUint(nLhs * nRhs));
+			if (nRhs != 0)
+			{
+				MOE_ASSERT_EQUALS(BintDiv(BintFromUint(nLhs), BintFromUint(nRhs)), BintFromUint(nLhs / nRhs));
+				MOE_ASSERT_EQUALS(BintRemainder(BintFromUint(nLhs), BintFromUint(nRhs)), BintFromUint(nLhs % nRhs));
+			}
+		}
+	}
+
+	MOE_ASSERT_EQUALS(BintAdd(BintFromUint(ULLONG_MAX, true), BintFromUint(100)), BintFromUint(ULLONG_MAX - 100, true));
+	MOE_ASSERT_EQUALS(BintAdd(BintFromUint(ULLONG_MAX, true), BintFromUint(ULLONG_MAX)), BintFromUint(0));
+	MOE_ASSERT_EQUALS(BintSub(BintFromUint(100), BintFromUint(ULLONG_MAX)), BintFromUint(ULLONG_MAX - 100, true));
+
+	return true;
+}
+
+bool FTestUniqueNames(Alloc * pAlloc)
+{
+#ifdef MOE_TRACK_ALLOCATION
+	u8 aBAltrac[1024 * 100];
+	Alloc allocAltrac(aBAltrac, sizeof(aBAltrac));
+
+	AllocTracker * pAltrac = PAltracCreate(&allocAltrac);
+	pAlloc->SetAltrac(pAltrac);
+#endif
+
+	size_t cbFreePrev = pAlloc->CB();
+	{
+		const char * pChzIn;
+		char aCh[128];
+		UniqueNameSet unset(pAlloc, Moe::BK_Workspace, 0);
+
+		pChzIn = "funcName";
+		GenerateUniqueName(&unset, pChzIn, aCh, MOE_DIM(aCh));
+		MOE_ASSERT(FAreChzEqual(pChzIn, aCh), "bad unique name");
+
+		GenerateUniqueName(&unset, pChzIn, aCh, MOE_DIM(aCh));
+		MOE_ASSERT(FAreChzEqual("funcName1", aCh), "bad unique name");
+
+		pChzIn = "funcName20";
+		GenerateUniqueName(&unset, pChzIn, aCh, MOE_DIM(aCh));
+		MOE_ASSERT(FAreChzEqual("funcName20", aCh), "bad unique name");
+
+		pChzIn = "234";
+		GenerateUniqueName(&unset, pChzIn, aCh, MOE_DIM(aCh));
+		MOE_ASSERT(FAreChzEqual("234", aCh), "bad unique name");
+
+		pChzIn = "test6000";
+		GenerateUniqueName(&unset, pChzIn, aCh, MOE_DIM(aCh));
+		MOE_ASSERT(FAreChzEqual("test6000", aCh), "bad unique name");
+
+		pChzIn = "test6000";
+		GenerateUniqueName(&unset, pChzIn, aCh, MOE_DIM(aCh));
+		MOE_ASSERT(FAreChzEqual("test6001", aCh), "bad unique name");
+	}
+
+	size_t cbFreePost = pAlloc->CB();
+#ifdef MOE_TRACK_ALLOCATION
+	if (cbFreePrev != cbFreePost)
+	{
+		pAlloc->PrintAllocations();
+	}
+
+	DeleteAltrac(&allocAltrac, pAltrac);
+	pAlloc->SetAltrac(nullptr);
+#endif
+	MOE_ASSERT(cbFreePrev == cbFreePost, "memory leak testing unique names");
+
+	return true;
+}
+
 bool FRunBuiltinTest(Moe::InString istrName, Alloc * pAlloc)
 {
 	bool fReturn;
@@ -1381,7 +1534,6 @@ bool FRunBuiltinTest(Moe::InString istrName, Alloc * pAlloc)
 	{
 		fReturn = FTestLexing();
 	}
-	/*
 	else if (istrName == UTest::g_istrSigned65)
 	{
 		fReturn = FTestSigned65();
@@ -1398,7 +1550,6 @@ bool FRunBuiltinTest(Moe::InString istrName, Alloc * pAlloc)
 	{
 		fReturn = FTestBlockList(pAlloc);
 	}
-	*/
 	else
 	{
 		printf("ERROR: Unknown built in test %s\n", istrName.m_pChz);

@@ -37,9 +37,9 @@
 // Built in tests
 
 test builtin lexer
-//test builtin signed65
-//test builtin unicode
-//test builtin uniqueNames
+test builtin signed65
+test builtin unicode
+test builtin uniqueNames
 //test builtin blockList
 
 // Operator precedence:
@@ -104,7 +104,7 @@ test DeclareHex
 
 test DeclareAssignString
 	input "v : ?type = \"hello world\""
-	parse "(decl, .v, ?ptype, \"hello world\")"
+	parse "(decl, v, ?ptype, \"hello world\")"
 	//typecheck "(?tctype v (?tctype (?tcinit u8)) Literal:String)"
 	{
 		?type(&const u8) + ?ptype("(refDecl, (const, u8))") + ?tctype("&const.u8") + ?tcinit(const.u8),

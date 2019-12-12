@@ -64,7 +64,7 @@ enum TFN
 	TFN_Nil = -1,
 };
 
-// BB - Messy dependency, defined in EwcString.cpp
+// BB - Messy dependency, defined in MoeString.cpp
 u32 HvFromPBFVN(const void * pV, size_t cB);
 
 namespace Moe

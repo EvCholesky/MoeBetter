@@ -1,5 +1,6 @@
-#include "MoeTypes.h" 
+﻿#include "MoeTypes.h" 
 
+#include <algorithm>
 #include <cstdarg>
 #include <stdio.h>
 #include <string.h>
@@ -673,4 +674,522 @@ void DoNothing()
 	{ ; }
 
 } // namespace EWC
+
+
+namespace Puny
+{
+	static const u32 s_nBase = 36;
+	static const int s_nTMin = 1;
+	static const int s_nTMax = 26;
+	static const int s_nSkew = 38;
+	static const int s_nDamp = 700;
+	static const u32 s_nBiasInitial = 72;
+	static const char s_chDelimiter = '_';
+	static const int s_cWrapInitial = 0x80;
+	static const u32 s_nU32Max = 0xFFFFFFFF;
+
+	ptrdiff_t NAdaptBias(ptrdiff_t nDelta, ptrdiff_t cPoint, bool fFirstTime)
+	{
+		if (fFirstTime) nDelta = nDelta / s_nDamp;
+		else			nDelta = nDelta / 2;
+
+		nDelta += nDelta / cPoint;
+		int nK = 0;
+
+		while (nDelta > ((s_nBase - s_nTMin) * s_nTMax) / 2)
+		{
+			nDelta = nDelta / (s_nBase - s_nTMin);
+			nK += s_nBase;
+		}
+
+		return nK + (((s_nBase - s_nTMin + 1) * nDelta) / (nDelta + s_nSkew));
+	}
+
+u32 NReadCodepoint(const char ** ppChz, bool * pFIsValid)
+{
+	const char * pChz = *ppChz;
+	u32 ch = (u32)*pChz;
+	u32 ch1, ch2, ch3;
+	if ((0xf8 & ch) == 0xf0)		
+	{ 
+		*pFIsValid = ((pChz[1] & 0xC0) == 0x80) & ((pChz[2] & 0xC0) == 0x80) & ((pChz[3] & 0xC0) == 0x80);
+		*ppChz += 4; 
+		ch = (ch & 0x07);		ch1 = u32(pChz[1]) & 0x3F;			ch2 = u32(pChz[2]) & 0x3F;		ch3 = u32(pChz[3]) & 0x3F;
+		return (ch << 18) | (ch1 << 12) | (ch2 << 6) | ch3;
+	}
+	else if ((0xf0 & ch) == 0xe0)
+	{ 
+		*pFIsValid = ((pChz[1] & 0xC0) == 0x80) & ((pChz[2] & 0xC0) == 0x80);
+		*ppChz += 3; 
+		ch = (ch & 0x0F);		ch1 = u32(pChz[1]) & 0x3F;			ch2 = u32(pChz[2]) & 0x3F;
+		return (ch << 12) | (ch1 << 6) | ch2;
+	}
+	else if ((0xE0 & ch) == 0xC0)
+	{ 
+		*pFIsValid = (pChz[1] & 0xC0) == 0x80;
+		*ppChz += 2; 
+		ch = (ch & 0x1F);		ch1 = u8(pChz[1]) & 0x3F;
+		return (ch << 6) | ch1;
+	}
+	else
+	{
+		*pFIsValid = (pChz[0] & 0x80) == 0;
+		*ppChz += 1;
+		return ch;
+	}
+}
+
+bool FIsValidUtf8(const char * pChz)
+{
+	bool fIsValid;
+	while (*pChz != '\0')
+	{
+		(void) NReadCodepoint(&pChz, &fIsValid);
+		if (!fIsValid)
+			return false;
+	}
+
+	return true;
+}
+
+bool FTryConvertUtf8ToUcs4(const char * pChzIn, char32_t * pWchzOut, char32_t * pWchOutMax)
+{
+	// BB - not checking for nullptrs, or zero character destination string
+
+	bool fIsValid;
+	const char * pChz = pChzIn;
+
+	while (*pChz != '\0' && pWchzOut != pWchOutMax)
+	{
+		*pWchzOut++ = NReadCodepoint(&pChz, &fIsValid);
+		if (!fIsValid)
+			return false;
+	}
+
+	if (pWchzOut == pWchOutMax)
+	{
+		*(pWchOutMax-1) = 0;
+		return false;
+	}
+	*pWchzOut = 0;
+	return true;
+}
+
+bool FTryConvertUcs4ToUtf8(const u32 * pWchzIn, u8 * pChzOut, u8 * pChzOutMax)
+{
+	// BB - not checking for nullptrs, or zero character destination string
+
+	for (const u32 * pWchz = pWchzIn; *pWchz != 0; ++pWchz)
+	{
+		u32 wch = *pWchz;
+		auto cBOutLeft = (pChzOutMax - pChzOut);
+		if (wch < 0x80)
+		{
+			if (cBOutLeft < 1) break;
+			*pChzOut++ = (u8)wch;
+		}
+		else if (wch < 0x7FF)
+		{
+			if (cBOutLeft < 2) break;
+			*pChzOut++ = u8((wch >> 6) | 0xC0);
+			*pChzOut++ = u8(wch & 0x3F) | 0x80;
+		}
+		else if (wch < 0xFFFF)
+		{
+			if (cBOutLeft < 3) break;
+			*pChzOut++ = u8(wch >> 12) | 0xE0;
+			*pChzOut++ = (u8(wch >> 6) & 0x3F) | 0x80;
+			*pChzOut++ = u8(wch & 0x3F) | 0x80;
+		}
+		else if (wch < 0x10FFFF)
+		{
+			if (cBOutLeft < 4) break;
+			*pChzOut++ = u8((wch >> 18) | 0xF0); 
+			*pChzOut++ = (u8(wch >> 12) & 0x3F) | 0x80;
+			*pChzOut++ = (u8(wch >> 6) & 0x3F) | 0x80;
+			*pChzOut++ = u8(wch & 0x3F) | 0x80;
+		}
+		else
+			return false;
+
+	}
+
+	if (pChzOut == pChzOutMax)
+	{
+		*(pChzOutMax-1) = '\0';
+		return false;
+	}
+	*pChzOut = '\0';
+	return true;
+}
+
+enum PUNYRET
+{
+	PUNYRET_Success,
+	PUNYRET_BadInput,			// input is malformed utf8
+	PUNYRET_OutputTooLong,
+	PUNYRET_Overflow,			// Input needs wider integers to process
+};
+
+static inline char ChEncodeDigit(u32 d)
+{
+  //  0..25 map to ASCII a..z or A..Z,   26..35 map to ASCII 0..9 
+  return d + 22 + 75 * (d < 26);
+}
+
+
+PUNYRET PunyretEncode(const char * pChzInput, char * pChzOut, size_t cBMaxOut)
+{
+	const char * pChz = pChzInput;
+	size_t cBInput = Moe::CBChz(pChzInput);
+
+	auto aNWork = (int *)alloca(cBInput * sizeof(int));		// UCS4 version of the input string
+	auto aNExtSorted = (int*)alloca(cBInput * sizeof(int));	// sorted copy of all extended chars
+
+	// copy and count the basic codepoints
+	int * pN = aNWork;
+	int * pNExt = aNExtSorted;
+
+	char * pChzDest = pChzOut;
+	char * pChzDestMax = &pChzOut[cBMaxOut];
+
+	u32 nCextMin = 0xFFFFFFFF;
+	bool fIsValid;
+	bool fFoundDelimiter = false;
+	while (*pChz != '\0')
+	{
+		fFoundDelimiter |= *pChz == s_chDelimiter;
+		u32 nCodepoint = NReadCodepoint(&pChz, &fIsValid);
+		*pN++ = nCodepoint;
+
+		if (nCodepoint > 0x80)
+		{
+			if (nCextMin > nCodepoint)
+				nCextMin = nCodepoint;
+			*pNExt++ = nCodepoint;
+		}
+		else
+		{
+			*pChzDest++ = (u8)nCodepoint;
+			if (pChzDest == pChzDestMax)
+			{
+				pChzOut[cBMaxOut-1] = '\0';
+				return PUNYRET_OutputTooLong;
+			}
+		}
+	}
+	ptrdiff_t cBasic = pChzDest - pChzOut;
+	ptrdiff_t cHandled = pChzDest - pChzOut;
+
+	// BB - would like to change this to only add a delimiter when we have extended characters (or another delimiter)
+	if ((pNExt - aNExtSorted) != 0 || fFoundDelimiter)
+	{
+		*pChzDest++ = s_chDelimiter;
+	}
+
+	if (pNExt == aNExtSorted)
+	{
+		*pChzDest++ = '\0';
+		return PUNYRET_Success;
+	}
+
+	std::sort(aNExtSorted, pNExt);
+
+	ptrdiff_t nDelta = 0;
+	ptrdiff_t cWrap = s_cWrapInitial;
+	ptrdiff_t nBias = s_nBiasInitial;
+
+	int * pNWorkMax = pN;
+	ptrdiff_t cCodepoint = pNWorkMax - aNWork;
+
+	int iSorted = 0;
+	while (cHandled < cCodepoint)
+	{
+		int nM = aNExtSorted[iSorted++];
+		while (aNExtSorted[iSorted] == nM)
+			++iSorted;
+		nDelta += (nM - cWrap) * (cHandled + 1);
+
+		cWrap = nM;
+		for (int * pN = aNWork; pN != pNWorkMax; ++pN)
+		{
+			int nC = *pN;
+			if (nC < cWrap)
+			{
+				++nDelta;
+				if(nDelta == 0)
+					return PUNYRET_Overflow;
+			}
+			else if (nC == cWrap)
+			{
+				ptrdiff_t nQ = nDelta;
+				for (int nK = s_nBase; 1; nK += s_nBase)
+				{
+					int t = Moe::moeMax(Moe::moeMin(int(nK - nBias), s_nTMax), s_nTMin);
+					if (nQ < t)
+						break;
+
+					*pChzDest++ = ChEncodeDigit(t + (nQ - t) % (s_nBase - t));
+					nQ = (nQ - t) / (s_nBase - t);
+				}
+				
+				*pChzDest++ = ChEncodeDigit(u32(nQ));
+		        nBias = NAdaptBias(nDelta, cHandled + 1, cHandled == cBasic);
+				nDelta = 0;
+				++cHandled;
+			}
+		}
+		++nDelta;
+		++cWrap;
+	}
+
+	*pChzDest = '\0';
+	return PUNYRET_Success;
+}
+
+
+
+// NDecodeDigit(cp) returns the numeric value of a basic code point (for use in representing integers) 
+//  in the range 0 to base-1, or base if cp does not represent a value.
+
+static u32 NDecodeDigit(u32 codepoint)
+{
+	if (codepoint - 48 < 10)	return codepoint - 22;
+	if (codepoint - 65 < 26)	return codepoint - 65;
+	if (codepoint - 97 < 26)	return codepoint - 97;
+	return s_nBase;
+}
+
+PUNYRET PunyretDecode(const char * pChzInput, char * pChzOut, size_t cBOutMax)
+{
+	const char * pChzDelimiter = nullptr;
+	const char * pChz = pChzInput;
+
+	 // find the last delimiter
+	while (*pChz != '\0')
+	{
+		if (*pChz == s_chDelimiter)
+			pChzDelimiter = pChz;
+		++pChz;
+	}
+	const char * pChzInputMax = pChz;
+
+	size_t cBInput = (pChz - pChzInput) + 1;
+	u32 * aNOutput = (u32 *)alloca(sizeof(u32) * cBInput);
+	u32 * pNOutput = aNOutput;
+	//if (cBOutMax <= cBInput)
+	//	return PUNYRET_OutputTooLong;
+
+	pChz = pChzInput;
+
+	bool fAllBasic = pChzDelimiter == nullptr;
+	if (fAllBasic)
+	{
+		pChzDelimiter = pChzInputMax;
+	}
+
+	while (pChz != pChzDelimiter)
+	{
+		unsigned char ch = *pChz;
+		if (ch >= 0x80)
+			return PUNYRET_BadInput;
+		*pNOutput++ = *pChz++;
+	}
+
+	if (!fAllBasic)	// skip the delimiter
+		++pChz;
+
+	ptrdiff_t cWrap = s_cWrapInitial; // aka 'n'
+	u32 iPrev;
+	u32 iN = 0;
+	size_t nBias = s_nBiasInitial;
+	u32 nWeight;
+	u32 nK;
+	u32 t;
+
+	size_t cNOut = pNOutput - aNOutput;
+	for ( ; pChz != pChzInputMax; ++cNOut)
+	{
+	    // Decode a generalized variable-length integer into delta, which gets added to i.  The overflow checking is 
+		//  easier if we increase i as we go, then subtract off its starting value at the end to obtain delta.
+		iPrev = iN;
+		nWeight = 1;
+		for (nK = s_nBase; ; nK += s_nBase)
+		{
+			if (pChz == pChzInputMax)
+				return PUNYRET_BadInput;
+			u32 nDigit = NDecodeDigit(*pChz++);
+
+			if (nDigit >= s_nBase)
+				return PUNYRET_BadInput;
+			if (nDigit > (s_nU32Max  -1) / nWeight) 
+				return PUNYRET_Overflow;
+			iN += nDigit * nWeight;
+
+			if (nK <= nBias)				t = s_nTMin;
+			else if (nK >= nBias + s_nTMax) t = s_nTMax;
+			else							t = u32(nK - nBias);
+
+			if (nDigit < t)
+				break;
+
+			if (nWeight > s_nU32Max  / (s_nBase - t)) 
+				return PUNYRET_Overflow;
+			nWeight *= (s_nBase - t);
+		}
+
+	    nBias = NAdaptBias(iN - iPrev, cNOut + 1, iPrev == 0);
+
+	    // iN was supposed to wrap around from out+1 to 0, incrementing n each time, so we'll fix that now:
+
+		ptrdiff_t dWrap = iN / (cNOut + 1);
+	    if (dWrap > s_nU32Max  - cWrap) 
+			return PUNYRET_Overflow;
+	    cWrap += dWrap;
+	    iN %= (cNOut + 1);
+
+	    // Insert n at position i of the output:
+
+	    if (cNOut >= cBOutMax) 
+			return PUNYRET_OutputTooLong;
+	    memmove(aNOutput + iN + 1, aNOutput + iN, (cNOut - iN) * sizeof(aNOutput[0]));
+		aNOutput[iN++] = u32(cWrap);
+	}
+
+	aNOutput[cNOut] = 0;
+	if (FTryConvertUcs4ToUtf8(aNOutput, (u8 *)pChzOut, (u8 *)&pChzOut[cBOutMax]))
+		return PUNYRET_Success;
+	return PUNYRET_BadInput;
+}
+
+} // namespace Puny
+
+int NCmpWchz(const char32_t * pWchzA, const char32_t * pWchzB)
+{
+	if ((pWchzA == nullptr) | (pWchzB == nullptr))
+	{
+		if (pWchzA == pWchzB)
+			return 0;
+		
+		return (pWchzA == nullptr) ? -1 : 1;
+	}
+
+	while ((*pWchzA != '\0') | (*pWchzB != '\0'))
+	{
+		auto chA = *pWchzA;
+		auto chB = *pWchzB;
+		if (chA < chB)
+			return -1;
+		else if (chA > chB)
+			return 1;
+
+		++pWchzA;
+		++pWchzB;
+	}
+
+	return 0;
+}
+
+bool FAreWchzEqual(const char32_t * pWchzA, const char32_t * pWchzB)
+{
+	return NCmpWchz(pWchzA, pWchzB) == 0;
+}
+
+void TestUtf8()
+{
+	char aCh[256];
+
+	const char * pChz;
+	const char * pChzExpected;
+	Moe::StringBuffer strbuf;
+
+	pChz = u8"いろはに";
+	pChzExpected = u8"いろは";
+	MOE_ASSERT(Moe::CBChz(pChz) == 13, "bad byte count");
+	MOE_ASSERT(Moe::CCodepoint(pChz) == 4, "bad codepoint count");
+
+	strbuf = Moe::StringBuffer(aCh, 13);
+	AppendChz(&strbuf, pChz);
+	MOE_ASSERT(Moe::FAreChzEqual(strbuf.m_pChzBegin, pChz), "bad utf8 copy");
+
+	strbuf = Moe::StringBuffer(aCh, 11);
+	AppendChz(&strbuf, pChz);
+	MOE_ASSERT(Moe::FAreChzEqual(strbuf.m_pChzBegin, pChzExpected), "bad utf8 copy");
+
+	strbuf = Moe::StringBuffer(aCh, 11);
+	FormatChz(&strbuf, "%s", pChz);
+	MOE_ASSERT(Moe::FAreChzEqual(strbuf.m_pChzBegin, pChzExpected), "bad utf8 copy");
+
+	pChz = u8"ößöß";
+	pChzExpected = u8"ößö";
+	MOE_ASSERT(Moe::CBChz(pChz) == 9, "bad byte count");
+	MOE_ASSERT(Moe::CCodepoint(pChz) == 4, "bad codepoint count");
+
+	strbuf = Moe::StringBuffer(aCh, 7);
+	AppendChz(&strbuf, pChz);
+	MOE_ASSERT(Moe::FAreChzEqual(strbuf.m_pChzBegin, pChzExpected), "bad utf8 copy");
+}
+
+bool FTestUnicode()
+{
+	TestUtf8();
+
+	struct STestStrings // testr
+	{
+		const char *		m_pChzUtf8;
+		const char32_t *	m_pWchzTest;
+	};
+
+	#define MAKE_TESTR(str) { u8##str, U##str }
+	STestStrings s_aTestr[] = 
+	{
+		MAKE_TESTR("ascii"),
+		MAKE_TESTR("mixedいろはにほ"),
+		MAKE_TESTR("いろはにほmixed"),
+		MAKE_TESTR("いmろiはxにeほd"),
+		MAKE_TESTR("_delimiter"),
+		MAKE_TESTR("delimiter_"),
+		MAKE_TESTR("d_e_l_i_m_i_t_e_r"),
+		MAKE_TESTR("Quizdeltagerne spiste jordbær med fløde, mens cirkusklovnen Wolther spillede på xylofon."), // danis
+		MAKE_TESTR("Le cœur déçu mais l'âme plutôt naïve, Louÿs rêva de crapaüter en canoë au delà des îles, près du mälström où brûlent les novæ."), // French
+		MAKE_TESTR("D'fhuascail Íosa, Úrmhac na hÓighe Beannaithe, pór Éava agus Ádhaimh"),	// Gaelic
+		MAKE_TESTR("Falsches Üben von Xylophonmusik quält jeden größeren Zwerg"),	// German
+		MAKE_TESTR("Γαζέες καὶ μυρτιὲς δὲν θὰ βρῶ πιὰ στὸ χρυσαφὶ ξέφωτο"),		// Greek
+		MAKE_TESTR("Kæmi ný öxi hér ykist þjófum nú bæði víl og ádrepa"),		// Icelandic
+		MAKE_TESTR("いろはにほへとちりぬるをわかよたれそつねならむうゐのおくやまけふこえてあさきゆめみしゑひもせす"),	// Japanese
+		MAKE_TESTR("? דג סקרן שט בים מאוכזב ולפתע מצא לו חברה איך הקליטה"), // hebrew
+		MAKE_TESTR("Árvíztűrő tükörfúrógép"), // Hungarian
+		MAKE_TESTR("В чащах юга жил бы цитрус? Да, но фальшивый экземпляр!"),		// Russian
+		MAKE_TESTR("El pingüino Wenceslao hizo kilómetros bajo exhaustiva lluvia y frío, añoraba a su querido cachorro."),		// Spanish
+		MAKE_TESTR("Pijamalı hasta, yağız şoföre çabucak güvendi."),		// Turkish
+		MAKE_TESTR("😁😄😔✂✋🚀⏰⏳"),
+		MAKE_TESTR("😁MiXeD-CaSe⏳"),
+	};
+	#undef MAKE_TESTR
+
+	u32 aNScratch[1024];
+	u8 aChzScratch[1024];
+	char aChzPuny[1024];
+
+	for (int ipChz = 0; ipChz != MOE_DIM(s_aTestr); ++ipChz)
+	{
+		MOE_ASSERT(Puny::FIsValidUtf8(s_aTestr[ipChz].m_pChzUtf8), "bad input string");
+
+		MOE_ASSERT(Puny::FTryConvertUtf8ToUcs4(s_aTestr[ipChz].m_pChzUtf8, (char32_t *)aNScratch, (char32_t*)MOE_PMAC(aNScratch)), "Failed converting to ucs4");
+		MOE_ASSERT(FAreWchzEqual(s_aTestr[ipChz].m_pWchzTest, (const char32_t *)aNScratch), "conversion error");
+
+		MOE_ASSERT(Puny::FTryConvertUcs4ToUtf8(aNScratch, aChzScratch, MOE_PMAC(aChzScratch)), "Failed converting to utf8");
+
+		MOE_ASSERT(Moe::FAreChzEqual((char*)aChzScratch, s_aTestr[ipChz].m_pChzUtf8), "conversion error");
+
+		auto punyret = Puny::PunyretEncode(s_aTestr[ipChz].m_pChzUtf8, (char *)aChzScratch, MOE_DIM(aChzScratch));
+		MOE_ASSERT(punyret == Puny::PUNYRET_Success, "bad punycode encode");
+
+		punyret = Puny::PunyretDecode((char *)aChzScratch, aChzPuny, MOE_DIM(aChzPuny));
+		MOE_ASSERT(punyret == Puny::PUNYRET_Success, "bad punycode decode");
+		MOE_ASSERT(Moe::FAreChzEqual((char*)aChzPuny, s_aTestr[ipChz].m_pChzUtf8), "punycode decode fail");
+
+	}
+	return true;
+}
 

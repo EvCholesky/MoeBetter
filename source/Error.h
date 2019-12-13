@@ -16,6 +16,8 @@
 #pragma once
 
 #include "MoeArray.h"
+#include <stdarg.h>
+
 namespace Moe
 {
 	struct Alloc;

@@ -3,4 +3,7 @@
 *.o
 *.db
 *.exe
+*.sqlite
 cmade/*
+out/*
+.vs/*

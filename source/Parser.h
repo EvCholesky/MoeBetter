@@ -396,18 +396,35 @@ struct STStruct : public STNode
 		MOE_DEBUG_BREAK(); \
 		 } } while(0)
 
+#if defined( _MSC_VER )
 #define AST_FVERIFY(PWORK, PSTNOD, PREDICATE, ... )\
 (\
   ( ( PREDICATE ) ? \
 	true :\
 	(\
 		Moe::AssertHandler( __FILE__, __LINE__, #PREDICATE, __VA_ARGS__ ),\
-		printf("compiling: %s:%llu\n", PSTNOD->m_lexsp.m_istrFilename.m_pChz, LexLookup(PWORK, PSTNOD->m_lexsp).m_iLine), \
+		printf("compiling: %s:" MOE_U64FMT "\n", PSTNOD->m_lexsp.m_istrFilename.m_pChz, LexLookup(PWORK, PSTNOD->m_lexsp).m_iLine), \
 		MOE_DEBUG_BREAK(), \
 		false\
 	)\
   )\
 )
+
+#else
+// use a goofy expression statement to play nice with clang
+#define AST_FVERIFY(PWORK, PSTNOD, PREDICATE, ... )\
+(\
+  ( ( PREDICATE ) ? \
+	true :\
+	({\
+		Moe::AssertHandler( __FILE__, __LINE__, #PREDICATE, __VA_ARGS__ );\
+		printf("compiling: %s:" MOE_S64FMT "\n", PSTNOD->m_lexsp.m_istrFilename.m_pChz, LexLookup(PWORK, PSTNOD->m_lexsp).m_iLine); \
+		MOE_DEBUG_BREAK(); \
+		false;\
+	})\
+  )\
+)
+#endif
 
 
 

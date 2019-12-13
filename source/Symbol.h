@@ -224,11 +224,13 @@ public:
 	TypeInfoProcedure *		PTinprocAllocate(Moe::InString istrName, size_t cParam, size_t cReturn);
 	TypeInfoStruct *		PTinstructAllocate(Moe::InString istrName, size_t cField, size_t cGenericParam);
 
+#if MOEB_LATER
 	template <typename T>
 	T *						PTinMakeUnique(T * pTin)
 								{ 
 									return (T *)m_pUntyper->PTinMakeUnique(pTin);
 								}
+#endif
 
 	void					AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo * pTin, GRFSYM grfsym = FSYM_None);
 	void					AddManagedTin(TypeInfo * pTin);
@@ -261,4 +263,6 @@ public:
 	u64									m_nVisitId;				// id to check if this table has been visited during collision check
 };
 
+
+SymbolTable * PSymtabNew(Moe::Alloc * pAlloc, SymbolTable * pSymtabParent, const Moe::InString & istrNamespace, TypeRegistry * pTyper, UniqueNameSet * pUnsetTin);
 SymbolTable * PSymtabNew(Moe::Alloc * pAlloc, SymbolTable * pSymtabParent, const Moe::InString & istrNamespace);

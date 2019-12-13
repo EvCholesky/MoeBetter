@@ -676,6 +676,10 @@ bool FTryWriteValueSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 					return false;
 #endif
 				} 
+			default:
+				MOE_ASSERT(false, "Unhandled literal kind %s", PChzFromLitk(pTinlit->m_litty.m_litk));
+				break;
+
 		}
 	}
 
@@ -1532,8 +1536,8 @@ void SymbolTable::AddBuiltInSymbols(Workspace * pWork)
 #else
 	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzInt, "s32");
 	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzUint, "u32");
-	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzSsize, "s32");
-	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzUsize, "u32");
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzSSize, "s32");
+	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzUSize, "u32");
 #endif
 
 	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzF32, 32, FNUM_IsSigned | FNUM_IsFloat);
@@ -2532,7 +2536,7 @@ void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> *
 
 			parypStnodArgList->Append(pStnodArg);
 
-			if ((pStnodArg == nullptr))
+			if (pStnodArg == nullptr)
 				break;
 		}
 

@@ -321,8 +321,8 @@ int main(int cpChzArg, const char * apChzArg[])
 		work.m_pAlloc->SetAltrac(pAltrac);
 #endif
 
-		int cRqres;
-		if (cRqres = CRqresServiceRequest(&comp, &work))
+		int cRqres = CRqresServiceRequest(&comp, &work);
+		if (cRqres)
 		{
 			char aCh[1024];
 			for (int iRqres = 0; iRqres < cRqres; ++iRqres)

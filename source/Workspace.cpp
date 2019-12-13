@@ -4,7 +4,6 @@
 #include "Symbol.h"
 #include "TypeInfo.h"
 #include "Workspace.h"
-#include "error.h"
 #include "stdio.h"
 #include <cstdarg>
 
@@ -92,7 +91,7 @@ void PrintErrorLine(Error * pError, const char * pChzPrefix, const LexSpan & lex
 	if (lexsp.FIsValid())
 	{
 		LexLookup lexlook(pErrman->m_pWork, lexsp);
-		printf("%s(%lld,%lld) %s ", lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint, pChzPrefix);
+		printf("%s(" MOE_S64FMT "," MOE_S64FMT") %s ", lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint, pChzPrefix);
 	}
 	else
 	{
@@ -180,7 +179,7 @@ void PrintGenmap(Workspace * pWork, GenericMap * pGenmap)
 	for (LexSpan * pLexsp = pGenmap->m_aryLexspSrc.A(); pLexsp != pGenmap->m_aryLexspSrc.PMac(); ++pLexsp)
 	{
 		LexLookup lexlook(pWork, *pLexsp);
-		printf("    at %s(%lld, %lld)\n", lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint);
+		printf("    at %s(" MOE_S64FMT "," MOE_S64FMT ")\n", lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint);
 	}
 }
 
@@ -210,7 +209,7 @@ void EmitWarning(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, con
 	if (lexsp.FIsValid())
 	{
 		LexLookup lexlook(pErrman->m_pWork, lexsp);
-		printf("%s(%lld,%lld) Warning: ", lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint);
+		printf("%s(" MOE_S64FMT "," MOE_S64FMT ") Warning: ", lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint);
 	}
 	else
 	{
@@ -515,7 +514,7 @@ void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
 		ConsoleColorAmbit ccolamb;
 		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0));
 
-		printf("%lld%s", iLine, s_pChzMargin);
+		printf(MOE_S64FMT "%s", iLine, s_pChzMargin);
 	}
 
 	size_t cB = textspan.m_pChzPost - textspan.m_pChzPre;

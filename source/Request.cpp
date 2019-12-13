@@ -115,7 +115,6 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 		BlockListEntry::CIterator iter(&pWork->m_blistEntry);
 		while (WorkspaceEntry * pEntry = iter.Next())
 		{
-			pEntry->m_pStnod;
 			InString istrParse = IstrSExpression(pEntry->m_pStnod, SEWK_Parse);
 			printf("     : %s\n", istrParse.m_pChz);
 
@@ -192,7 +191,7 @@ Job * PJobGet(Compilation * pComp)
 void FinishJob(Compilation * pComp, Job * pJob)
 {
     const s32 cJobUnfinished = --(pJob->m_cJobUnfinished);
-    MOE_ASSERT(cJobUnfinished >= 0);
+    MOE_ASSERT(cJobUnfinished >= 0, "job count underflow");
 }
 
 void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJob)

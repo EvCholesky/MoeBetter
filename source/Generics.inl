@@ -55,6 +55,7 @@ struct Anchor		// tag anc
 							case GENK_Nil:		MOE_ASSERT(FIsNull(), "should be null"); break;
 							case GENK_Value:	MOE_ASSERT(m_pTin == nullptr, "unexpected type anchor"); break;
 							case GENK_Type:		MOE_ASSERT(m_pStnodBaked == nullptr, "unexpected baked value"); break;
+							default:			MOE_ASSERT(false, "unhandled generic kind"); break;
 							}
 						}
 

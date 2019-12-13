@@ -224,7 +224,7 @@ public:
 					{
 						if (m_cUsed >= m_cCapacity)
 						{
-							int cCapacityNew = ewcMax<u32>(32, m_cCapacity * 2);
+							int cCapacityNew = moeMax<u32>(32, m_cCapacity * 2);
 							Grow(cCapacityNew);
 						}
 
@@ -422,7 +422,7 @@ public:
 							}
 						}
 
-						INRES insresjReturn = InresEnsureKeyAndValue(key, value);
+						INRES inresReturn = InresEnsureKeyAndValue(key, value);
 
 						u32 iEntryEnd = iEntry;
 						for (iEntry = iEntryStart; iEntry != iEntryEnd; ++iEntry)
@@ -432,7 +432,7 @@ public:
 								entry.m_hv = kHvDeleted;
 						}
 
-						return InsresReturn;
+						return inresReturn;
 					}
 
 	void		Grow(u32 cCapacityNew)

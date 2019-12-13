@@ -21,9 +21,7 @@
 #include <new>
 #include <stdint.h>
 
-#if _WIN64
-#define MOE_X64 1
-#elif MOE_OSX_X64
+#if _WIN64 || MOE_OSX_X64 || __x86_64__
 #define MOE_X64 1
 #else
 #define MOE_X64 0
@@ -38,7 +36,13 @@
 //#define STBM_DEBUGCHECK
 #include "stb_malloc.h"
 
-
+#if _WIN64
+#define MOE_S64FMT "%lld"
+#define MOE_U64FMT "%llu"
+#else
+#define MOE_S64FMT "%ld"
+#define MOE_U64FMT "%lu"
+#endif
 
 typedef int8_t s8;
 typedef int16_t s16;
@@ -84,7 +88,7 @@ struct Simd4 { Simd x, y, z, w; };
 	#define		MOE_ALIGN(CB)		__attribute__((aligned(CB)))
 	#define 	MOE_ALIGN_OF(T) 	__alignof__(T)
 	#define		MOE_IS_ENUM(T)		__is_enum(T)
-	#define		MOE_DEBUG_BREAK()	asm ("int $3")
+	#define		MOE_DEBUG_BREAK()	__asm__ __volatile__ ("int $3")
 #elif defined( _MSC_VER )
 	#define		MOE_FORCE_INLINE	__forceinline
 	#define		MOE_ALIGN(CB)		__declspec(align(CB))
@@ -96,7 +100,7 @@ struct Simd4 { Simd x, y, z, w; };
 	#define		MOE_ALIGN(CB)		__attribute__((aligned(CB)))
 	#define 	MOE_ALIGN_OF(T) 	__alignof__(T)
 	#define		MOE_IS_ENUM(T)		__is_enum(T)
-	#define		MOE_DEBUG_BREAK()   asm("int $3")
+	#define		MOE_DEBUG_BREAK()   __asm__ __volatile__("int $03")
 #endif
 
 #define MOE_OFFSET_OF(STRUCT_NAME, VAR_NAME)	offsetof(STRUCT_NAME, VAR_NAME)
@@ -118,7 +122,7 @@ struct Simd4 { Simd x, y, z, w; };
 	}; MOE_ENUM_UTILS(ENUM_NAME) \
 	enum ENUM_NAME##_Stub {
 
-void AssertHandler( const char* pChzFile, u32 line, const char* pChzCondition, const char* pChzMessage = 0, ...);
+void AssertHandler( const char* pChzFile, u32 line, const char* pChzCondition, const char* pChzMessage, ...);
 
 #define MOE_VERIFY( PREDICATE, ... ) \
 	do { if (!(PREDICATE)) { \
@@ -145,7 +149,7 @@ void AssertHandler( const char* pChzFile, u32 line, const char* pChzCondition, c
 )
 #else
 // use a goofy expression statement to play nice with clang
-#define MOE_FVERIFY( PREDICATE, ... )\
+#define MOE_FVERIFY_PROC( PREDICATE, ASSERTPROC, FILE, LINE, ... )\
 (\
   ( ( PREDICATE ) ? \
 	true :\

@@ -11,5 +11,4 @@ else()
 	target_compile_options(moeb PRIVATE -Wno-switch)
 endif()
 
-
 # Tests

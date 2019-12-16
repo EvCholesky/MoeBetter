@@ -107,7 +107,7 @@ void PrintErrorLine(Error * pError, const char * pChzPrefix, const LexSpan & lex
 	if (pChz)
 	{
 		ConsoleColorAmbit ccolamb;
-		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0));
+		ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseWhite);
 
 		vprintf(pChz, ap);
 		printf("\n");
@@ -317,11 +317,75 @@ GRFCCOL GrfccolCurrent()
 	return grfccol;
 }
 
+void ResetConsoleTextColor()
+{
+	printf("\033[39;49m");
+}
+
+#ifndef _MSC_VER
+static const int s_nLinuxBaseFg = 30;
+static const int s_nLinuxBaseBg = 40;
+static inline int NLinuxTextColor(int iColor, bool fIntense, int nBase)
+{
+	static const int s_mpGrfcolN[] =
+	{
+		0,		// (000b Black)
+		4,		// (001b Blue)
+		2,		// (010b Green)
+		6,		// (011b Cyan)
+		1,		// (100b Red)
+		5,		// (101b Purple)
+		3,		// (110b Yellow)
+		7,		// (111b White)
+	};
+
+	int n = s_mpGrfcolN[iColor] + nBase;
+	if (fIntense)
+	{
+		n += 60; // linux color -> light color
+	}
+
+	return n;
+}
+#endif
+
 void SetConsoleTextColor(GRFCCOL grfccol)
 {
 #ifdef  _MSC_VER
 	SetConsoleTextAttribute(s_hConsole, WORD(grfccol.m_raw));
+#else
+	int iColorFg = grfccol.m_raw & GRFCCOL_FgAllColor;
+	int nFg = NLinuxTextColor(iColorFg, grfccol.FIsSet(FCCOL_FgIntense), s_nLinuxBaseFg);
+
+	int iColorBg = (grfccol.m_raw & GRFCCOL_BgAllColor) >> 4;
+	int nBg = NLinuxTextColor(iColorBg, grfccol.FIsSet(FCCOL_BgIntense), s_nLinuxBaseBg);
+	printf("\033[%d;%dm", nFg, nBg);
+#endif
+}
+
+void ConsoleColorAmbit::SetConsoleForegroundColor(GRFCCOL grfccol)
+{
+#ifdef  _MSC_VER
+	GRFCCOL grfccolAdj = (grfccol & GRFCCOL_FgAll) | (m_grfccol & GRFCCOL_BgAll);
+	SetConsoleTextAttribute(s_hConsole, WORD(grfccolAdj.m_raw));
+#else
+	int iColorFg = grfccol.m_raw & GRFCCOL_FgAllColor;
+	int nFg = NLinuxTextColor(iColorFg, grfccol.FIsSet(FCCOL_FgIntense), s_nLinuxBaseFg);
+	printf("\033[%dm ", nFg);
+
 #endif //defined _MSC_VER
+}
+
+void ConsoleColorAmbit::SetConsoleBackgroundColor(GRFCCOL grfccol)
+{
+#ifdef  _MSC_VER
+	GRFCCOL grfccolAdj = (grfccol & GRFCCOL_BgAll) | (m_grfccol & GRFCCOL_FgAll);
+	SetConsoleTextAttribute(s_hConsole, WORD(grfccolAdj.m_raw));
+#else
+	int iColorBg = (grfccol.m_raw & GRFCCOL_BgAllColor) >> 4;
+	int nBg = NLinuxTextColor(iColorBg, grfccol.FIsSet(FCCOL_BgIntense), s_nLinuxBaseBg);
+	printf("\033[%dm", nBg);
+#endif //defined !_MSC_VER
 }
 
 void GenerateUniqueName(UniqueNameSet * pUnset, const char * pChzIn, char * pChzOut, size_t cBOutMax)
@@ -512,7 +576,7 @@ void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
 
 	{
 		ConsoleColorAmbit ccolamb;
-		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0));
+		ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseWhite);
 
 		printf(MOE_S64FMT "%s", iLine, s_pChzMargin);
 	}
@@ -527,7 +591,7 @@ void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
 	size_t cBSpan = textspan.m_pChzEnd - textspan.m_pChzBegin;
 	{
 		ConsoleColorAmbit ccolamb;
-		SetConsoleTextColor(ccolamb.m_grfccol | FCCOL_FgIntense);
+		ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseWhite);
 
 		CBCopyChz(textspan.m_pChzBegin, aCh, cBSpan+1);
 		printf("%s", aCh);
@@ -542,11 +606,11 @@ void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
 	{
 		ConsoleColorAmbit ccolamb;
 
-		SetConsoleTextColor(GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0));
+		ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseWhite);
 
 		printf("%*s%s%*s", cDigit, "", s_pChzMargin, (int)cBPre, "");
 
-		SetConsoleTextColor(GRFCCOL_FgIntenseRed | (ccolamb.m_grfccol.m_raw & 0xF0));
+		ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseRed);
 
 		for (int iCh = 0; iCh < moeMax<size_t>(1, cBSpan); ++iCh)
 		{

@@ -469,7 +469,7 @@ struct StringEditBuffer // tag = seb
 
 	static const int s_cChPrefixPad = 128;
 
-	Alloc *	m_pAlloc;
+	Alloc *		m_pAlloc;
 	char *		m_pChzMin;
 	char *		m_pChzBegin;
 	char *		m_pChzAppend;

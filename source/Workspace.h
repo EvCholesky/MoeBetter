@@ -171,6 +171,11 @@ enum FCCOL // Console color
 	GRFCCOL_FgIntenseBlue		= FCCOL_FgBlue | FCCOL_FgIntense,
 	GRFCCOL_FgIntenseYellow		= FCCOL_FgRed | FCCOL_FgGreen | FCCOL_FgIntense,
 	GRFCCOL_FgIntenseWhite		= FCCOL_FgRed | FCCOL_FgGreen | FCCOL_FgBlue | FCCOL_FgIntense,
+
+	GRFCCOL_FgAllColor			= FCCOL_FgRed | FCCOL_FgGreen | FCCOL_FgBlue,
+	GRFCCOL_FgAll				= GRFCCOL_FgAllColor | FCCOL_FgIntense,
+	GRFCCOL_BgAllColor			= FCCOL_BgRed | FCCOL_BgGreen | FCCOL_BgBlue,
+	GRFCCOL_BgAll				= GRFCCOL_BgAllColor | FCCOL_BgIntense,
 };
 
 enum FCOMPILE
@@ -190,17 +195,22 @@ MOE_DEFINE_GRF(GRFCCOL, FCCOL, u16);
 
 void InitConsoleSettings();
 GRFCCOL GrfccolCurrent();
-void SetConsoleTextColor(GRFCCOL grfccol);
+void ResetConsoleTextColor();
 
 struct ConsoleColorAmbit // tag = ccolamb
 {
 					ConsoleColorAmbit()
 						{ m_grfccol = GrfccolCurrent(); }
 					~ConsoleColorAmbit()
-						{ SetConsoleTextColor(m_grfccol); }
+						{ ResetConsoleTextColor(); }
+
+	void			SetConsoleForegroundColor(GRFCCOL grfccol);
+	void			SetConsoleBackgroundColor(GRFCCOL grfccol);
 		
 	GRFCCOL			m_grfccol;
 };
+
+void SetConsoleTextColor(GRFCCOL grfccol);
 
 void BeginWorkspace(Workspace * pWork);
 void BeginParse(Workspace * pWork, Lexer * pLex, const char * pChzIn, const char * pChzFilename = nullptr);

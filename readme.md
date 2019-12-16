@@ -37,7 +37,7 @@ An experimental sketch version of the Moe compiler. (I'm trying to take the pati
 
 - [ ] "array references" -> array slice
 - [ ] unify Proc/Procedure naming - everything should be proc (I think it's just TypeInfoProcedure)
-- [ ] fix error recovery stack to synch with multiple error outcomes ( ie. failure to parse expression list should recover to ',' or recover to '}'
+- [x] fix error recovery stack to synch with multiple error outcomes ( ie. failure to parse expression list should recover to ',' or recover to '}'
 - [ ] track nested constructs in error recovery?
 - [ ] nested block comments
 

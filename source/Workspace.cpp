@@ -28,6 +28,20 @@ ErrorManager::ErrorManager(Alloc * pAlloc)
 
 }
 
+bool ErrorManager::FHasHiddenErrors()
+{
+	if (!m_paryErrcExpected)
+		return false;
+
+	auto pErrcMax = m_paryErrcExpected->PMac();
+	for (auto pErrc = m_paryErrcExpected->A(); pErrc != pErrcMax; ++pErrc)
+	{
+		if (pErrc->m_c)
+			return true;
+	}
+	return false;
+}
+
 bool ErrorManager::FTryHideError(ERRID errid)
 {
 	if (!m_paryErrcExpected)

@@ -179,6 +179,38 @@ const char * PChzFromLitk(LITK litk)
 	return s_mpLitkPChz[litk];
 }
 
+const char * PChzFromTink(TINK tink)
+{
+	static const char * s_mpTinkPChz[] =
+	{
+		"Numeric",
+		"Bool",
+		"Pointer",
+		"Procedure",
+		"Void",
+		"Struct",
+		"Array",
+		"Null",
+		"Any",
+		"Enum",
+		"Qualifier",
+		"Interface",
+		"Type",
+		"ForwardDecl",
+		"Literal",
+		"Anchor",
+		"Flag"
+	};
+	MOE_CASSERT(MOE_DIM(s_mpTinkPChz) == TINK_Max, "missing TINK string");
+	if (tink == TINK_Nil)
+		return "Nil";
+
+	if ((tink < TINK_Nil) | (tink >= TINK_Max))
+		return "Unknown TINK";
+
+	return s_mpTinkPChz[tink];
+}
+
 bool FNeedsImplicitMember(ENUMIMP enumimp, ENUMK enumk)
 {
 	if (enumimp == ENUMIMP_Names || enumimp == ENUMIMP_Values)
@@ -978,6 +1010,14 @@ void WriteSExpressionForEntries(Workspace * pWork, char * pCo, char * pCoMax, SE
 }
 
 
+
+TypeInfo * PTinFromSymbol(Symbol * pSym)
+{
+	if (!pSym || !pSym->m_pStnodDefinition)
+		return nullptr;
+
+	return pSym->m_pStnodDefinition->m_pTin;
+}
 
 void PushSymbolTable(ParseContext * pParctx, SymbolTable * pSymtab)
 {

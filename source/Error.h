@@ -27,6 +27,7 @@ struct GenericMap;
 struct LexSpan;
 struct ParseContext;
 struct TestContext;
+struct TypeCheckWorkspace;
 struct Workspace;
 
 enum ERRID
@@ -121,6 +122,8 @@ enum ERRID
 	ERRID_OperatorNotDefined		= 2030,
 	ERRID_CannotInferGeneric		= 2031,
 	ERRID_OrderedAfterNamed         = 2032,
+	ERRID_UnresolvedTypeRef			= 2033,
+	ERRID_UnexpectedSymbolDef		= 2034,
 	ERRID_TypeCheckMax				= 3000,
 
 	ERRID_CodeGenMin				= ERRID_TypeCheckMax,
@@ -233,6 +236,8 @@ void EmitWarning(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const ch
 void EmitWarning(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
 void EmitWarning(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
 void EmitWarning(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
+void EmitWarning(TypeCheckWorkspace * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
+void EmitWarning(TypeCheckWorkspace * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
 
 void EmitError(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
 void EmitError(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
@@ -240,6 +245,8 @@ void EmitError(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char
 void EmitError(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
 void EmitError(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
 void EmitError(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
+void EmitError(TypeCheckWorkspace * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
+void EmitError(TypeCheckWorkspace * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
 
 void PrintErrorLine(Error * pError, const char * pChzPrefix, const LexSpan & lexsp, const char * pCoz, va_list ap);
 void PrintErrorLine(Error * pError, const char * pChzPrefix, const LexSpan & lexsp, const char * pCoz, ...);

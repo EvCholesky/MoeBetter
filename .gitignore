@@ -4,6 +4,6 @@
 *.db
 *.exe
 *.sqlite
-cmade/*
+build/*
 out/*
 .vs/*

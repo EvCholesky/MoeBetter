@@ -147,9 +147,9 @@ void PrintGenmap(Workspace * pWork, GenericMap * pGenmap);
 void PrintGenmapAnchors(Moe::StringBuffer * pStrbuf, GenericMap * pGenmap);
 void PrintGenmapNoLocation(GenericMap * pGenmap, const char * pChzLineEnd = "\n");
 
-struct SInstantiateRequest // tag = insreq
+struct InstantiateRequest // tag = insreq
 {
-								SInstantiateRequest()
+								InstantiateRequest()
 								:m_pStnodGeneric(nullptr)
 								,m_pSym(nullptr)
 								,m_pGenmap(nullptr)
@@ -162,12 +162,12 @@ struct SInstantiateRequest // tag = insreq
 	int							m_iInsreq;
 };
 
-class CGenericRegistry // tag = genreg
+class GenericRegistry // tag = genreg
 {
 public:
-	struct SEntry
+	struct Entry
 	{
-								SEntry()
+								Entry()
 								:m_pGenmapKey(nullptr)
 								,m_pTin(nullptr)
 								,m_pInsreq(nullptr)
@@ -175,38 +175,38 @@ public:
 
 		GenericMap *			m_pGenmapKey;	// genmap used as a key to lookup this entry 
 		TypeInfo *				m_pTin;
-		SInstantiateRequest *	m_pInsreq;
+		InstantiateRequest *	m_pInsreq;
 	};
 
-	struct SEntryBlock	// tag = block
+	struct EntryBlock	// tag = block
 	{
-								SEntryBlock (Moe::Alloc * pAlloc)
+								EntryBlock (Moe::Alloc * pAlloc)
 								:m_aryEntry(pAlloc, Moe::BK_TypeCheckGenerics)
 									{ ; }
 
-		Moe::CDynAry<SEntry>	m_aryEntry;
+		Moe::CDynAry<Entry>		m_aryEntry;
 	};
 
-								CGenericRegistry(Moe::Alloc * pAlloc)
+								GenericRegistry(Moe::Alloc * pAlloc)
 								:m_pAlloc(pAlloc)
 								,m_mpStnodInstFromBlock(pAlloc, Moe::BK_TypeCheckGenerics, 512)
 								,m_aryInsreq(pAlloc, Moe::BK_TypeCheckGenerics, 128)
 									{ ; }
 
-								~CGenericRegistry()
+								~GenericRegistry()
 								{
 									Cleanup();
 								}
 
 	void						Cleanup();
 
-	SEntry *					PEntryLookup(STNode * pStnodInstFrom, GenericMap * pGenmap);
-	SEntry *					PEntryEnsure(STNode * pStnodInstFrom, GenericMap * pGenmap);
-	SInstantiateRequest *		PInsreqNew(STNode * pStnodInstFrom, GenericMap * pGenmap);
+	Entry *						PEntryLookup(STNode * pStnodInstFrom, GenericMap * pGenmap);
+	Entry *						PEntryEnsure(STNode * pStnodInstFrom, GenericMap * pGenmap);
+	InstantiateRequest *		PInsreqNew(STNode * pStnodInstFrom, GenericMap * pGenmap);
 
-	Moe::Alloc *								m_pAlloc;
-	Moe::CHash<STNode *, SEntryBlock *>		m_mpStnodInstFromBlock;
-	Moe::CDynAry<SInstantiateRequest>		m_aryInsreq;
+	Moe::Alloc *							m_pAlloc;
+	Moe::CHash<STNode *, EntryBlock *>		m_mpStnodInstFromBlock;
+	Moe::CDynAry<InstantiateRequest>		m_aryInsreq;
 };
 
 
@@ -252,7 +252,7 @@ TypeInfo * PTinSubstituteGenerics(
 	ERREP errep);
 
 // lookup a instantiation request, via a generic map and pStnod that defined the base.
-SInstantiateRequest * PInsreqLookup(
+InstantiateRequest * PInsreqLookup(
 	TypeCheckWorkspace * pTcwork,
 	STNode * pStnodDefinition,
 	GenericMap * pGenmap,
@@ -264,13 +264,13 @@ TypeInfoStruct * PTinstructEnsureUniqueInstance(
 	TypeInfoStruct * pTinstruct);
 
 // instantiate symbol & AST for generic procedure
-SInstantiateRequest * PInsreqInstantiateGenericProcedure(
+InstantiateRequest * PInsreqInstantiateGenericProcedure(
 	TypeCheckWorkspace * pTcwork,
 	STNode * pStnodGeneric,
 	GenericMap * pGenmap);
 
 // instantiate symbol & AST for generic struct
-SInstantiateRequest * PInsreqInstantiateGenericStruct(
+InstantiateRequest * PInsreqInstantiateGenericStruct(
 	TypeCheckWorkspace * pTcwork,
 	STNode * pStnodGeneric,
 	STNode * pStnodInstantiation,

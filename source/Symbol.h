@@ -105,6 +105,8 @@ struct Symbol : public SymbolBase	// tag = sym
 	void					AssertIsValid();
 };
 
+TypeInfo * PTinFromSymbol(Symbol * pSym);
+
 // symbol path for 'using' aliases (used during codegen to reconstruct offsets)
 
 struct SymbolPath : public SymbolBase // tag = symp

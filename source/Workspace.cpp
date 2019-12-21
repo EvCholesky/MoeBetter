@@ -19,6 +19,42 @@ const char * Workspace::s_pChzUnitTestExtension = ".moetest";
 
 void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp);
 
+const char * PChzFromMcallcon(MCALLCON mcallcon)
+{
+	static const char * s_mpMcallconPChz[] =
+	{
+		"#x86",			//MCALLCON_CX86
+		"#stdcall",		//MCALLCON_StdcallX86
+		"#x64",			//MCALLCON_X64
+	};
+	MOE_CASSERT(MOE_DIM(s_mpMcallconPChz) == MCALLCON_Max, "missing CALLCONV string");
+	if (mcallcon == MCALLCON_Nil)
+		return "Nil";
+
+	if ((mcallcon < MCALLCON_Nil) | (mcallcon >= MCALLCON_Max))
+		return "Unknown MCALLCON";
+
+	return s_mpMcallconPChz[mcallcon];
+}
+
+const char * PChzFromInlinek(INLINEK inlinek)
+{
+	static const char * s_mpInlinekPChz[] =
+	{
+		"inline",		// INLINEK_AlwaysInline
+		"noinline",		// INLINEK_NoInline
+	};
+	MOE_CASSERT(MOE_DIM(s_mpInlinekPChz) == INLINEK_Max, "missing INLINEK string");
+	if (inlinek == INLINEK_Nil)
+		return "Nil";
+
+	if ((inlinek < INLINEK_Nil) | (inlinek >= INLINEK_Max))
+		return "Unknown INLINEK";
+
+	return s_mpInlinekPChz[inlinek];
+}
+
+
 ErrorManager::ErrorManager(Alloc * pAlloc)
 :m_pWork(nullptr)
 ,m_aryErrid(pAlloc, BK_Workspace, 0)

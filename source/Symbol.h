@@ -88,6 +88,7 @@ struct SymbolBase // tag = symbase
 	SYMK					m_symk;
 };
 
+
 struct Symbol : public SymbolBase	// tag = sym
 {
 	GRFSYM					m_grfsym;
@@ -105,7 +106,7 @@ struct Symbol : public SymbolBase	// tag = sym
 	void					AssertIsValid();
 };
 
-TypeInfo * PTinFromSymbol(Symbol * pSym);
+TypeInfo * PTinFromSymbol(const Symbol * pSym);
 
 // symbol path for 'using' aliases (used during codegen to reconstruct offsets)
 
@@ -174,7 +175,7 @@ public:
 										SUsing()
 										:m_pSymtab(nullptr)
 										,m_pStnod(nullptr)
-										,m_hashHvPSymp()
+										,m_hashIstrPSymp()
 											{ ; }
 
 										~SUsing();
@@ -182,7 +183,8 @@ public:
 		SymbolTable *					m_pSymtab;
 		STNode *						m_pStnod;
 
-		Moe::CHash<HV, SymbolPath *>	m_hashHvPSymp;			// a cache of the symbol paths found from this 
+		Moe::CHash<Moe::InString, SymbolPath *>	
+										m_hashIstrPSymp;			// a cache of the symbol paths found from this 
 																// 'using' statement. Added lazily
 	};
 
@@ -218,21 +220,22 @@ public:
 								}
 
 	TypeInfoLiteral *		PTinlitFromLitk(LITK litk);
-	TypeInfoLiteral *		PTinlitFromLitk(LITK litk, int cBit, bool fIsSigned);
+	TypeInfoLiteral *		PTinlitFromLitk(LITK litk, int cBit, GRFNUM grfnumkl);
+	TypeInfoLiteral *		PTinlitCopy(TypeInfoLiteral * pTinlitSrc);
 	TypeInfoPointer *		PTinptrAllocate(TypeInfo * pTinPointedTo, bool fIsImplicitRef = false);
 	TypeInfoQualifier *		PTinqualEnsure(TypeInfo * pTinTarget, GRFQUALK grfqualk);
 	TypeInfoQualifier *		PTinqualWrap(TypeInfo * pTinTarget, GRFQUALK grfqualk);
 	TypeInfoEnum *			PTinenumAllocate(Moe::InString istrName, int cConstant, ENUMK enumk, STEnum * pStenumDef);
 	TypeInfoProcedure *		PTinprocAllocate(Moe::InString istrName, size_t cParam, size_t cReturn);
 	TypeInfoStruct *		PTinstructAllocate(Moe::InString istrName, size_t cField, size_t cGenericParam);
+	TypeInfoArray *			PTinaryCopy(TypeInfoArray * pTinarySrc);
+	TypeInfoArray *			PTinaryCopyWithNewElementType(TypeInfoArray * pTinarySrc, TypeInfo * pTinNew);
 
-#if MOEB_LATER
 	template <typename T>
 	T *						PTinMakeUnique(T * pTin)
 								{ 
-									return (T *)m_pUntyper->PTinMakeUnique(pTin);
+									return (T *)m_pTyper->PTinMakeUnique(pTin);
 								}
-#endif
 
 	void					AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo * pTin, GRFSYM grfsym = FSYM_None);
 	void					AddManagedTin(TypeInfo * pTin);
@@ -264,6 +267,25 @@ public:
 	//SCOPID							m_scopid;				// unique table id, for unique type strings
 	u64									m_nVisitId;				// id to check if this table has been visited during collision check
 };
+
+inline Symbol * PSymLast(SymbolBase * pSymbase)
+{
+	switch (pSymbase->m_symk)
+	{
+	case SYMK_Symbol:	return (Symbol *)pSymbase;
+	case SYMK_Path:
+		{
+			auto pSymp = (SymbolPath *)pSymbase;
+			if (pSymp->m_arypSym.FIsEmpty())
+				return nullptr;
+
+			return pSymp->m_arypSym.Last();
+		}
+	default: 
+		MOE_ASSERT(false, "Unknown symbol kind");
+		return nullptr;
+	}
+}
 
 
 SymbolTable * PSymtabNew(Moe::Alloc * pAlloc, SymbolTable * pSymtabParent, const Moe::InString & istrNamespace, TypeRegistry * pTyper, UniqueNameSet * pUnsetTin);

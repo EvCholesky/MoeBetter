@@ -31,6 +31,7 @@ struct SymbolBase;
 struct TypeInfo;
 struct TypeInfoEnum;
 struct Workspace;
+enum ERRID;
 
 enum PARK : s8 // PARse Kind
 {
@@ -205,6 +206,15 @@ public:
 
 	bool					FCheckIsValid(ErrorManager * pErrman);
 
+	Symbol *				PSym() const
+								{ return (m_pSymbase) ? PSymLast(m_pSymbase) : nullptr; }
+
+	SymbolPath *			PSymPath() const
+								{
+									if (m_pSymbase && m_pSymbase->m_symk == SYMK_Path)
+										return (SymbolPath *)m_pSymbase;
+									return nullptr;
+								}
 	TOK						m_tok;		
 	PARK					m_park;		
 	STREES					m_strees;	
@@ -224,6 +234,7 @@ public:
 };
 
 void CleanupStnodeRecursive(Moe::Alloc * pAlloc, STNode * pStnod);
+STNode * PStnodCopy(Moe::Alloc * pAlloc, STNode * pStnodSrc, Moe::CHash<STNode *, STNode *> * pmpPStnodSrcPStnodDst = nullptr);
 
 template <typename T>
 T PStnodRtiCast(STNode * pStnod)
@@ -483,6 +494,8 @@ struct STValue : public STNode // tag = stval
 	bool					FCheckIsValid(ErrorManager * pErrman);
 };
 
+
+
 struct STOperator : public STNode // tag = stop
 {
 	static const STEXK s_stexk = STEXK_Operator;
@@ -580,6 +593,7 @@ void WriteSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, G
 void WriteSExpressionForEntries(Workspace * pWork, char * pCo, char * pCoMax, SEWK sewk, GRFSEW grfsew);
 
 Moe::InString IstrFromIdentifier(STNode * pStnod);
+ERRID ErridCheckOverloadSignature(TOK tok, TypeInfoProcedure * pTinproc, ErrorManager * pErrman, const LexSpan & lexsp);
 
 Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename);
 

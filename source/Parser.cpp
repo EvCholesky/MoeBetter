@@ -56,8 +56,6 @@ STNode * PStnodParseLogicalOrExpression(ParseContext * pParctx, Lexer * pLex);
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex);
 STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex);
 
-STNode * PStnodCopy(Alloc * pAlloc, STNode * pStnodSrc, Moe::CHash<STNode *, STNode *> * pmpPStnodSrcPStnodDst = nullptr);
-
 static int g_nSymtabVisitId = 1; // visit index used by symbol table collision walks
 
 struct ProcSymtabStack // tag = procss
@@ -1009,9 +1007,150 @@ void WriteSExpressionForEntries(Workspace * pWork, char * pCo, char * pCoMax, SE
 #endif
 }
 
+void AppendTypeDescriptor(TypeInfo * pTin, StringEditBuffer * pSeb)
+{
+	if (!pTin->m_istrDesc.FIsEmpty())
+	{
+		pSeb->AppendChz(pTin->m_istrDesc.m_pChz);
+		return;
+	}
+
+	auto cBPrefix = pSeb->CB();
+	if (cBPrefix > 0)
+		--cBPrefix;
+
+	switch (pTin->m_tink)
+	{
+	case TINK_Array:
+		{
+			auto pTinary = (TypeInfoArray *)pTin;
+
+			switch(pTinary->m_aryk)
+			{
+			case ARYK_Fixed:
+				{
+					char aCh[48];
+					StringBuffer strbuf(aCh, MOE_DIM(aCh));
+					FormatChz(&strbuf, "[%d]", pTinary->m_c);
+					pSeb->AppendChz(aCh);
+				} break;
+			case ARYK_Reference:	pSeb->AppendChz("[]");		break;
+			case ARYK_Dynamic:		pSeb->AppendChz("[..]");	break;
+			default: 
+				MOE_ASSERT(false, "Unhandled ARYK");
+				break;
+			}
+			AppendTypeDescriptor(pTinary->m_pTin, pSeb);
+		} break;
+	case TINK_Qualifier:
+		{
+			auto pTinqual = (TypeInfoQualifier *)pTin;
+
+			char aCh[64];
+			StringBuffer strbuf(aCh, MOE_DIM(aCh));
+			AppendFlagNames(&strbuf, pTinqual->m_grfqualk, " ");
+			pSeb->AppendChz(aCh);
+			pSeb->AppendChz(" ");
+			AppendTypeDescriptor(pTinqual->m_pTin, pSeb);
+		}break;
+	case TINK_Pointer:
+		{
+			auto pTinptr = (TypeInfoPointer *)pTin;
+
+			pSeb->AppendChz("&");
+			AppendTypeDescriptor(pTinptr->m_pTin, pSeb);
+		} break;
+	case TINK_Procedure:
+		{
+			auto pTinproc = (TypeInfoProcedure *)pTin;
+
+			pSeb->AppendChz(pTinproc->m_istrName.m_pChz);
+			pSeb->AppendChz("(");
+
+			auto ppTinParamMax = pTinproc->m_arypTinParams.PMac();
+			for (auto ppTin = pTinproc->m_arypTinParams.A(); ppTin != ppTinParamMax; ++ppTin)
+			{
+				AppendTypeDescriptor(*ppTin, pSeb);
+				if (ppTin+1 != ppTinParamMax)
+				{
+					pSeb->AppendChz(",");
+				}
+			}
+
+			if (pTinproc->FHasVarArgs())
+			{
+				pSeb->AppendChz(",..");
+			}
+			pSeb->AppendChz(")->(");
+
+			auto ppTinReturnMax = pTinproc->m_arypTinReturns.PMac();
+			for (auto ppTin = pTinproc->m_arypTinReturns.A(); ppTin != ppTinReturnMax; ++ppTin)
+			{
+				AppendTypeDescriptor(*ppTin, pSeb);
+				if (ppTin+1 != ppTinReturnMax)
+				{
+					pSeb->AppendChz(",");
+				}
+			}
+			pSeb->AppendChz(")");
+
+			if (pTinproc->m_grftinproc.FIsSet(FTINPROC_IsForeign))
+			{
+				pSeb->AppendChz("#foreign");
+			}
+
+			if (pTinproc->m_inlinek != INLINEK_Nil)
+			{
+				pSeb->AppendChz(PChzFromInlinek(pTinproc->m_inlinek));
+			}
+
+			if (pTinproc->m_mcallcon != MCALLCON_Nil)
+			{
+				pSeb->AppendChz(PChzFromMcallcon(pTinproc->m_mcallcon));
+			}
+
+		} break;
+	case TINK_Struct:
+		{
+			pSeb->AppendChz(pTin->m_istrName.m_pChz);
+
+			auto pTinstruct = (TypeInfoStruct *)pTin;
+			if (pTinstruct->m_pStnodStruct)
+			{
+				auto pStnodStruct = pTinstruct->m_pStnodStruct;
+				auto pStstruct = PStnodRtiCast<STStruct *>(pStnodStruct);
+				const char * pChzPrefix = "";
+				if (MOE_FVERIFY(pStstruct, "expected struct") && pStstruct->m_pStnodParameterList)
+				{
+					auto pStnodParamList = pStstruct->m_pStnodParameterList;
+					for (int iStnodParam = 0; iStnodParam < pStnodParamList->CPStnodChild(); ++iStnodParam)
+					{
+						auto pStnodParam = pStnodParamList->PStnodChild(iStnodParam);
+						if (MOE_FVERIFY(pStnodParam->m_pTin, "expected type"))
+						{
+							pSeb->AppendChz(pChzPrefix);
+							pChzPrefix = ",";
+							AppendTypeDescriptor(pStnodParam->m_pTin, pSeb);
+						}
+					}
+				}
+			}
+			else
+			{
+				MOE_ASSERT(false, "expected an AST");
+				// may need to handle generic structs that haven't instantiated their AST yet.
+			}
+		} break;
+	default:
+		pSeb->AppendChz(pTin->m_istrName.m_pChz);
+	}
+
+	pTin->m_istrDesc = IstrInternCopy(&pSeb->PChz()[cBPrefix], pSeb->CB());
+}
 
 
-TypeInfo * PTinFromSymbol(Symbol * pSym)
+
+TypeInfo * PTinFromSymbol(const Symbol * pSym)
 {
 	if (!pSym || !pSym->m_pStnodDefinition)
 		return nullptr;
@@ -1061,8 +1200,8 @@ SymbolTable * PSymtabNew(Alloc * pAlloc, SymbolTable * pSymtabParent, const Moe:
 
 SymbolTable::SUsing::~SUsing()
 {
-	auto pAlloc = m_hashHvPSymp.PAlloc();
-	CHash<HV, SymbolPath *>::CIterator iterPSymp(&m_hashHvPSymp);
+	auto pAlloc = m_hashIstrPSymp.PAlloc();
+	CHash<InString, SymbolPath *>::CIterator iterPSymp(&m_hashIstrPSymp);
 	while (SymbolPath ** ppSymp = iterPSymp.Next())
 	{
 		pAlloc->MOE_DELETE(*ppSymp);
@@ -1092,7 +1231,7 @@ SymbolTable::~SymbolTable()
 	}
 
 #ifdef MOEB_LATER
-	CHash<HV, STypeInfoForwardDecl *>::CIterator iterPTinfwd(&m_hashHvPTinfwd);
+	CHash<HV, TypeInfoForwardDecl *>::CIterator iterPTinfwd(&m_hashHvPTinfwd);
 	while (TypeInfoForwardDecl ** ppTinfwd = iterPTinfwd.Next())
 	{
 		MOE_ASSERT((*ppTinfwd)->m_arypTinReferences.C() == 0, "unresolved forward declarations");
@@ -1203,6 +1342,44 @@ SYMCOLLIS SymcollisCheck(
 	return symcollis;
 }
 
+TypeInfoLiteral * SymbolTable::PTinlitFromLitk(LITK litk)
+{
+	if (!FIsValid(litk))
+		return nullptr;
+
+	// built in types are always in the root symbol table 
+	SymbolTable * pSymtab = this;
+	while (pSymtab->m_pSymtabParent)
+		pSymtab = pSymtab->m_pSymtabParent;
+
+	const Moe::CDynAry<TypeInfoLiteral *> & mpLitkPTinlit = pSymtab->m_mpLitkArypTinlit[litk];
+	if (mpLitkPTinlit.C() == 0)
+		return nullptr;
+
+	return mpLitkPTinlit[0];
+}
+
+TypeInfoLiteral * SymbolTable::PTinlitFromLitk(LITK litk, int cBit, GRFNUM grfnum)
+{
+	if (FIsValid(litk))
+	{
+		// built in types are always in the root symbol table 
+		SymbolTable * pSymtab = this;
+		while (pSymtab->m_pSymtabParent)
+			pSymtab = pSymtab->m_pSymtabParent;
+
+		Moe::CDynAry<TypeInfoLiteral *> & mpLitkPTinlit = pSymtab->m_mpLitkArypTinlit[litk];
+		TypeInfoLiteral ** ppTinlitMax = mpLitkPTinlit.PMac();
+		for (TypeInfoLiteral ** ppTinlit = mpLitkPTinlit.A(); ppTinlit != ppTinlitMax; ++ppTinlit)
+		{
+			TypeInfoLiteral * pTinlit = *ppTinlit;
+			if ((pTinlit->m_litty.m_cBit == cBit) & (pTinlit->m_litty.m_grfnum == grfnum))
+				return pTinlit;
+		}
+	}
+
+	return nullptr;
+}
 
 ERRID ErridCheckSymbolCollision(
 	ErrorManager * pErrman,
@@ -1251,6 +1428,44 @@ ERRID ErridCheckSymbolCollision(
 		}
 	}
 	return ERRID_Nil;
+}
+
+TypeInfoQualifier * SymbolTable::PTinqualEnsure(TypeInfo * pTinTarget, GRFQUALK grfqualk)
+{
+	// Note: I should unique'ify these
+	if (pTinTarget && pTinTarget->m_tink == TINK_Qualifier)
+	{
+		auto pTinqualPrev = (TypeInfoQualifier *)pTinTarget;
+
+		if (pTinqualPrev->m_grfqualk.FIsSet(grfqualk))
+			return pTinqualPrev;
+		grfqualk |= pTinqualPrev->m_grfqualk;
+		pTinTarget = pTinqualPrev->m_pTin;
+	}
+
+	TypeInfoQualifier * pTinqual = MOE_NEW(m_pAlloc, TypeInfoQualifier) TypeInfoQualifier(grfqualk);
+	pTinqual->m_pTin = pTinTarget;
+
+	AddManagedTin(pTinqual);
+	return pTinqual;
+}
+
+TypeInfoQualifier * SymbolTable::PTinqualWrap(TypeInfo * pTinTarget, GRFQUALK grfqualk)
+{
+	if (!pTinTarget)	
+		return nullptr;
+
+	return PTinqualEnsure(pTinTarget, grfqualk);
+}
+
+TypeInfoPointer * SymbolTable::PTinptrAllocate(TypeInfo * pTinPointedTo, bool fIsImplicitRef)
+{
+	TypeInfoPointer * pTinptr = MOE_NEW(m_pAlloc, TypeInfoPointer) TypeInfoPointer();
+	pTinptr->m_pTin = pTinPointedTo;
+	pTinptr->m_fIsImplicitRef = fIsImplicitRef;
+
+	AddManagedTin(pTinptr);
+	return pTinptr;
 }
 
 void SymbolTable::AddManagedTin(TypeInfo * pTin)
@@ -1463,6 +1678,50 @@ TypeInfoStruct * SymbolTable::PTinstructAllocate(InString istrIdent, size_t cFie
 	return pTinstruct;
 }
 
+TypeInfoArray * SymbolTable::PTinaryCopyWithNewElementType(TypeInfoArray * pTinarySrc, TypeInfo * pTinNew)
+{
+	auto pTinaryNew = MOE_NEW(m_pAlloc, TypeInfoArray) TypeInfoArray();
+	*pTinaryNew = *pTinarySrc;
+
+	pTinarySrc->m_pTin = pTinNew;
+	AddManagedTin(pTinaryNew);
+
+	// cleanup fields set when made unique
+	pTinaryNew->m_grftin.Clear(FTIN_IsUnique);
+	pTinaryNew->m_istrDesc = InString();
+
+	return pTinaryNew;
+}
+
+TypeInfoArray * SymbolTable::PTinaryCopy(TypeInfoArray * pTinarySrc)
+{
+	auto pTinaryNew = MOE_NEW(m_pAlloc, TypeInfoArray) TypeInfoArray();
+	AddManagedTin(pTinaryNew);
+
+	*pTinaryNew = *pTinarySrc;	
+
+	// cleanup fields set when made unique
+	pTinaryNew->m_grftin.Clear(FTIN_IsUnique);
+	pTinaryNew->m_istrDesc = InString();
+
+	return pTinaryNew;
+}
+
+TypeInfoLiteral * SymbolTable::PTinlitCopy(TypeInfoLiteral * pTinlitSrc)
+{
+	auto pTinlitNew = MOE_NEW(m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+	AddManagedTin(pTinlitNew);
+
+	*pTinlitNew = *pTinlitSrc;
+
+	// cleanup fields set when made unique
+	pTinlitNew->m_grftin.Clear(FTIN_IsUnique);
+	pTinlitNew->m_istrDesc = InString();
+
+	return pTinlitNew;
+}
+
+
 void SymbolTable::AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo * pTin, GRFSYM grfsym)
 {
 	// NOTE: This function is for built-in types without a lexical order, so we shouldn't be calling it on an ordered table
@@ -1488,7 +1747,6 @@ void SymbolTable::AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo 
 		EmitError(pErrman, lexsp, ERRID_ShadowedDefine, "Two types encountered with same name (%s)", istrName.m_pChz);
 	}
 }
-
 
 void AddSimpleBuiltInType(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, TINK tink, GRFSYM grfsym = FSYM_None)
 {
@@ -1652,6 +1910,8 @@ T * PStnodAllocCopy(Moe::Alloc * pAlloc, T * pT)
 	
 	return pStnod;
 }
+
+
 
 STNode * PStnodCopy(Alloc * pAlloc, STNode * pStnodSrc, Moe::CHash<STNode *, STNode *> * pmpPStnodSrcPStnodDst)
 {
@@ -1845,7 +2105,7 @@ bool STDecl::FCheckIsValid(ErrorManager * pErrman)
 		fMissingTypeSpecifier = false;
 		for (int iStnodChild = pStdecl->m_iStnodChildMin; iStnodChild != pStdecl->m_iStnodChildMax; ++iStnodChild)
 		{
-			auto pStdeclChild = PStmapDerivedCast<CSTDecl *>(pStnodDecl->PStnodChild(iStnodChild)->m_pStmap);
+			auto pStdeclChild = PStmapDerivedCast<STDecl *>(pStnodDecl->PStnodChild(iStnodChild)->m_pStmap);
 			MOE_ASSERT(pStdeclChild->m_iStnodIdentifier != -1, "declaration missing identifier");
 
 			if (pStdeclChild->m_iStnodInit != -1)
@@ -4230,7 +4490,7 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 			pStproc->m_pStnodReturnType = pStnodReturns;
 
 			INLINEK inlinek = INLINEK_Nil;
-			MCALLCON callconv = MCALLCON_Nil;
+			MCALLCON mcallcon = MCALLCON_Nil;
 			GRFTINPROC grftinproc;
 			pStproc->m_pStnodBody = nullptr;
 			if (pLex->m_tok == TOK_Identifier)
@@ -4252,12 +4512,12 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 					}
 					else if (istrRwordLookup == RWord::g_istrCDecl)
 					{
-						callconv = MCALLCON_CX86;
+						mcallcon = MCALLCON_CX86;
 						pStproc->m_grfstproc.AddFlags(FSTPROC_UseUnmangledName | FSTPROC_PublicLinkage);
 					}
 					else if (istrRwordLookup == RWord::g_istrStdCall)
 					{
-						callconv = MCALLCON_StdcallX86;	
+						mcallcon = MCALLCON_StdcallX86;	
 					}
 					else if (istrRwordLookup == RWord::g_istrInline)
 					{
@@ -4342,7 +4602,7 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 
 			pTinproc->m_grftinproc = grftinproc;
 			pTinproc->m_pStnodDefinition = pStproc;
-			pTinproc->m_callconv = callconv;
+			pTinproc->m_mcallcon = mcallcon;
 			pTinproc->m_inlinek = inlinek;
 
 			CheckTinprocGenerics(pParctx, pStproc, pTinproc);

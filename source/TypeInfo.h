@@ -30,12 +30,6 @@ struct STDecl;
 struct STNode;
 struct TypeInfoProcedure;
 
-enum SCOPID : s32
-{
-	SCOPID_Min = 0,
-	SCOPID_Nil = -1,
-};
-
 #define BUILT_IN_TYPE_LIST \
 		BLTIN(Char) STR(char)	\
 		BLTIN(Bool) STR(bool)	\
@@ -151,6 +145,7 @@ struct TypeInfo	// tag = tin
 						:m_tink(tink)
 						,m_grftin(FTIN_None)
 						,m_istrName(istrName)
+						,m_istrDesc()
 #if KEEP_TYPEINFO_DEBUG_STRING
 						,m_istrDebug()
 #endif
@@ -161,6 +156,7 @@ struct TypeInfo	// tag = tin
 	GRFTIN				m_grftin;
 
 	Moe::InString		m_istrName;				// user facing name 
+	Moe::InString		m_istrDesc;				// unique descriptor used to unique this type 
 
 #if KEEP_TYPEINFO_DEBUG_STRING
 	Moe::InString		m_istrDebug;	
@@ -175,6 +171,8 @@ struct TypeInfo	// tag = tin
 
 	static const char * s_pChzGlobalTinTable;
 };
+
+Moe::InString IstrFromTypeInfo(TypeInfo * pTin);
 
 template <typename T>
 T PTinRtiCast(TypeInfo * pTin)
@@ -280,7 +278,7 @@ enum MCALLCON
 
 	MOE_MAX_MIN_NIL(MCALLCON)
 };
-const char * PChzFromCallconv(MCALLCON callconv);
+const char * PChzFromMcallcon(MCALLCON callconv);
 
 enum INLINEK
 {
@@ -344,7 +342,7 @@ struct TypeInfoProcedure : public TypeInfo	// tag = 	tinproc
 						,m_grftingen(FTINGEN_None)
 						,m_grftinproc(FTINPROC_None)
 						,m_inlinek(INLINEK_Nil)
-						,m_callconv(MCALLCON_Nil)
+						,m_mcallcon(MCALLCON_Nil)
 							{ ; }
 
 	bool				FHasVarArgs() const
@@ -363,7 +361,7 @@ struct TypeInfoProcedure : public TypeInfo	// tag = 	tinproc
 	GRFTINGEN					m_grftingen;
 	GRFTINPROC					m_grftinproc;
 	INLINEK						m_inlinek;
-	MCALLCON					m_callconv;
+	MCALLCON					m_mcallcon;
 };
 
 struct TypeInfoAnchor : public TypeInfo // tag = tinanc
@@ -575,12 +573,9 @@ struct TypeRegistry // tag treg
 
 	void					Clear();
 	TypeInfo *				PTinMakeUnique(TypeInfo * pTin);
-	SCOPID					ScopidAlloc()
-								{ m_scopidNext = SCOPID(m_scopidNext + 1); return m_scopidNext; }
 
 	Moe::Alloc *						m_pAlloc;
 	Moe::CHash<u64, TypeInfo *>			m_hashHvPTinUnique;
-	SCOPID								m_scopidNext;		// global id for symbol tables, used in for unique types strings
 };
 
 struct OpTypes // tag = optype

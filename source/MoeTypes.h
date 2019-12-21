@@ -73,6 +73,7 @@ u32 HvFromPBFVN(const void * pV, size_t cB);
 
 namespace Moe
 {
+struct InString;
 
 typedef __m128 Simd;
 typedef __m128i SimdI;
@@ -923,3 +924,6 @@ enum INRES
 };
 
 } // namespace Moe
+
+Moe::InString IstrPunyEncode(const char * pChz);
+Moe::InString IstrPunyDecode(const char * pChz);

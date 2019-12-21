@@ -675,6 +675,7 @@ void DoNothing()
 
 } // namespace EWC
 
+using namespace Moe;
 
 namespace Puny
 {
@@ -837,7 +838,6 @@ static inline char ChEncodeDigit(u32 d)
   return d + 22 + 75 * (d < 26);
 }
 
-
 PUNYRET PunyretEncode(const char * pChzInput, char * pChzOut, size_t cBMaxOut)
 {
 	const char * pChz = pChzInput;
@@ -946,8 +946,6 @@ PUNYRET PunyretEncode(const char * pChzInput, char * pChzOut, size_t cBMaxOut)
 	*pChzDest = '\0';
 	return PUNYRET_Success;
 }
-
-
 
 // NDecodeDigit(cp) returns the numeric value of a basic code point (for use in representing integers) 
 //  in the range 0 to base-1, or base if cp does not represent a value.
@@ -1088,6 +1086,34 @@ int NCmpWchz(const char32_t * pWchzA, const char32_t * pWchzB)
 	}
 
 	return 0;
+}
+
+Moe::InString IstrPunyEncode(const char * pChz)
+{
+	// BB - there's a lot of stupid copying and counting going on here...
+
+	// I don't have a great way to estimate the punycoded string length from the utf8 length - let's just say
+	//  it won't be a lot longer than the original
+	size_t cBMaxPuny = Moe::CBChz(pChz) * sizeof(char) + 512;
+	char * pChzPuny = (char *)alloca(cBMaxPuny);
+
+	auto punyret = Puny::PunyretEncode(pChz, pChzPuny, cBMaxPuny);
+	MOE_ASSERT(punyret == Puny::PUNYRET_Success, "punycoding failed");
+	return IstrIntern(pChzPuny);
+}
+
+Moe::InString IstrPunyDecode(const char * pChz)
+{
+	// BB - there's a lot of stupid copying and counting going on here...
+
+	// I don't have a great way to estimate the utf8 string length from the punycoded length - let's just say
+	//  it won't be a lot longer than the original
+	size_t cBMaxPuny = Moe::CBChz(pChz) * sizeof(char) + 512;
+	char * pChzPuny = (char *)alloca(cBMaxPuny);
+
+	auto punyret = Puny::PunyretDecode(pChz, pChzPuny, cBMaxPuny);
+	MOE_ASSERT(punyret == Puny::PUNYRET_Success, "punycode decoding failed");
+	return IstrIntern(pChzPuny);
 }
 
 bool FAreWchzEqual(const char32_t * pWchzA, const char32_t * pWchzB)

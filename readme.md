@@ -21,7 +21,7 @@ An experimental sketch version of the Moe compiler. (I'm trying to take the pati
 
 ## Notation changes
 * No leading S/C for structs or classes
-* EWC macros/namespaces changed go MOE
+* EWC macros/namespaces changed to MOE
 * No more pCoz/pChz, all string code should handle UTF8
 
 ## Things I contemplated changing, but didn't
@@ -32,6 +32,14 @@ An experimental sketch version of the Moe compiler. (I'm trying to take the pati
 * Removing for_each
 * Using unnamed types require a `:` before the type
 
+## Multithreading concerns
+* Each thread has write access to the AST in it's working set (parser=file, typecheck=WorkspaceEntry) and any cross set searches (symbol lookup, registry) needs to be guarded
+[ ] change the type creation routines to go through a typeFactory that will guarantee uniqueness and control thread access
+
+## Compile-time execution
+[ ] symbols should be defined during parse and then symbol tables should be locked
+* Not all files will parse before we start type checking, this means you may need to wait for a symbol to be defined (not just waiting for defined symbols to parse) This is especially bad for function overloading
+
 
 ## TODO - little tasks:
 
@@ -40,7 +48,7 @@ An experimental sketch version of the Moe compiler. (I'm trying to take the pati
 - [x] fix error recovery stack to synch with multiple error outcomes ( ie. failure to parse expression list should recover to ',' or recover to '}'
 - [ ] track nested constructs in error recovery?
 - [ ] nested block comments
-
+- [ ] Get rid of errep passing, (just add a hide error count to ErrorManager?)
 
 ### TODO - Big Stuff:
 - [ ] add module support

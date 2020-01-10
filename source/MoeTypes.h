@@ -925,5 +925,6 @@ enum INRES
 
 } // namespace Moe
 
+//punycoding
 Moe::InString IstrPunyEncode(const char * pChz);
 Moe::InString IstrPunyDecode(const char * pChz);

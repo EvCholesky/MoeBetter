@@ -55,6 +55,7 @@ STNode * PStnodParseExpression(ParseContext * pParctx, Lexer * pLex, GRFEXP grfe
 STNode * PStnodParseLogicalOrExpression(ParseContext * pParctx, Lexer * pLex);
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex);
 STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex);
+STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InString istrRwordExpected = Moe::InString());
 
 static int g_nSymtabVisitId = 1; // visit index used by symbol table collision walks
 
@@ -329,10 +330,10 @@ inline bool FIsIdentifier(STNode * pStnod, InString istr)
 {
 	auto pStval = PStnodRtiCast<STValue *>(pStnod);
 
-	if (pStval->m_park != PARK_Identifier)
+	if (pStval->m_park != PARK_Identifier || pStval->m_stvalk != STVALK_String)
 		return false;
 
-	return pStval->m_istr == istr;
+	return pStval->m_istrValue == istr;
 }
 
 
@@ -559,7 +560,6 @@ void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK
 	}
 }
 
-/*
 void PrintLiteral(Moe::StringBuffer * pStrbuf, STNode * pStnodLit)
 {
 	auto pStvalLit = PStnodRtiCast<STValue * >(pStnodLit);
@@ -568,7 +568,7 @@ void PrintLiteral(Moe::StringBuffer * pStrbuf, STNode * pStnodLit)
 
 	switch (pStvalLit->m_stvalk)
 	{
-	case STVALK_String:			FormatChz(pStrbuf, "\"%s\"", pStvalLit->m_istr.m_pChz);			return;
+	case STVALK_String:			FormatChz(pStrbuf, "\"%s\"", pStvalLit->m_istrValue.m_pChz);	return;
 	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStvalLit->m_nUnsigned);				return;
 	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStvalLit->m_nSigned);				return;
 	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStvalLit->m_g);						return;
@@ -578,6 +578,7 @@ void PrintLiteral(Moe::StringBuffer * pStrbuf, STNode * pStnodLit)
 	}
 }
 
+/*
 void WriteAstValue(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 {
 	auto pStval = PStnodRtiCast<STValue *>(pStnod);
@@ -722,9 +723,16 @@ bool FTryWriteValueSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 		{
 			bool fWrapInQuotes = (pStval->m_park == PARK_Literal);
 			const char * pChzFormat = (fWrapInQuotes) ? "\"%s\"" : "%s";
-			FormatChz(pStrbuf, pChzFormat, pStval->m_istr.m_pChz);
+			FormatChz(pStrbuf, pChzFormat, pStval->m_istrValue.m_pChz);
 		} break;
 	default: 
+		if (pStval->m_park == PARK_ReservedWord)
+		{
+			// value is a named reserved word, but isn't bound to a value
+			FormatChz(pStrbuf, "%s", pStval->m_istrRword.m_pChz);
+			break;
+		}
+
 		return false;
 	}
 
@@ -1149,6 +1157,12 @@ void AppendTypeDescriptor(TypeInfo * pTin, StringEditBuffer * pSeb)
 }
 
 
+LexSpan LexspFromSym(const Symbol * pSym)
+{
+	if (!pSym || !pSym->m_pStnodDefinition)
+		return LexSpan();
+	return pSym->m_pStnodDefinition->m_lexsp;
+}
 
 TypeInfo * PTinFromSymbol(const Symbol * pSym)
 {
@@ -1245,6 +1259,18 @@ SymbolTable::~SymbolTable()
 	}
 }
 
+Symbol * SymbolTable::PSymGenericInstantiate(Symbol * pSymGeneric, STNode * pStnodDefinition)
+{
+	auto pSymNew = PSymNewUnmanaged(pSymGeneric->m_istrName, pSymGeneric->m_pStnodDefinition, pSymGeneric->m_grfsym);
+	m_arypSymGenerics.Append(pSymNew);
+
+	pSymNew->m_pStnodDefinition = pStnodDefinition;
+
+	pSymNew->m_aryPSymReferencedBy.SetAlloc(m_pAlloc, BK_Dependency, 4);
+	pSymNew->m_aryPSymHasRefTo.SetAlloc(m_pAlloc, BK_Dependency, 4);
+	return pSymNew;
+}
+
 enum SYMCOLLIS 
 {
 	SYMCOLLIS_SymbolName,
@@ -1280,6 +1306,92 @@ static inline TABVIS TabvisCompute(SymbolTable * pSymtabCur, s32 iNestingDepthQu
 		return TABVIS_NoInstances;
 	return TABVIS_Ordered;
 }
+
+SymbolTable::SymbolIterator::SymbolIterator(
+	SymbolTable * pSymtab,
+	const InString & istr,
+	const LexSpan & lexsp,
+	GRFSYMLOOK grfsymlook)
+:m_pSymtab(pSymtab)
+,m_pSym(nullptr)
+,m_lexsp(lexsp)
+,m_grfsymlook(grfsymlook)
+{
+	m_pSym = pSymtab->PSymLookup(istr, lexsp, grfsymlook, &m_pSymtab);
+}
+
+Symbol * SymbolTable::SymbolIterator::PSymNext()
+{
+	if (!m_pSym)
+		return nullptr;
+
+	Symbol * apSym[3] = {nullptr, nullptr, nullptr}; // cur, next, buffer
+	int ipSym = 0;
+
+	auto tabvis = TabvisCompute(m_pSymtab, m_pSymtab->m_iNestingDepth, m_grfsymlook);
+	auto pSymIt = m_pSym;
+	while (pSymIt)
+	{
+		LexSpan lexspSym = (pSymIt->m_pStnodDefinition) ? pSymIt->m_pStnodDefinition->m_lexsp : LexSpan();
+		bool fVisibleWhenNested = pSymIt->m_grfsym.FIsSet(FSYM_VisibleWhenNested);
+		if (fVisibleWhenNested | (tabvis == TABVIS_Unordered) | ((tabvis < TABVIS_NoInstances) & (lexspSym <= m_lexsp)))
+		{
+			apSym[ipSym++] = pSymIt;
+			if (pSymIt->m_pSymPrev)
+				apSym[ipSym++] = pSymIt->m_pSymPrev;
+
+			break;
+		}
+		pSymIt = pSymIt->m_pSymPrev;
+	}
+	if (ipSym >= 2)
+	{
+		m_pSym = apSym[1];
+		return apSym[0];
+	}
+
+	SymbolTable * pSymtabIt = (m_grfsymlook.FIsSet(FSYMLOOK_Ancestors)) ? m_pSymtab->m_pSymtabParent : nullptr;
+	while (pSymtabIt)
+	{
+		Symbol ** ppSym = pSymtabIt->m_hashIstrPSym.Lookup(m_pSym->m_istrName);
+
+		if (ppSym)
+		{
+			tabvis = TabvisCompute(pSymtabIt, m_pSymtab->m_iNestingDepth, m_grfsymlook);
+			pSymIt = *ppSym;
+			while (pSymIt)
+			{
+				LexSpan lexspSym = (pSymIt->m_pStnodDefinition) ? pSymIt->m_pStnodDefinition->m_lexsp : LexSpan();
+				bool fVisibleWhenNested = pSymIt->m_grfsym.FIsSet(FSYM_VisibleWhenNested);
+				if (fVisibleWhenNested | (tabvis == TABVIS_Unordered) | ((tabvis < TABVIS_NoInstances) & (lexspSym <= m_lexsp)))
+				{
+					apSym[ipSym++] = pSymIt;
+					if (pSymIt->m_pSymPrev)
+					{
+						apSym[ipSym++] = pSymIt->m_pSymPrev;
+					}
+					m_pSymtab = pSymtabIt;
+
+					if (ipSym >= 2)
+					{
+						m_pSym = apSym[1];
+						return apSym[0];
+					}
+				}
+				else
+				{
+					break;
+				}
+			}
+		}
+
+		pSymtabIt = pSymtabIt->m_pSymtabParent;
+	}
+
+	m_pSym = apSym[1];
+	return apSym[0];
+}
+
 
 SYMCOLLIS SymcollisCheck(
 	SymbolTable * pSymtab,
@@ -1548,6 +1660,68 @@ Symbol * SymbolTable::PSymEnsure(
 	return pSym;
 }
 
+bool FAddSymbolInUsing(Symbol * pSym)
+{
+	// don't add the symbol for generics as they will already be added to the chlld namespace and cause a collision
+
+	if (pSym->m_pStnodDefinition && pSym->m_pStnodDefinition->m_park == PARK_GenericDecl)
+		return false;
+	return true;
+}
+
+void FlattenUsingTree(SymbolTable * pSymtab, CDynAry<InString> * paryIstr, u64 nVisitId)
+{
+	if (pSymtab->m_nVisitId == nVisitId)
+		return;
+	pSymtab->m_nVisitId = nVisitId;
+
+	paryIstr->EnsureSize(paryIstr->C() + pSymtab->m_hashIstrPSym.C());
+	Moe::CHash<InString, Symbol *>::CIterator iter(&pSymtab->m_hashIstrPSym);
+	InString * pIstr;
+	while (Symbol ** ppSym = iter.Next(&pIstr))
+	{
+		if (!FAddSymbolInUsing(*ppSym))
+			continue;
+
+		paryIstr->Append(*pIstr);
+	}
+
+	auto pUsingMax = pSymtab->m_aryUsing.PMac();
+	for (auto pUsingIt = pSymtab->m_aryUsing.A(); pUsingIt != pUsingMax; ++pUsingIt)
+	{
+		FlattenUsingTree(pUsingIt->m_pSymtab, paryIstr, nVisitId);
+	}
+}
+
+void SymbolTable::AddUsingScope(ErrorManager * pErrman, SymbolTable * pSymtabNew, STNode * pStnodUsingDecl)
+{
+	CDynAry<InString> aryIstrFlat(m_pAlloc, BK_Symbol);
+	CDynAry<Symbol *> aryPSymFlat(m_pAlloc, BK_Symbol);
+	FlattenUsingTree(pSymtabNew, &aryIstrFlat, ++g_nSymtabVisitId);
+
+	pSymtabNew->m_nVisitId = g_nSymtabVisitId;
+
+	auto errid = ErridCheckSymbolCollision(
+					pErrman, 
+					pStnodUsingDecl->m_lexsp,
+					"using declaration",
+					this,
+					aryIstrFlat.A(), aryIstrFlat.PMac(),
+					FSHADOW_NoShadowing,
+					g_nSymtabVisitId);
+	if (errid != ERRID_Nil)
+		return;
+
+	auto pUsingNew = m_aryUsing.AppendNew();
+	pUsingNew->m_pSymtab = pSymtabNew;
+	pUsingNew->m_pStnod = pStnodUsingDecl;
+	pUsingNew->m_hashIstrPSymp.SetAlloc(m_pAlloc, BK_Symbol);
+	MOE_ASSERT(pStnodUsingDecl->PSym(), "expected symbol for using decl");
+
+	pSymtabNew->m_arypSymtabUsedBy.Append(this);
+}
+
+
 Symbol * SymbolTable::PSymLookup(InString istr, const LexSpan & lexsp, GRFSYMLOOK grfsymlook, SymbolTable ** ppSymtabOut)
 {
 	if (ppSymtabOut)
@@ -1657,6 +1831,26 @@ TypeInfoProcedure * SymbolTable::PTinprocAllocate(Moe::InString istrName, size_t
 
 	AddManagedTin(pTinproc);
 	return pTinproc;
+}
+
+TypeInfoProcedure * SymbolTable::PTinprocCopy(TypeInfoProcedure * pTinprocSrc)
+{
+	TypeInfoProcedure * pTinprocNew = PTinprocAllocate(
+										pTinprocSrc->m_istrName,
+										pTinprocSrc->m_arypTinParams.C(),
+										pTinprocSrc->m_arypTinReturns.C());
+
+	pTinprocNew->m_pStnodDefinition = pTinprocSrc->m_pStnodDefinition;
+	pTinprocNew->m_grftinproc = pTinprocSrc->m_grftinproc;
+	pTinprocNew->m_inlinek = pTinprocSrc->m_inlinek;
+	pTinprocNew->m_mcallcon = pTinprocSrc->m_mcallcon;
+
+	pTinprocNew->m_arypTinParams.Append(pTinprocSrc->m_arypTinParams.A(), pTinprocSrc->m_arypTinParams.C());
+	pTinprocNew->m_arypTinReturns.Append(pTinprocSrc->m_arypTinReturns.A(), pTinprocSrc->m_arypTinReturns.C());
+
+	pTinprocNew->m_mpIptinGrfparmq.Clear();
+	pTinprocNew->m_mpIptinGrfparmq.Append(pTinprocSrc->m_mpIptinGrfparmq.A(), pTinprocSrc->m_mpIptinGrfparmq.C());
+	return pTinprocNew;
 }
 
 TypeInfoStruct * SymbolTable::PTinstructAllocate(InString istrIdent, size_t cField, size_t cGenericParam)
@@ -1894,8 +2088,11 @@ template <typename T>
 T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, Lexer * pLex, const LexSpan & lexsp)
 {
 	T * pStnod = StexAlloc<T>::PStnodAlloc(pAlloc, park, lexsp);
+	if (pLex)
+	{
+		pStnod->m_tok = TOK(pLex->m_tok);
+	}
 
-	pStnod->m_tok = TOK(pLex->m_tok);
 	return pStnod;
 }
 
@@ -1911,7 +2108,21 @@ T * PStnodAllocCopy(Moe::Alloc * pAlloc, T * pT)
 	return pStnod;
 }
 
+STNode * PStnodAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+{
+	return PStnodAlloc<STNode>(pAlloc, park, nullptr, lexsp);
+}
 
+STDecl * PStdeclAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+{
+	return PStnodAlloc<STDecl>(pAlloc, park, nullptr, lexsp);
+}
+
+STValue * PStvalAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+{
+
+	return PStnodAlloc<STValue>(pAlloc, park, nullptr, lexsp);
+}
 
 STNode * PStnodCopy(Alloc * pAlloc, STNode * pStnodSrc, Moe::CHash<STNode *, STNode *> * pmpPStnodSrcPStnodDst)
 {
@@ -2043,6 +2254,22 @@ void STNode::AppendChildToArray(Moe::Alloc * pAlloc, STNode * pStnodChild)
 	}
 
 	m_grfstnod.AddFlags(FSTNOD_ChildArrayOnHeap);
+}
+
+void STNode::ReplaceChild(STNode * pStnodOld, STNode * pStnodNew)
+{
+	// NOTE - this doesn't do anything smart to handle an abandoned child, hopefully you're reparenting or deleting it.
+	for (int ipStnod = 0; ipStnod < m_cpStnodChild; ++ipStnod)
+	{
+		STNode * pStnodChild = m_apStnodChild[ipStnod];
+		if (pStnodChild == pStnodOld)
+		{
+			m_apStnodChild[ipStnod] = pStnodNew;
+			return;
+		}
+	}
+
+	MOE_ASSERT(false, "failed to find child during ReplaceChild");
 }
 
 bool STNode::FCheckIsValid(ErrorManager * pErrman)
@@ -2260,10 +2487,7 @@ STNode * PStnodParseQualifierDecl(ParseContext * pParctx, Lexer * pLex)
 {
 	if (pLex->m_tok == TOK_Identifier && (pLex->m_istr == RWord::g_istrConst || pLex->m_istr == RWord::g_istrInArg))
 	{
-		auto pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_QualifierDecl, pLex, LexSpan(pLex));
-		pStval->SetIstr(pLex->m_istr);
-
-		TokNext(pLex);	
+		auto pStval = PStvalParseReservedWord(pParctx, pLex);
 		return pStval;
 	}
 
@@ -2433,7 +2657,7 @@ STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex)
 	}
 
 	STValue * pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, LexSpan(pLex));
-	pStval->SetIstr(pLex->m_istr);
+	pStval->SetIdentifier(pLex->m_istr);
 	(void) pStval->FCheckIsValid(pParctx->PErrman());
 
 	if (istrIdent.m_pChz[0] == '#')
@@ -2445,8 +2669,7 @@ STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex)
 	return pStval;
 }
 
-// BB - should merge parseIdentifier and parseReservedWord
-STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InString istrRwordExpected = Moe::InString())
+STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InString istrRwordExpected)
 {
 	if (pLex->m_tok != TOK_Identifier || !FIsReservedWord(pLex->m_istr))
 		return nullptr;
@@ -2458,7 +2681,7 @@ STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InS
 	}
 
 	STValue * pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_ReservedWord, pLex, LexSpan(pLex));
-	pStval->SetIstr(pLex->m_istr);
+	pStval->SetReservedWord(pLex->m_istr);
 	(void)pStval->FCheckIsValid(pParctx->PErrman());
 	pStval->m_tok = TOK(pLex->m_tok);
 
@@ -2466,13 +2689,29 @@ STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InS
 	return pStval;
 }
 
+Moe::InString IstrIdentifierFromDecl(STNode * pStnodDecl)
+{
+	if (!pStnodDecl)
+		return Moe::InString();
+
+	auto pStdecl = PStnodRtiCast<STDecl *>(pStnodDecl);
+	if (MOE_FVERIFY(pStdecl, "expected decl"))
+	{
+		if (pStdecl->m_pStnodIdentifier)
+		{
+			return IstrFromIdentifier(pStdecl->m_pStnodIdentifier);
+		}
+	}
+
+	return Moe::InString();
+}
 Moe::InString IstrFromIdentifier(STNode * pStnod)
 {
 	if (pStnod->m_park == PARK_Identifier)
 	{
 		STValue * pStval = PStnodRtiCast<STValue*>(pStnod);
 		if (pStval)
-			return pStval->m_istr;
+			return pStval->m_istrValue;
 	}
 
 	return Moe::InString();
@@ -2543,24 +2782,22 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 					if (pLex->m_istr == RWord::g_istrTrue)
 					{
 						pStval = PStvalParseReservedWord(pParctx, pLex);
-						//pStval->SetU64(true);
+						pStval->SetU64(true);
 					}
 					else if (pLex->m_istr == RWord::g_istrFalse)
 					{
 						pStval = PStvalParseReservedWord(pParctx, pLex);
-						//pStval->SetU64(false);
+						pStval->SetU64(false);
 					}
 					else if (pLex->m_istr == RWord::g_istrNull)
 					{
 						pStval = PStvalParseReservedWord(pParctx, pLex);
-						//pStval->SetU64(u32(0));
+						pStval->SetU64(u32(0));
 					}
 					else if (pLex->m_istr == RWord::g_istrFileDirective)
 					{
 						pStval = PStvalParseReservedWord(pParctx, pLex);
-
-						auto pStvalChild = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, pStval->m_lexsp);
-						pStvalChild->SetIstr(pStval->m_lexsp.m_istrFilename);
+						pStval->SetIdentifier(pStval->m_lexsp.m_istrFilename);
 					}
 					else if (pLex->m_istr == RWord::g_istrLineDirective)
 					{
@@ -2568,8 +2805,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 
 						LexLookup lexlook(pParctx->m_pWork, pStval);
 
-						auto pStvalChild = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, pStval->m_lexsp);
-						pStvalChild->SetS64(lexlook.m_iLine);
+						pStval->SetS64(lexlook.m_iLine);
 					}
 					else
 					{
@@ -2687,7 +2923,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 
 				if (pLex->m_litk == LITK_String)
 				{
-					pStval->SetIstr(pLex->m_istr);
+					pStval->SetIdentifier(pLex->m_istr);
 				}
 				else if (pLex->m_litk == LITK_Char)
 				{
@@ -3651,7 +3887,7 @@ STNode * PStnodParseParameter(
 				{
 					auto istrFauxIdent = IstrFauxIdentifierFromTypeSpecifier(pSymtab, pStnodType);
 					pStvalIdent = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, lexsp);
-					pStvalIdent->m_istr = istrFauxIdent;
+					pStvalIdent->SetIdentifier(istrFauxIdent);
 				}
 			}
 
@@ -3707,9 +3943,10 @@ struct OverloadInfo // tag = ovinf
 	const char *	m_pChz;
 	TOK				m_tok;
 	PARK			m_aPark[2];
+	Moe::InString	m_istr;
 };
 
-static const OverloadInfo s_aOvinf[] = {
+static OverloadInfo s_aOvinf[] = {
 	{ "operator+", TOK('+'),			{ PARK_AdditiveOp, PARK_UnaryOp} },
 	{ "operator-", TOK('-'),			{ PARK_AdditiveOp, PARK_UnaryOp} },
 	{ "operator|", TOK('|'),			{ PARK_AdditiveOp, PARK_Nil} },
@@ -3794,17 +4031,21 @@ bool FAllowsCommutative(PARK park)
 	return false;
 }
 
-const char * PChzOverloadNameFromTok(TOK tok)
+Moe::InString IstrOverloadNameFromTok(TOK tok)
 {
 	auto pOvinfMax = MOE_PMAC(s_aOvinf);
 	for (auto pOvinf = s_aOvinf; pOvinf != pOvinfMax; ++pOvinf)
 	{
 		if (pOvinf->m_tok == tok)
 		{
-			return pOvinf->m_pChz;
+			if (pOvinf->m_istr.FIsEmpty())
+			{
+				pOvinf->m_istr = IstrIntern(pOvinf->m_pChz);
+			}
+			return pOvinf->m_istr;
 		}
 	}
-	return nullptr;
+	return InString();
 }
 
 static bool FOperatorOverloadMustTakeReference(TOK tok)
@@ -3929,7 +4170,7 @@ STNode * PStnodParseReturnArrow(ParseContext * pParctx, Lexer * pLex, SymbolTabl
 	}
 
 	auto pStvalVoid = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, LexSpan(pLex));
-	pStvalVoid->m_istr = BuiltIn::g_istrVoid;
+	pStvalVoid->SetIdentifier(BuiltIn::g_istrVoid);
 
 	return pStvalVoid;
 }
@@ -4216,7 +4457,7 @@ STNode * PStnodSpoofEnumConstant(ParseContext * pParctx, Lexer * pLex, const Lex
 	pStdeclConstant->m_grfstnod.AddFlags(FSTNOD_ImplicitMember);
 
 	auto pStvalIdent = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, lexsp);
-	pStvalIdent->m_istr = istrIdent;
+	pStvalIdent->SetIdentifier(istrIdent);
 	pStvalIdent->m_grfstnod.AddFlags(FSTNOD_ImplicitMember);
 	pStdeclConstant->m_pStnodIdentifier = pStvalIdent;
 
@@ -4441,16 +4682,15 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 		{
 			TokNext(pLex);
 
-			const char * pChzOverloadName = PChzOverloadNameFromTok((TOK)pLex->m_tok);
-			if (!pChzOverloadName)
+			Moe::InString istrOverloadName = IstrOverloadNameFromTok((TOK)pLex->m_tok);
+			if (istrOverloadName.FIsEmpty())
 			{
 				EmitError(pParctx, lexsp, ERRID_InvalidOpOverload, "Cannot overload operator '%s'", PChzFromTok((TOK)pLex->m_tok));
-				pChzOverloadName = "OverloadError";
+				istrOverloadName = IstrIntern("OverloadError");
 			}
 
-			Moe::InString istrIdent = IstrIntern(pChzOverloadName);
 			pStvalIdent = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Identifier, pLex, lexsp);
-			pStvalIdent->m_istr = istrIdent;
+			pStvalIdent->SetIdentifier(istrOverloadName);
 		}
 		else
 		{
@@ -4651,8 +4891,8 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 						{
 							LexSpan lexsp(pLex);
 							auto pStvalReturn = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_ReservedWord, pLex, LexSpan(pLex));
+							pStvalReturn->SetReservedWord(RWord::g_istrReturn);
 							pStvalReturn->m_tok = TOK_Identifier;
-							pStvalReturn->m_istr = RWord::g_istrReturn;
 
 							(void) pStnodBody->AppendChildToArray(pParctx->m_pAlloc, pStvalReturn);
 						}

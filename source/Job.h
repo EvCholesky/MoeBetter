@@ -87,7 +87,6 @@ public:
 
 	void				SourceLookup(SSourceHandle * pSohand, SFile * pFileOut, int * piChz);
 	void				SourceLookup(SSourceSpan * pSospan, SFile * pFileOut, int * piChzMin, int * piChzMac);
-
 };
 
 // helper struct for looking up source spans

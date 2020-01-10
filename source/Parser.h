@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "Error.h"
 #include "Lexer.h"
 #include "MoeArray.h"
 #include "MoeHash.h"
@@ -31,7 +32,6 @@ struct SymbolBase;
 struct TypeInfo;
 struct TypeInfoEnum;
 struct Workspace;
-enum ERRID;
 
 enum PARK : s8 // PARse Kind
 {
@@ -195,10 +195,15 @@ public:
 	STNode *				PStnodChild(int ipStnod)
 								{ return m_apStnodChild[ipStnod]; }
 	STNode *				PStnodChildSafe(int ipStnod);
+	STNode **				PPStnodChildMin()
+								{ return m_apStnodChild; }
+	STNode **				PPStnodChildMax()
+								{ return m_apStnodChild + m_cpStnodChild; }
 	void					SetChildArray(STNode ** apStnodChild, int cpStnodChild);
 	void					CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, int cpStnodChild);
 	void					CopyChildArray(Moe::Alloc * pAlloc, STNode * pStnodChild);
 	void					AppendChildToArray(Moe::Alloc * pAlloc, STNode * pStnodChild);
+	void					ReplaceChild(STNode * pStnodOld, STNode * pStnodNew);
 	bool					FHasChildArray() const
 								{ return m_cpStnodChild > 0; }
 	STEXK					Stexk() const
@@ -457,14 +462,20 @@ struct STValue : public STNode // tag = stval
 						:STNode(s_stexk, park, lexsp)
 						,m_stvalk(STVALK_Nil)
 						,m_nUnsigned(0)
+						,m_istrRword()
 							{ ; }
 
 	STVALK              m_stvalk;
 
-	void				SetIstr(Moe::InString& istr)
+	void				SetIdentifier(const Moe::InString& istr)
 							{
-								m_istr = istr;
+								m_istrValue = istr;
 								m_stvalk = STVALK_String;
+							}
+
+	void				SetReservedWord(const Moe::InString& istrRword)
+							{
+								m_istrRword = istrRword;
 							}
 	void				SetF64(f64 g)
 							{
@@ -486,8 +497,10 @@ struct STValue : public STNode // tag = stval
 		f64					m_g;
 		u64					m_nUnsigned;
 		s64					m_nSigned;
-		Moe::InString		m_istr;
+		Moe::InString		m_istrValue;
 	};
+
+	Moe::InString			m_istrRword;		// reserved word name
 
 	MOE_STNOD_NO_CHILDREN();
 
@@ -584,6 +597,9 @@ enum FSEW // DeBuG STRing Flags
 };
 MOE_DEFINE_GRF(GRFSEW, FSEW, u32);
 
+STNode * PStnodAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp);
+STDecl * PStdeclAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp);
+STValue * PStvalAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp);
 
 Moe::InString IstrSExpression(STNode * pTin, SEWK sewk, GRFSEW grfsew = GRFSEW_Default);
 Moe::InString IstrSExpression(TypeInfo * pTin, GRFSEW grfsew = GRFSEW_Default);
@@ -591,9 +607,13 @@ Moe::InString IstrSExpression(TypeInfo * pTin, GRFSEW grfsew = GRFSEW_Default);
 void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFSEW grfsew = GRFSEW_Default);
 void WriteSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, GRFSEW grfsew = GRFSEW_Default);
 void WriteSExpressionForEntries(Workspace * pWork, char * pCo, char * pCoMax, SEWK sewk, GRFSEW grfsew);
+void PrintLiteral(Moe::StringBuffer * pStrbuf, STNode * pStnodLit);
 
 Moe::InString IstrFromIdentifier(STNode * pStnod);
+Moe::InString IstrIdentifierFromDecl(STNode * pStnodDecl);
 ERRID ErridCheckOverloadSignature(TOK tok, TypeInfoProcedure * pTinproc, ErrorManager * pErrman, const LexSpan & lexsp);
 
 Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename);
+
+Moe::InString IstrOverloadNameFromTok(TOK tok);
 

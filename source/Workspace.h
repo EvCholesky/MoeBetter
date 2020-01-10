@@ -134,6 +134,7 @@ struct Workspace	// tag = work
 	Moe::Alloc *						m_pAlloc;
 	BlockListEntry 						m_blistEntry;
 	Moe::CDynAry<WorkspaceEntry *> 		m_arypEntryChecked;		// order in which entry points were successfully type checked
+	Moe::CDynAry<GenericMap *>			m_arypGenmapManaged;	// generic maps to be deleted
 
 	typedef Moe::CHash<HV, int> HashHvIPFile;
 	Moe::CHash<HV, int> *				m_mpFilekPHashHvIPFile[FILEK_Max];

@@ -46,14 +46,14 @@ test builtin uniqueNames
 
 test OperatorPrecedence
 	input "n: = false || true && 0 ?rel 123 ?add 456 ?mul 789 ?shift 2"
-	parse "(decl, n, null, (op||, false, (op&&, true, (op?rel, 0, (op?add, 123, (op?mul, 456, (op?shift, 789, 2)))))))"
+	parse "(decl, n, null, (op||, 0, (op&&, 1, (op?rel, 0, (op?add, 123, (op?mul, 456, (op?shift, 789, 2)))))))"
 	{
 		?shift("<<"|">>") + ?mul("*"|"/"|"%"|"&") + ?add("+"|"-"|"|"|"^") + ?rel("<"|">"|"<="|">="|"=="|"!=")
 	}
 
 test OperatorPrecedence2
 	input "n: = 2 ?shift 789 ?mul 456 ?add 123 ?rel 0 && true || false"
-	parse "(decl, n, null, (op||, (op&&, (op?rel, (op?add, (op?mul, (op?shift, 2, 789), 456), 123), 0), true), false))"
+	parse "(decl, n, null, (op||, (op&&, (op?rel, (op?add, (op?mul, (op?shift, 2, 789), 456), 123), 0), 1), 0))"
 	{
 		?shift("<<"|">>") + ?mul("*"|"/"|"%"|"&") + ?add("+"|"-"|"|"|"^") + ?rel("<"|">"|"<="|">="|"=="|"!=")
 	}

@@ -107,6 +107,7 @@ struct Symbol : public SymbolBase	// tag = sym
 };
 
 TypeInfo * PTinFromSymbol(const Symbol * pSym);
+LexSpan LexspFromSym(const Symbol * pSym);
 
 // symbol path for 'using' aliases (used during codegen to reconstruct offsets)
 
@@ -145,7 +146,7 @@ protected:
 								{ ; }
 
 public:
-	class SymbolIterator // tag = symiter
+	struct SymbolIterator // tag = symiter
 	{
 	public:
 							SymbolIterator()
@@ -166,7 +167,7 @@ public:
 
 		SymbolTable *		m_pSymtab;
 		Symbol *			m_pSym;
-		LexSpan				m_lexspan;
+		LexSpan				m_lexsp;
 		GRFSYMLOOK			m_grfsymlook;
 	};
 
@@ -205,7 +206,7 @@ public:
 							);
 
 	Symbol *				PSymNewUnmanaged(const Moe::InString & istrName, STNode * pStnodDefinition, GRFSYM grfsym);
-	Symbol * 				PSymGenericInstantiate(Symbol * pSym, TypeInfo * pTinInstance);
+	Symbol * 				PSymGenericInstantiate(Symbol * pSym, STNode * pStnodDefinition);
 
 	Symbol *				PSymLookup(
 								Moe::InString istr,
@@ -227,6 +228,7 @@ public:
 	TypeInfoQualifier *		PTinqualWrap(TypeInfo * pTinTarget, GRFQUALK grfqualk);
 	TypeInfoEnum *			PTinenumAllocate(Moe::InString istrName, int cConstant, ENUMK enumk, STEnum * pStenumDef);
 	TypeInfoProcedure *		PTinprocAllocate(Moe::InString istrName, size_t cParam, size_t cReturn);
+	TypeInfoProcedure *		PTinprocCopy(TypeInfoProcedure * pTinprocSrc);
 	TypeInfoStruct *		PTinstructAllocate(Moe::InString istrName, size_t cField, size_t cGenericParam);
 	TypeInfoArray *			PTinaryCopy(TypeInfoArray * pTinarySrc);
 	TypeInfoArray *			PTinaryCopyWithNewElementType(TypeInfoArray * pTinarySrc, TypeInfo * pTinNew);

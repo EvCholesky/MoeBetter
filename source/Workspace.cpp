@@ -95,6 +95,21 @@ bool ErrorManager::FTryHideError(ERRID errid)
 	return false;
 }
 
+void ErrorManager::PushGenmapContext(GenericMap * pGenmap)
+{
+	m_arypGenmapContext.Append(pGenmap);
+}
+
+void ErrorManager::PopGenmapContext(GenericMap * pGenmap)
+{
+	if (!MOE_FVERIFY(!m_arypGenmapContext.FIsEmpty(), "instantiate context underflow in error manager"))
+		return;
+
+	auto pGenmapTop = m_arypGenmapContext.TPopLast();
+	if (!MOE_FVERIFY(pGenmapTop == pGenmap, "push/pop mismatch for instantate context"))
+		return;
+}
+
 void ErrorManager::ComputeErrorCounts(int * pCError, int * pCWarning)
 {
 	int cError = 0;
@@ -689,7 +704,7 @@ Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 ,m_blistEntry(pAlloc, Moe::BK_Workspace)
 ,m_arypEntryChecked(pAlloc, Moe::BK_Workspace) 
 //,m_arypValManaged(pAlloc, Moe::BK_WorkspaceVal, 0)
-//,m_arypGenmapManaged(pAlloc, Moe::BK_Workspace, 0)
+,m_arypGenmapManaged(pAlloc, Moe::BK_Workspace, 0)
 ,m_arypFile(pAlloc, Moe::BK_WorkspaceFile, 200)
 ,m_pChzObjectFilename(nullptr)
 ,m_pSymtab(nullptr)
@@ -817,8 +832,8 @@ void BeginWorkspace(Workspace * pWork)
 
 #if MOEB_LATER
 	MOE_ASSERT(pWork->m_arypValManaged.C() == 0, "Unexpected managed values in workspace");
-	MOE_ASSERT(pWork->m_arypGenmapManaged.C() == 0, "Unexpected generic maps in workspace");
 #endif
+	MOE_ASSERT(pWork->m_arypGenmapManaged.C() == 0, "Unexpected generic maps in workspace");
 
 	pWork->m_arypFile.Clear();
 	for (int filek = Workspace::FILEK_Min; filek < Workspace::FILEK_Max; ++filek)
@@ -920,13 +935,13 @@ void EndWorkspace(Workspace * pWork)
 
 	pWork->m_arypValManaged.Clear();
 
+#endif
 	for (auto ppGenmap = pWork->m_arypGenmapManaged.A(); ppGenmap != pWork->m_arypGenmapManaged.PMac(); ++ppGenmap)
 	{
 		(*ppGenmap)->Cleanup(pWork->m_pAlloc);
 		pWork->m_pAlloc->MOE_DELETE(*ppGenmap);
 	}
 	pWork->m_arypGenmapManaged.Clear();
-#endif
 
 	pWork->m_blistEntry.Clear();
 	pWork->m_arypEntryChecked.Clear();

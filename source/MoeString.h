@@ -74,6 +74,8 @@ namespace Moe
 		bool			operator!=(const InString & istrOther) const
 							{ return !(*this == istrOther); }
 
+		const char *	PChz() const 
+							{ return m_pChz; }
 		bool			FIsEmpty() const
 							{ return m_pChz == nullptr || *m_pChz == '\0'; }
 		bool			FIsNull() const

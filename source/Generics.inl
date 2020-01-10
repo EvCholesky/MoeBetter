@@ -223,11 +223,22 @@ GenericMap * PGenmapTrimUnusedAnchors(
 	GenericMap * pGenmapSuperset,
 	const LexSpan & lexsp);
 
+enum FGENCOMP
+{
+	FGENCOMP_None			= 0x0,
+	FGENCOMP_ImplicitRef	= 0x1,
+
+	FGENCOMP_All			= 0x1,
+};
+
+MOE_DEFINE_GRF(GRFGENCOMP, FGENCOMP, u32);
+
 // Compute a generic map (values/types for all anchors)
 ERRID ErridComputeDefinedGenerics( 
 	TypeCheckWorkspace * pTcwork,
 	const LexSpan & lexsp, 
 	ERREP errep,
+	GRFGENCOMP grfgencomp, 
 	SymbolTable * pSymtab,
 	TypeInfo * pTinRef,
 	STNode * pStnodDef,
@@ -255,12 +266,10 @@ TypeInfo * PTinSubstituteGenerics(
 InstantiateRequest * PInsreqLookup(
 	TypeCheckWorkspace * pTcwork,
 	STNode * pStnodDefinition,
-	GenericMap * pGenmap,
-	const LexSpan & lexsp);
+	GenericMap * pGenmap);
 
 TypeInfoStruct * PTinstructEnsureUniqueInstance(
 	TypeCheckWorkspace * pTcwork,
-	const LexSpan & lexsp,
 	TypeInfoStruct * pTinstruct);
 
 // instantiate symbol & AST for generic procedure

@@ -141,6 +141,8 @@ enum ERRID
 	ERRID_MissingMemberDef			= 2049,
 	ERRID_UnknownSymbol				= 2050,
 	ERRID_TypeExpected				= 2051,
+	ERRID_LhsHasNoEffect			= 2052,
+	ERRID_SymbolLookupFailed		= 2053,
 	ERRID_TypeCheckMax				= 3000,
 
 	ERRID_CodeGenMin				= ERRID_TypeCheckMax,

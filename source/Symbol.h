@@ -222,6 +222,7 @@ public:
 
 	TypeInfoLiteral *		PTinlitFromLitk(LITK litk);
 	TypeInfoLiteral *		PTinlitFromLitk(LITK litk, int cBit, GRFNUM grfnumkl);
+	TypeInfoLiteral *		PTinlitAllocUnfinal(STVALK stvalk);
 	TypeInfoLiteral *		PTinlitCopy(TypeInfoLiteral * pTinlitSrc);
 	TypeInfoPointer *		PTinptrAllocate(TypeInfo * pTinPointedTo, bool fIsImplicitRef = false);
 	TypeInfoQualifier *		PTinqualEnsure(TypeInfo * pTinTarget, GRFQUALK grfqualk);

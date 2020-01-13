@@ -57,7 +57,8 @@ struct TypeInfoProcedure;
 		BLTIN(EnumNone) STR(nil) \
 		BLTIN(EnumAll) STR(nil)	\
 		BLTIN(EnumNames) STR(nil) \
-		BLTIN(EnumValues) STR(nil)	
+		BLTIN(EnumValues) STR(nil) \
+		BLTIN(EnumFlag) STR(_flag)	
 
 #define BLTIN(x) \
 	extern const char * g_pChz##x; \
@@ -389,6 +390,21 @@ enum LITK
 
 	MOE_MAX_MIN_NIL(LITK)
 };
+
+// subset of litk for simple types, (complex types aren't represented by a single stvalue?)
+enum STVALK // Syntax Tree VALue Kind
+{
+	STVALK_Float,
+	STVALK_SignedInt,
+	STVALK_UnsignedInt,
+	STVALK_Null,
+	STVALK_Bool,
+	STVALK_String,
+
+	MOE_MAX_MIN_NIL(STVALK)
+};
+
+
 
 struct LiteralType	// litty
 {

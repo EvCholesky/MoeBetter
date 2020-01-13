@@ -444,16 +444,6 @@ struct STStruct : public STNode
 
 
 
-// indicates storage type only - actual type info should come from STypeInfoLiteral
-enum STVALK // Syntax Tree VALue Kind
-{
-	STVALK_Nil = -1,
-	STVALK_Float,
-	STVALK_SignedInt,
-	STVALK_UnsignedInt,
-	STVALK_String,
-};
-
 struct STValue : public STNode // tag = stval
 {
 	static const STEXK s_stexk = STEXK_Value;
@@ -477,6 +467,17 @@ struct STValue : public STNode // tag = stval
 							{
 								m_istrRword = istrRword;
 							}
+	void				SetBool(bool f)
+							{
+								m_nUnsigned = f;
+								m_stvalk = STVALK_Bool;
+							}
+	void				SetNull()
+							{
+								m_nUnsigned = 0;
+								m_stvalk = STVALK_Null;
+							}
+
 	void				SetF64(f64 g)
 							{
 								m_g = g;
@@ -491,6 +492,12 @@ struct STValue : public STNode // tag = stval
 							{
 								m_nSigned = n;
 								m_stvalk = STVALK_SignedInt;
+							}
+	void				CopyValues(const STValue * pStvalOther)
+							{
+								m_stvalk = pStvalOther->m_stvalk;
+								m_nUnsigned = pStvalOther->m_nUnsigned;
+								m_istrRword = pStvalOther->m_istrRword;
 							}
 	union
 	{

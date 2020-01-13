@@ -2064,6 +2064,8 @@ inline u64 NUnsignedLiteralCast(TypeCheckWorkspace * pTcwork, const STValue * pS
 {
 	switch (pStval->m_stvalk)
 	{
+	case STVALK_Bool:
+	case STVALK_Null:
 	case STVALK_UnsignedInt:
 		return pStval->m_nUnsigned;
 	case STVALK_Float:
@@ -2094,6 +2096,8 @@ inline s64 NSignedLiteralCast(TypeCheckWorkspace * pTcwork, const STValue * pStv
 			}
 			return (s64)pStval->m_nUnsigned;
 		}
+	case STVALK_Bool:
+	case STVALK_Null:
 	case STVALK_SignedInt:
 		return pStval->m_nSigned;
 	case STVALK_Float:
@@ -2108,6 +2112,8 @@ inline f64 GLiteralCast(const STValue * pStval)
 {
 	switch (pStval->m_stvalk)
 	{
+	case STVALK_Bool:
+	case STVALK_Null:
 	case STVALK_UnsignedInt:	return (f64)pStval->m_nUnsigned;
 	case STVALK_SignedInt:		return (f64)pStval->m_nSigned;
 	case STVALK_Float:			return pStval->m_g;
@@ -4737,8 +4743,10 @@ BigInt BintFromStval(STValue * pStval)
 {
 	switch (pStval->m_stvalk)
 	{
-	case STVALK_SignedInt:		return BintFromInt(pStval->m_nSigned);
+	case STVALK_Bool:
+	case STVALK_Null:
 	case STVALK_UnsignedInt:	return BintFromUint(pStval->m_nUnsigned, false);
+	case STVALK_SignedInt:		return BintFromInt(pStval->m_nSigned);
 #if MOEB_LATER
 	case STVALK_ReservedWord:
 		{
@@ -5626,6 +5634,22 @@ bool FIsValidLhs(const STNode * pStnod)
 	}
 
 	return (tink != TINK_Null) & (tink != TINK_Void) & (tink != TINK_Literal);
+}
+
+bool FIsType(STNode * pStnod)
+{
+	if (pStnod->m_pTin && pStnod->m_pTin->m_tink == TINK_Literal)
+		return false;
+
+	auto pSym = pStnod->PSym();
+	if (!pSym)
+	{
+		// BB - The only current exception to his is spoofed array members
+		MOE_ASSERT(pStnod->m_park != PARK_Identifier, "Expected identifiers to have symbol");
+		return false;
+	}
+
+	return pSym->m_grfsym.FIsSet(FSYM_IsType);
 }
 
 void FinalizeCompoundLiteralType(
@@ -6943,8 +6967,333 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 	return TCRET_Continue;
 }
 
+TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, TypeCheckStackEntry * pTcsentTop)
+{
+	auto pStdecl = PStnodDerivedCast<STDecl *>(pStnod);
+	if (pTcsentTop->m_nState < 1)
+	{
+		pTcsentTop->m_nState = 1;	// skip the identifier
+
+		auto pStnodIdent = pStdecl->m_pStnodIdentifier;
+		if (MOE_FVERIFY(pStnodIdent, "constant missing identifier"))
+		{
+			auto pSym = pStnodIdent->PSym();
+			MOE_ASSERT(pSym, "expected symbol for declaration");
+			pTcsentTop->m_pSymContext = pSym;
+		}
+	}
+
+	if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+	{
+		auto pStnodCur = pStnod->PStnodChild(pTcsentTop->m_nState);
+		auto pTcsentPushed = PTcsentPush(pTcfram, &pTcsentTop, pStnodCur);
+		if (pTcsentPushed && pStnodCur == pStdecl->m_pStnodType)
+		{
+			pTcsentPushed->m_tcctx = TCCTX_TypeSpecification;
+		}
+		
+		++pTcsentTop->m_nState;
+		return TCRET_Continue;
+	}
+
+	auto pStnodInit = pStdecl->m_pStnodInit;
+	auto pStnodIdent = pStdecl->m_pStnodIdentifier;
+	InString istrIdent = IstrFromIdentifier(pStnodIdent);
+	if (FIsType(pStnodInit))
+	{
+		EmitError(pTcwork, pStnod->m_lexsp, ERRID_InitTypeMismatch, 
+			"Cannot initialize constant '%s' to non-instance value.",istrIdent.PChz());
+		return TCRET_StoppingError;
+	}
+
+	auto pSymtab = pTcsentTop->m_pSymtab;
+	auto pStnodType = pStdecl->m_pStnodType;
+	if (pStnodType)
+	{
+		bool fIsValidTypeSpec;
+		TypeInfo * pTinType = PTinFromTypeSpecification(
+								pTcwork,
+								pSymtab,
+								pStnodType,
+								pTcsentTop->m_grfsymlook,
+								nullptr,
+								&fIsValidTypeSpec);
+
+		if (!fIsValidTypeSpec)
+			return TCRET_StoppingError;
+
+		// just make sure the init type fits the specified one
+		TypeInfo * pTinInit = pStnodInit->m_pTin;
+		pTinInit = PTinPromoteUntypedTightest(pTcwork, pSymtab, pStnodInit, pTinType);
+		pTinInit = PTinAfterRValueAssignment(pTcwork, pStnodInit->m_lexsp, pTinInit, pSymtab, pTinType);
+		if (FCanImplicitCast(pTinInit, pTinType))
+		{
+			FinalizeLiteralType(pTcwork, pSymtab, pTinType, pStnodInit);
+		}
+		else
+		{
+			EmitError(pTcwork, pStnod->m_lexsp, ERRID_InitTypeMismatch, "Cannot initialize constant of type %s with %s",
+				IstrFromTypeInfo(pTinType).PChz(),
+				IstrFromTypeInfo(pTinInit).PChz());
+		}
+	}
+	else
+	{
+		// Promote as literal, just to error on untyped acasts. We don't actually force a type on
+		//  the constant until it gets used
+		(void) PTinPromoteUntypedDefault(pTcwork, pSymtab, pStnodInit);
+	}
+
+	auto pStval = PStnodRtiCast<STValue*>(pStnod);
+	auto pStvalInit = PStnodRtiCast<STValue*>(pStnodInit);
+	if (MOE_FVERIFY(pStval && pStvalInit, "expected value structs"))
+	{
+		pStval->CopyValues(pStvalInit);
+	}
+	pStnod->m_pTin = pStnodInit->m_pTin;
+
+	// find our symbol and resolve any pending unknown types
+	if (MOE_FVERIFY(pStnodIdent, "constant Declaration without identifier"))
+	{
+		// TODO: Using?
+		Symbol * pSymIdent = pSymtab->PSymLookup(
+										istrIdent,
+										pStnodIdent->m_lexsp,
+										pTcsentTop->m_grfsymlook);
+
+		if (!pSymIdent || pSymIdent->m_pStnodDefinition != pStnod)
+		{
+			EmitError(pTcwork, pStnod->m_lexsp, ERRID_SymbolLookupFailed, "symbol lookup failed for '%s'", istrIdent.PChz());
+			return TCRET_StoppingError;
+		}
+		else
+		{
+			pStnod->m_pSymbase = pSymIdent;
+			auto pStnodIdent = pSymIdent->m_pStnodDefinition;
+			if (pStnodIdent->m_pTin == nullptr)
+			{
+				pStnodIdent->m_pTin = pStnod->m_pTin;
+			}
+		}
+		OnTypeResolve(pTcwork, pSymIdent);
+	}
+
+	pStnod->m_strees = STREES_TypeChecked;
+	PopTcsent(pTcfram, &pTcsentTop, pStnod);
+	return TCRET_Continue;
+}
+
+static bool FIsEnumFlagLValue(SymbolBase * pSymbase)
+{
+	if (pSymbase->m_symk != SYMK_Path)
+		return false;
+
+	auto pSympath = (SymbolPath *)pSymbase;pSymbase;pSymbase;pSymbase;
+	if (pSympath->m_arypSym.C() < 2)
+		return false;
+
+	auto pSymEnum = pSympath->m_arypSym[pSympath->m_arypSym.C() - 2];
+	if (pSymEnum->m_grfsym.FIsSet(FSYM_IsType))
+		return false; 
+
+	auto pTin = PTinStripQualifiersAndPointers(PTinFromSymbol(pSymEnum));
+	auto pTinenum = PTinRtiCast<TypeInfoEnum *>(pTin);
+	if (!pTinenum || pTinenum->m_enumk != ENUMK_FlagEnum)
+		return false;
+
+	// BB - need to make sure constant is not implicit constant
+	return true;
+}
+
+TcretDebug TcretCheckIdentifier(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, TypeCheckStackEntry * pTcsentTop)
+{
+	// Note: we're only expecting to get here for identifiers within statements.
+	//  Identifiers for function names, declaration names*, should do their own type checking.
+	//      * declaration type identifiers will be type checked here
+
+	InString istrIdent = IstrFromIdentifier(pStnod);
+	if (MOE_FVERIFY(!istrIdent.FIsEmpty(), "identifier node with no value"))
+	{
+		SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
+
+		auto pSymbase = PSymbaseLookup(pSymtab, istrIdent, pStnod->m_lexsp, pTcsentTop->m_grfsymlook);
+		if (!pSymbase)
+		{
+			EmitError(pTcwork, pStnod->m_lexsp, ERRID_UnknownIdentifier, "'%s' unknown identifier detected", istrIdent.PChz());
+			return TCRET_StoppingError;
+		}
+
+		Symbol * pSymLast = PSymLast(pSymbase);
+		if (pSymLast->m_grfsym.FIsSet(FSYM_IsBuiltIn))
+		{
+			pStnod->m_pTin = PTinFromSymbol(pSymLast);
+			pStnod->m_pSymbase = pSymbase;
+		}
+		else if (MOE_FVERIFY(pSymLast->m_pStnodDefinition, "Non-built-in types must have a STNode"))
+		{
+			STNode * pStnodDefinition = pSymLast->m_pStnodDefinition;
+			if (pStnodDefinition->m_park == PARK_GenericDecl)
+			{
+				// We're type checking the uninstantiated generic, don't wait for a symbol definition
+				//  this symbol will be replaced later
+
+				if (pStnodDefinition->m_pTin)
+				{
+					// we may encounter a PARK_GenericDecl node that has been copied during the instantiation
+					//  if it has a concrete type, we're ok
+
+					pStnod->m_pTin = pStnodDefinition->m_pTin;
+					pStnod->m_pSymbase = pSymbase;
+				}
+				else
+				{
+					pStnod->m_pTin = pStnodDefinition->m_pTin;
+					pStnod->m_pSymbase = pSymbase;
+					AddSymbolReference(pTcsentTop->m_pSymContext, pSymLast);
+				}
+			}
+			else if (pStnodDefinition->m_park == PARK_Decl ||
+				pStnodDefinition->m_park == PARK_ConstantDecl ||
+				pStnodDefinition->m_park == PARK_CompoundLiteral ||
+				pStnodDefinition->m_park == PARK_Typedef ||
+				pStnodDefinition->m_park == PARK_EnumDefinition ||
+				pStnodDefinition->m_park == PARK_EnumConstant ||
+				pStnodDefinition->m_park == PARK_StructDefinition ||
+				pStnodDefinition->m_park == PARK_ProcedureDefinition)
+			{
+				if (pStnodDefinition->m_strees >= STREES_TypeChecked || 
+				   ((pStnodDefinition->m_strees >= STREES_SignatureTypeChecked) && pTcsentTop->m_fAllowForwardDecl))
+				{
+					MOE_ASSERT(pStnodDefinition->m_pTin, "symbol definition was type checked, but has no type?");
+					pStnod->m_pTin = pStnodDefinition->m_pTin;
+					pStnod->m_pSymbase = pSymbase;
+
+					AddSymbolReference(pTcsentTop->m_pSymContext, pSymLast);
+
+					if (pStnod->m_pTin && 
+						(pStnod->m_pTin->m_tink == TINK_Literal || pStnod->m_pTin->m_tink == TINK_Enum))
+					{
+						auto pStvalDefinition = PStnodRtiCast<STValue *>(pStnodDefinition);
+						if (pStvalDefinition)
+						{
+							auto pStval = PStnodRtiCast<STValue *>(pStnod);
+							if (MOE_FVERIFY(pStval, "expected nodes to be values"))
+							{
+								pStval->CopyValues(pStvalDefinition);
+							}
+
+							if (FIsEnumFlagLValue(pSymbase))
+							{
+								auto pTinFlag = pSymtab->PTinBuiltin(BuiltIn::g_istrEnumFlag);
+								pStnod->m_pTin = pTinFlag;
+							}
+						}
+					}
+				}
+				else
+				{
+					// set up dependency for either the definition or the type...
+					
+					UnknownType * pUntype = PUntypeEnsure(pTcwork, pSymLast);
+					pUntype->m_arypTcframDependent.Append(pTcfram);
+					return TCRET_WaitingForSymbolDefinition;
+				}
+			}
+			else
+			{
+				LexLookup lexlook(pTcwork->m_pErrman->m_pWork, pStnodDefinition->m_lexsp);
+				MOE_ASSERT(false, "unexpected identifier source for '%s' in type check. %s %d:%d", 
+					istrIdent.PChz(),
+					lexlook.m_istrFilename.PChz(), lexlook.m_iLine, lexlook.m_iCodepoint);
+			}
+		}
+	}
+
+	PopTcsent(pTcfram, &pTcsentTop, pStnod);
+	pStnod->m_strees = STREES_TypeChecked;
+	return TCRET_Continue;
+}
+
+TcretDebug TcretCheckLiteral(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, TypeCheckStackEntry * pTcsentTop)
+{
+	if (MOE_FVERIFY(pStnod->m_pTin == nullptr, "STypeInfoLiteral should not be constructed before type checking"))
+	{
+		SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
+
+		auto pStval = PStnodRtiCast<STValue *>(pStnod);
+		if (MOE_FVERIFY(pStval, "null value in literal"))
+		{
+			TypeInfoLiteral * pTinlit = pSymtab->PTinlitAllocUnfinal(pStval->m_stvalk);
+			pStnod->m_pTin = pTinlit;
+		}
+	}
+	
+	pStnod->m_strees = STREES_TypeChecked;
+	PopTcsent(pTcfram, &pTcsentTop, pStnod);
+	return TCRET_Continue;
+}
+
+TcretDebug TcretCheckList(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, TypeCheckStackEntry * pTcsentTop)
+{
+	if (pTcsentTop->m_nState >= pStnod->CPStnodChild())
+	{
+		if (pStnod->m_park == PARK_List)
+		{
+			int cStnodChild = pStnod->CPStnodChild();
+			for (int iStnod = 0; iStnod < cStnodChild; ++iStnod)
+			{
+				auto pStnodChild = pStnod->PStnodChild(iStnod);
+				switch (pStnodChild->m_park)
+				{
+				case PARK_Identifier:
+				case PARK_Cast:
+				case PARK_Literal:
+					{
+						EmitError(pTcwork, pStnod->m_lexsp, ERRID_LhsHasNoEffect, 
+							"%s is left hand side, has no effect",
+							PChzLongFromPark(pStnodChild->m_park));
+					} break;
+				default:
+					break;
+				}
+			}
+		}
+
+		pStnod->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcfram, &pTcsentTop, pStnod);
+		return TCRET_Continue;
+	}
+
+	auto pTcsentPushed = PTcsentPush(pTcfram, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+	if (pTcsentPushed)
+	{
+		if (pStnod->m_park == PARK_List || pStnod->m_park == PARK_ExpressionList)
+		{
+			if (pStnod->m_pSymtab)
+			{
+				pTcsentPushed->m_pSymtab = pStnod->m_pSymtab;
+			}
+		}
+		if (pStnod->m_park == PARK_ParameterList)
+		{
+			pTcsentPushed->m_parkDeclContext = pStnod->m_park;
+			pTcsentPushed->m_fAllowForwardDecl = true;
+		}
+		if (pStnod->m_park == PARK_ReferenceDecl)
+		{
+			pTcsentPushed->m_fAllowForwardDecl = true;
+		}
+	}
+
+	return TCRET_Continue;
+}
+
 TcretDebug TcretTypeCheckSubtree(TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram)
 {
+	#define CONTINUE_OR_BREAK(tcret) if (tcret = TCRET_Continue) return tcret; break;
+
+	TCRET tcret;
+
 	CDynAry<TypeCheckStackEntry> * paryTcsent = &pTcfram->m_aryTcsent;
 	while (paryTcsent->C())
 	{
@@ -6954,18 +7303,41 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckWorkspace * pTcwork, TypeCheckFrame * 
 		switch (pStnod->m_park)
 		{
 		case PARK_ProcedureDefinition:
-			{
-				TCRET tcret = TcretCheckProcedureDef(pStnod, pTcwork, pTcfram, pTcsentTop);
-				if (tcret != TCRET_Continue)
-					return tcret;
-			}
+			tcret = TcretCheckProcedureDef(pStnod, pTcwork, pTcfram, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_Decl:
-		{
-			TCRET tcret = TcretCheckDecl(pStnod, pTcwork, pTcfram, pTcsentTop);
-				if (tcret != TCRET_Continue)
-					return tcret;
-		}
+			tcret = TcretCheckDecl(pStnod, pTcwork, pTcfram, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_ConstantDecl:
+			tcret = TcretCheckConstantDecl(pStnod, pTcwork, pTcfram, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_Identifier:
+			tcret = TcretCheckIdentifier(pStnod, pTcwork, pTcfram, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_Literal:
+			tcret = TcretCheckLiteral(pStnod, pTcwork, pTcfram, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_ArrayDecl:
+		case PARK_ReferenceDecl:
+		case PARK_QualifierDecl:
+		case PARK_ParameterList:
+		case PARK_List:
+		case PARK_ExpressionList:
+			tcret = TcretCheckList(pStnod, pTcwork, pTcfram, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_Uninitializer:
+		case PARK_Nop:
+		case PARK_VariadicArg:
+			{
+				pStnod->m_strees = STREES_TypeChecked;
+				PopTcsent(pTcfram, &pTcsentTop, pStnod);
+			} break;
 
 		default:
 			MOE_ASSERT(false, "unknown parse kind (%s) encountered during type check", PChzLongFromPark(pStnod->m_park));
@@ -6973,6 +7345,8 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckWorkspace * pTcwork, TypeCheckFrame * 
 		}
 	}
 	return TCRET_Complete;
+
+	#undef CONTINUE_OR_BREAK
 }
 
 void PerformTypeCheck(

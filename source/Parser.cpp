@@ -568,10 +568,13 @@ void PrintLiteral(Moe::StringBuffer * pStrbuf, STNode * pStnodLit)
 
 	switch (pStvalLit->m_stvalk)
 	{
-	case STVALK_String:			FormatChz(pStrbuf, "\"%s\"", pStvalLit->m_istrValue.m_pChz);	return;
-	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStvalLit->m_nUnsigned);				return;
-	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStvalLit->m_nSigned);				return;
-	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStvalLit->m_g);						return;
+	case STVALK_String:			FormatChz(pStrbuf, "\"%s\"", pStvalLit->m_istrValue.m_pChz);			return;
+	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStvalLit->m_nUnsigned);						return;
+	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStvalLit->m_nSigned);						return;
+	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStvalLit->m_g);								return;
+	case STVALK_Bool:			FormatChz(pStrbuf, "%s", (pStvalLit->m_nUnsigned) ? "true" : false);	return;
+	case STVALK_Null:			AppendChz(pStrbuf, "null");												return;
+
 	default:
 		MOE_ASSERT(false, "unknown literal %s", PChzFromTok(pStnodLit->m_tok));
 		return;
@@ -675,12 +678,12 @@ bool FTryWriteValueSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 				break;
 
 			case LITK_Bool:		
-				FormatChz(pStrbuf, "%s", (pStval->m_nUnsigned == 0) ? "false" : "true");			
-				return true;
+				stvalk = STVALK_Bool;
+				break;
 
 			case LITK_Null:		
-				AppendChz(pStrbuf, "null");															
-				return true;
+				stvalk = STVALK_Null;
+				break;
 
 			case LITK_Compound:
 				{
@@ -719,6 +722,8 @@ bool FTryWriteValueSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStval->m_g);								break;
 	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStval->m_nSigned);						break;
 	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStval->m_nUnsigned);					break;
+	case STVALK_Bool:			FormatChz(pStrbuf, "%s", (pStval->m_nUnsigned) ? "true" : "false");	break;
+	case STVALK_Null:			AppendChz(pStrbuf, "null");											break;
 	case STVALK_String:			
 		{
 			bool fWrapInQuotes = (pStval->m_park == PARK_Literal);
@@ -1493,6 +1498,30 @@ TypeInfoLiteral * SymbolTable::PTinlitFromLitk(LITK litk, int cBit, GRFNUM grfnu
 	return nullptr;
 }
 
+TypeInfoLiteral * SymbolTable::PTinlitAllocUnfinal(STVALK stvalk)
+{
+	LITK litk = LITK_Nil;
+
+	static const LiteralType s_mpStvalkLitty[] =
+	{
+		{ LITK_Numeric, -1, FNUM_IsFloat | FNUM_IsSigned }, //STVALK_Float,
+		{ LITK_Numeric, -1, FNUM_IsSigned},					//STVALK_SignedInt,
+		{ LITK_Numeric, -1, FNUM_None} ,					//STVALK_UnsignedInt,
+		{ LITK_Null, -1, FNUM_None} ,						//STVALK_Null,
+		{ LITK_Bool, -1, FNUM_None} ,						//STVALK_Bool,
+		{ LITK_String, -1, FNUM_None} ,						//STVALK_String,
+	};
+	MOE_CASSERT(MOE_DIM(s_mpStvalkLitty) == STVALK_Max, "missing STVALK literal type");
+
+	if (FIsValid(stvalk))
+	{
+		const LiteralType * pLitty = &s_mpStvalkLitty[stvalk];	
+		return PTinlitFromLitk(pLitty->m_litk, pLitty->m_cBit, pLitty->m_grfnum);
+	}
+
+	return nullptr;
+}
+
 ERRID ErridCheckSymbolCollision(
 	ErrorManager * pErrman,
 	const LexSpan & lexsp,
@@ -1942,9 +1971,8 @@ void SymbolTable::AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo 
 	}
 }
 
-void AddSimpleBuiltInType(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, TINK tink, GRFSYM grfsym = FSYM_None)
+void AddSimpleBuiltInType(Workspace * pWork, SymbolTable * pSymtab, InString istrName, TINK tink, GRFSYM grfsym = FSYM_None)
 {
-	InString istrName = IstrIntern(pChzName);
 	TypeInfo * pTin = MOE_NEW(pSymtab->m_pAlloc, TypeInfo) TypeInfo(
 																istrName,
 																tink);
@@ -2003,10 +2031,10 @@ void AddBuiltInLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pC
 
 void SymbolTable::AddBuiltInSymbols(Workspace * pWork)
 {
-	AddSimpleBuiltInType(pWork, this, BuiltIn::g_pChzBool, TINK_Bool);
-	AddSimpleBuiltInType(pWork, this, "_flag", TINK_Flag, FSYM_InternalUseOnly);
-	AddSimpleBuiltInType(pWork, this, "void", TINK_Void);
-	AddSimpleBuiltInType(pWork, this, BuiltIn::g_pChzString, TINK_Type);
+	AddSimpleBuiltInType(pWork, this, BuiltIn::g_istrBool, TINK_Bool);
+	AddSimpleBuiltInType(pWork, this, BuiltIn::g_istrEnumFlag, TINK_Flag, FSYM_InternalUseOnly);
+	AddSimpleBuiltInType(pWork, this, BuiltIn::g_istrVoid, TINK_Void);
+	AddSimpleBuiltInType(pWork, this, BuiltIn::g_istrString, TINK_Type);
 
 	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU8, 8, FNUM_None);
 	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU16, 16, FNUM_None);
@@ -2782,17 +2810,17 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 					if (pLex->m_istr == RWord::g_istrTrue)
 					{
 						pStval = PStvalParseReservedWord(pParctx, pLex);
-						pStval->SetU64(true);
+						pStval->SetBool(true);
 					}
 					else if (pLex->m_istr == RWord::g_istrFalse)
 					{
 						pStval = PStvalParseReservedWord(pParctx, pLex);
-						pStval->SetU64(false);
+						pStval->SetBool(false);
 					}
 					else if (pLex->m_istr == RWord::g_istrNull)
 					{
 						pStval = PStvalParseReservedWord(pParctx, pLex);
-						pStval->SetU64(u32(0));
+						pStval->SetNull();
 					}
 					else if (pLex->m_istr == RWord::g_istrFileDirective)
 					{

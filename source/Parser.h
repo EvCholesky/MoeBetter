@@ -21,6 +21,7 @@
 #include "MoeArray.h"
 #include "MoeHash.h"
 #include "MoeString.h"
+#include "Request.h"
 #include "Symbol.h"
 #include "TypeInfo.h"
 
@@ -32,6 +33,7 @@ struct SymbolBase;
 struct TypeInfo;
 struct TypeInfoEnum;
 struct Workspace;
+struct WorkspaceEntry;
 
 enum PARK : s8 // PARse Kind
 {
@@ -542,6 +544,7 @@ struct ParseContext // tag = parctx
 						,m_pSymtabGeneric(nullptr)
 						,m_pStnodScope(nullptr)
 						,m_grfsymlook(FSYMLOOK_Default)
+						,m_pJobParse(nullptr)
 							{ 
 								m_pLrecst = PLrecstAlloc(pAlloc);
 							}
@@ -560,6 +563,7 @@ struct ParseContext // tag = parctx
 	STNode *			m_pStnodScope;		// current containg scope
 	GRFSYMLOOK			m_grfsymlook;
 	LexRecoverStack *	m_pLrecst;
+	Job *				m_pJobParse;
 };
 
 struct ParseJobData // tag = parjd
@@ -620,7 +624,10 @@ Moe::InString IstrFromIdentifier(STNode * pStnod);
 Moe::InString IstrIdentifierFromDecl(STNode * pStnodDecl);
 ERRID ErridCheckOverloadSignature(TOK tok, TypeInfoProcedure * pTinproc, ErrorManager * pErrman, const LexSpan & lexsp);
 
-Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename);
+Job * PJobCreateMaster(Compilation * pComp, Job * pJobChild, COMPHASE comphase);
+Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename, COMPHASE comphase);
+Job * PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, WorkspaceEntry * pEntry, Job * pJobParse);
+Job * PJobCreateWait(Compilation * pComp);
 
 Moe::InString IstrOverloadNameFromTok(TOK tok);
 

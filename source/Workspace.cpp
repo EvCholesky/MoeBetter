@@ -701,6 +701,7 @@ LexLookup::LexLookup(Workspace * pWork, STNode * pStnod)
 
 Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 :m_pAlloc(pAlloc)
+,m_pComp(nullptr)
 ,m_blistEntry(pAlloc, Moe::BK_Workspace)
 ,m_arypEntryChecked(pAlloc, Moe::BK_Workspace) 
 //,m_arypValManaged(pAlloc, Moe::BK_WorkspaceVal, 0)
@@ -711,6 +712,8 @@ Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 ,m_pTyper(nullptr)
 ,m_unset(pAlloc, Moe::BK_Workspace, 0)
 ,m_unsetTin(pAlloc, Moe::BK_Workspace, 0)
+,m_hashPSymPJobWait(pAlloc, BK_Workspace)
+,m_pGenreg(nullptr)
 ,m_pErrman(pErrman)
 ,m_cbFreePrev(-1)
 ,m_targetos(TARGETOS_Nil)
@@ -719,18 +722,21 @@ Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 {
 	m_pErrman->SetWorkspace(this);
 
+	m_pGenreg = MOE_NEW(m_pAlloc, GenericRegistry) GenericRegistry(m_pAlloc);
+
 	for (int filek = FILEK_Min; filek < FILEK_Max; ++filek)
 	{
 		m_mpFilekPHashHvIPFile[filek] = MOE_NEW(m_pAlloc, HashHvIPFile) HashHvIPFile(pAlloc, Moe::BK_Workspace);
 	}
 }
 
-void Workspace::AppendEntry(STNode * pStnod, SymbolTable * pSymtab)
+WorkspaceEntry * Workspace::PEntryAppend(STNode * pStnod, SymbolTable * pSymtab)
 {
 	MOE_ASSERT(pStnod, "null entry point");
 	WorkspaceEntry * pEntry = m_blistEntry.AppendNew();
 	pEntry->m_pStnod = pStnod;
 	pEntry->m_pSymtab = pSymtab;
+	return pEntry;
 }
 
 Moe::CHash<HV, int> * Workspace::PHashHvIPFile(FILEK filek) 
@@ -823,10 +829,11 @@ char * Workspace::PChzLoadFile(const Moe::InString & istrFilename, Moe::Alloc * 
 
 
 
-void BeginWorkspace(Workspace * pWork)
+void BeginWorkspace(Workspace * pWork, Compilation * pComp)
 {
 	Alloc * pAlloc = pWork->m_pAlloc;
 
+	pWork->m_pComp = pComp;
 	pWork->m_arypEntryChecked.Clear();
 	pWork->m_blistEntry.Clear();
 
@@ -973,6 +980,8 @@ void EndWorkspace(Workspace * pWork)
 		pWork->m_pAlloc->MOE_FREE((void*)pWork->m_pChzObjectFilename);
 		pWork->m_pChzObjectFilename = nullptr;
 	}
+
+	pWork->m_pComp = nullptr;
 
 	size_t cbFreePost = pAlloc->CB();
 	if (pWork->m_cbFreePrev != cbFreePost)

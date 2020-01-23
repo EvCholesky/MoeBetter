@@ -57,6 +57,8 @@ STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex);
 STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex);
 STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InString istrRwordExpected = Moe::InString());
 
+void OnParseEntryPoint(ParseContext * pParctx, STNode * pStnod);
+
 static int g_nSymtabVisitId = 1; // visit index used by symbol table collision walks
 
 struct ProcSymtabStack // tag = procss
@@ -3647,7 +3649,7 @@ STNode * PStnodParseCompoundStatement(ParseContext * pParctx, Lexer * pLex, Symb
 				//  functions appear at the beginning of the containing scope (yuck!)
 				pStnod->m_lexsp = pStnodList->m_lexsp;
 
-				pParctx->m_pWork->AppendEntry(pStnod, pParctx->m_pSymtab);
+				OnParseEntryPoint(pParctx, pStnod);
 			}
 			else 
 			{
@@ -5710,7 +5712,22 @@ bool FIsLegalTopLevel(PARK park)
 		(park == PARK_StructDefinition);
 }
 
-void ExecuteParseJob(Compilation * pComp, Workspace * pWork, Job * pJob)
+void OnParseEntryPoint(ParseContext * pParctx, STNode * pStnod)
+{	
+	Job * pJobParse = pParctx->m_pJobParse;
+	if (!MOE_FVERIFY(pJobParse, "Expected parse Job"))
+		return;
+
+	Workspace * pWork = pParctx->m_pWork;
+	auto pEntry = pWork->PEntryAppend(pStnod, pParctx->m_pSymtab);
+
+	if (pJobParse->m_comphaseDesired > COMPHASE_Parse)
+	{
+		(void)PJobCreateTypeCheckRequest(pWork->m_pComp, pWork, pEntry, pJobParse);
+	}
+}
+
+JOBRET JobretExecuteParseJob(Compilation * pComp, Workspace * pWork, Job * pJob)
 {
 	auto pParjd = (ParseJobData *)pJob->m_pVData;
 	ParseContext * pParctx = &pParjd->m_parctx;
@@ -5735,7 +5752,7 @@ void ExecuteParseJob(Compilation * pComp, Workspace * pWork, Job * pJob)
 			continue;
 		}
 
-		pWork->AppendEntry(pStnod, pParctx->m_pSymtab);
+		OnParseEntryPoint(pParctx, pStnod);
 
 #ifdef MOEB_LATER
 		if (!grfunt.FIsSet(FUNT_ImplicitProc))
@@ -5751,6 +5768,8 @@ void ExecuteParseJob(Compilation * pComp, Workspace * pWork, Job * pJob)
 		}
 #endif
 	}
+
+	return JOBRET_Complete;
 }
 
 void CleanupParseJob(Workspace * pWork, Job * pJob)
@@ -5763,7 +5782,24 @@ void CleanupParseJob(Workspace * pWork, Job * pJob)
 	}
 }
 
-Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename)
+JOBRET JobretExecuteMasterJob(Compilation * pComp, Workspace * pWork, Job * pJob)
+{
+	return JOBRET_Complete;
+}
+
+Job * PJobCreateMaster(Compilation * pComp, Job * pJobChild, COMPHASE comphase)
+{
+	auto pJob = PJobAllocate(pComp, nullptr);
+	pJob->m_pFnUpdate = JobretExecuteMasterJob;
+	pJob->m_pFnCleanup = nullptr;
+	pJob->m_comphaseDesired = comphase;
+	pJob->AddDependency(pComp, pJobChild);
+
+	EnqueueJob(pComp, pJob);
+	return pJob;
+}
+
+Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename, COMPHASE comphase)
 {
 	Alloc * pAlloc = pWork->m_pAlloc;
 	ParseJobData * pParjd = MOE_NEW(pAlloc, ParseJobData) ParseJobData(pAlloc, pWork);
@@ -5781,8 +5817,10 @@ Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzB
 	pParctx->m_pSymtab = pWork->m_pSymtab;
 
 	auto pJob = PJobAllocate(pComp, pParjd);
-	pJob->m_pFnUpdate = ExecuteParseJob;
+	pJob->m_pFnUpdate = JobretExecuteParseJob;
 	pJob->m_pFnCleanup = CleanupParseJob;
+	pJob->m_comphaseDesired = comphase;
+	pParctx->m_pJobParse = pJob;
 	EnqueueJob(pComp, pJob);
 
 	return pJob;

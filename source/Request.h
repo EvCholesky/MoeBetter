@@ -16,6 +16,7 @@
 
 #include "MoeArray.h"
 #include "MoeString.h"
+#include <atomic>
 
 // The Query/Request system is organized as follows
 
@@ -72,15 +73,15 @@ struct Request // tag = rq
 	s32					m_iCodepoint;
 };
 
-void RequestSymbol(Request * pRq, RQK rqk, Moe::InString istrSymbolPath);
-void RequestLocation(Request * pRq, RQK rqk, Moe::InString istrFilename, s32 iLine, s32 iCodepoint);
+void AddRequestSymbol(Request * pRq, RQK rqk, Moe::InString istrSymbolPath);
+void AddRequestLocation(Request * pRq, RQK rqk, Moe::InString istrFilename, s32 iLine, s32 iCodepoint);
 
 enum RQRESK
 {
 	RQRESK_Symbols,	// result is an array of * Symbol
 	RQRESK_Types,	// result is an array of * TypeInfo
 	RQRESK_Ast,		// result is an array of * STNode
-	RQEREK_Files,	// result is list of filenames
+	RQRESK_Files,	// result is list of filenames
 };
 
 struct RequestResult // tag = rqres
@@ -140,22 +141,59 @@ void AddSourceText(Compilation * pComp, const char * pChz);
 int CRqresServiceRequest(Compilation * pComp, Workspace * pWork);
 void PrintResult(Compilation * pComp, int iRqres, char * aCh, size_t cChMax);
 
-typedef void (*PFnJobUpdate)(Compilation * pComp, Workspace * pWork, Job *);
+enum JOBRET 
+{
+	JOBRET_StoppingError,
+	JOBRET_Waiting,			// symbol def or code execution. 
+	JOBRET_Complete,
+};
+
+typedef JOBRET (*PFnJobUpdate)(Compilation * pComp, Workspace * pWork, Job *);
 typedef void (*PFnJobCleanup)(Workspace * pWork, Job *);
+
+// desired end phase for this job and it's outputs
+enum COMPHASE
+{
+	COMPHASE_Parse,
+	COMPHASE_TypeCheck,
+	COMPHASE_Codegen,
+	COMPHASE_Exec,
+
+	MOE_MAX_MIN_NIL(COMPHASE)
+};
+
+// Here's my current thinking about the job queues, There are two queues: the active queue and the waiting queue. The waiting queue 
+//  holds jobs that an outstanding dependency and can be removed from the wait queue at any time, in random order. The active queue 
+//  pops jobs off of the end and cannot remove jobs internal to the queue. Jobs pulled from the active queue that have (new?) dependencies
+//  will be pushed onto the waiting queue without executing the job.
+
+// Strike that, I'm checking in and then I'll update to my new plan for jobs
+// Jobs have a Parent/child structure where the parent cannot be completed until all child jobs are complete (but can execute it's task)
+// In addition to that jobs have an atomic prerequisite count that must be decremented to zero before the job can execute
+//		Parser->TypeCheck->Codegen dependencies are parent child dependencies, Waiting for symbol resolution is a prerequisite dependency
 
 struct Job
 {
-					Job()
-					:m_cJobUnfinished(0)
-					,m_pFnUpdate(nullptr)
-					,m_pFnCleanup(nullptr)
-					,m_pVData(nullptr)
-						{ ; }
+								Job()
+								:m_cJobUnfinished(0)
+								,m_arypJobDependents()
+								,m_pFnUpdate(nullptr)
+								,m_pFnCleanup(nullptr)
+								,m_pVData(nullptr)
+								,m_comphaseDesired(COMPHASE_Nil)
+									{ ; }
 
-	int				m_cJobUnfinished;
-	PFnJobUpdate	m_pFnUpdate;
-	PFnJobCleanup	m_pFnCleanup;
-	void *			m_pVData;
+	// Job dependencies, must complete before this job can start (and complete) 
+	std::atomic_int_fast32_t	m_cJobUnfinished;		// dependency count, 0 == complete, 1 == this job, >1 waiting for dependencies
+	Moe::CDynAry<Job *>			m_arypJobDependents;	// Which jobs depend on me?
+
+	void						AddDependency(Compilation * pComp, Job * pJobDe);
+	
+	PFnJobUpdate				m_pFnUpdate;
+	PFnJobCleanup				m_pFnCleanup;
+	void *						m_pVData;
+
+	COMPHASE					m_comphaseDesired;	// What is the desired end phase for this job's output
 };
 
 Job * PJobAllocate(Compilation * pComp, void * pVData);
@@ -168,12 +206,13 @@ struct Compilation // tag = comp
 {
 								Compilation(Moe::Alloc * pAlloc);
 
+	Moe::Alloc *						m_pAlloc;
 	Moe::CDynAry<RequestSource>			m_aryRqsrc;
 	Moe::CDynAry<Request>				m_aryRq;
 	Moe::CDynAry<RequestResult *>		m_arypRqres;
 
 	Moe::CDynAry<Job>					m_aryJob;
-	Moe::CDynAry<Job *>					m_arypJobQueued;	// jobs waiting to be executed
+	Moe::CDynAry<Job *>					m_arypJobQueued;	// jobs ready to be executed
 };
 
 

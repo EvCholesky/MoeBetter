@@ -481,6 +481,16 @@ public:
 						CopyConstruct(pTEnd, t);
 					}
 
+	void		Prepend(const Type t)
+					{
+						EnsureSize(m_c+1);
+
+						memmove(&m_a[1], m_a, sizeof (Type) * m_c);
+
+						CopyConstruct(m_a, t);
+						++m_c;
+					}
+
 	void		Append(const Type * pTArray, size_t cT)
 					{
 						if (!cT)
@@ -545,6 +555,26 @@ public:
 						if(m_c < cResize)
 							Resize(cResize);
 					}
+
+	void		RemoveByI(size_t iT)
+					{
+						if (MOE_FVERIFY((iT >= 0) & (iT < m_c), "bad element index" ))
+						{
+							T * pEnd = &m_a[m_c];
+							for (T * pSrc = &m_a[iT + 1], * pDst = &m_a[iT]; pSrc != pEnd; ++pSrc)
+							{
+								*pDst++ = *pSrc;
+							}
+							--m_c;
+
+							// BB - doesn't destruct the object until it resizes!
+
+							size_t cResize = (m_c < 8) ? 0 : m_cMax / 2;
+							if(m_c < cResize)
+								Resize(cResize);
+						}
+					}
+
 	void		RemoveFastByI(size_t iT)
 					{
 						if (MOE_FVERIFY((iT >= 0) & (iT < m_c), "bad element index" ))

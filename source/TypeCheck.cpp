@@ -10,34 +10,34 @@
 static const bool s_fTypecheckPartialGenericStructs = true;
 
 TypeInfo * PTinPromoteUntypedDefault(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	SymbolTable * pSymtab,
 	STNode * pStnodLit,
 	TypeInfo * pTinExpected = nullptr,
 	ERREP errep = ERREP_ReportErrors);
 
 TypeInfo * PTinPromoteUntypedTightest(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	SymbolTable * pSymtab,
 	STNode * pStnodLit,	
 	TypeInfo * pTinDst,
 	ERREP errep = ERREP_ReportErrors);
 
 TypeInfo * PTinPromoteUntypedArgument(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	SymbolTable * pSymtab,
 	STNode * pStnodLit,
 	TypeInfo * pTinArgument,
 	ERREP errep);
 
-TypeInfo * PTinPromoteVarArg(TypeCheckWorkspace * pTcwork, SymbolTable * pSymtab, TypeInfo * pTinIn);
+TypeInfo * PTinPromoteVarArg(TypeCheckContext * pTcwork, SymbolTable * pSymtab, TypeInfo * pTinIn);
 
-void OnTypeResolve(TypeCheckWorkspace * pTcwork, const Symbol * pSym);
-void FinalizeLiteralType(TypeCheckWorkspace * pTcwork, SymbolTable * pSymtab, TypeInfo * pTinDst, STNode * pStnodLit);
+void OnTypeResolve(TypeCheckContext * pTcwork, const Symbol * pSym);
+void FinalizeLiteralType(TypeCheckContext * pTcwork, SymbolTable * pSymtab, TypeInfo * pTinDst, STNode * pStnodLit);
 static bool FCanImplicitCast(TypeInfo * pTinSrc, TypeInfo * pTinDst);
 TypeInfo * PTinQualifyAfterAssignment(TypeInfo * pTin, SymbolTable * pSymtab, TypeInfo * pTinDst);
-TypeInfo * PTinAfterRValueAssignment(TypeCheckWorkspace * pTcwork, const LexSpan & lexsp, TypeInfo * pTin, SymbolTable * pSymtab, TypeInfo * pTinDst);
-SymbolTable * PSymtabFromType(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, const LexSpan & lexsp);
+TypeInfo * PTinAfterRValueAssignment(TypeCheckContext * pTcwork, const LexSpan & lexsp, TypeInfo * pTin, SymbolTable * pSymtab, TypeInfo * pTinDst);
+SymbolTable * PSymtabFromType(TypeCheckContext * pTcwork, TypeInfo * pTin, const LexSpan & lexsp);
 
 using namespace Moe;
 
@@ -229,6 +229,8 @@ public:
 
 #define VALIDATE_NAME_MANGLING 1
 
+#define MOEB_TCJOB 0
+#if MOEB_TCJOB
 // MOEB_TODO - why is this 'workspace' rather than TypeCheckContext tcctx?
 struct TypeCheckWorkspace // tag = tcwork
 {
@@ -259,19 +261,43 @@ struct TypeCheckWorkspace // tag = tcwork
 	CDynAry<TypeCheckFrame *>				m_arypTcframWaiting;	// frames waiting for one specific symbol
 	GenericRegistry							m_genreg;				// registry of instantiated generic types
 };
+#endif
 
-void EmitWarning(TypeCheckWorkspace * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pChz, ...)
+struct TypeCheckContext // tag = tcctx
+{
+									TypeCheckContext(Workspace * pWork, Alloc * pAlloc, WorkspaceEntry * pEntry)
+									:m_pWork(pWork)
+									,m_pAlloc(pAlloc)
+									,m_pJobTc(nullptr)
+									,m_mang(pAlloc)
+									,m_pEntry(pEntry)
+										{ ; }
+
+	ErrorManager *					PErrman() 
+										{ return m_pWork->m_pErrman; }
+
+	Workspace *								m_pWork;
+	Alloc *									m_pAlloc;
+	Job *									m_pJobTc;
+	NameMangler								m_mang;
+
+	WorkspaceEntry *						m_pEntry;
+	CDynAry<TypeCheckStackEntry>			m_aryTcsent;
+
+};
+
+void EmitWarning(TypeCheckContext * pTcctx, const LexSpan & lexsp, ERRID errid, const char * pChz, ...)
 {
 	va_list ap;
 	va_start(ap, pChz);
-	EmitWarning(pTcwork->m_pErrman, lexsp, errid, pChz, ap);
+	EmitWarning(pTcctx->PErrman(), lexsp, errid, pChz, ap);
 }
 
-void EmitError(TypeCheckWorkspace * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pChz, ...)
+void EmitError(TypeCheckContext * pTcctx, const LexSpan & lexsp, ERRID errid, const char * pChz, ...)
 {
 	va_list ap;
 	va_start(ap, pChz);
-	EmitError(pTcwork->m_pErrman, lexsp, errid, pChz, ap);
+	EmitError(pTcctx->PErrman(), lexsp, errid, pChz, ap);
 }
 
 Moe::InString IstrFromTypeInfo(TypeInfo * pTin)
@@ -281,6 +307,24 @@ Moe::InString IstrFromTypeInfo(TypeInfo * pTin)
 
 	WriteTypeInfoSExpression(&strbuf, pTin, PARK_Nil);
 	return IstrIntern(aCh);
+}
+
+static inline void SetupSymbolWait(TypeCheckContext * pTcctx, Symbol * pSym)
+{
+	Workspace * pWork = pTcctx->m_pWork;
+	Job * pJobWait;
+	Job ** ppJobWait = pWork->m_hashPSymPJobWait.Lookup(pSym);
+	if (ppJobWait)
+	{
+		pJobWait = *ppJobWait;
+	}
+	else
+	{
+		pJobWait = PJobCreateWait(pTcctx->m_pWork->m_pComp);
+		(void)pWork->m_hashPSymPJobWait.InresEnsureKeyAndValue(pSym, pJobWait);
+	}
+
+	pTcctx->m_pJobTc->AddDependency(pWork->m_pComp, pJobWait);
 }
 
 void AppendTypenameFromTypeSpecification(STNode * pStnodArg, Moe::StringBuffer * pStrbuf)
@@ -379,7 +423,8 @@ Moe::InString IstrFullyQualifiedSymbol(Symbol * pSym)
 	return IstrInternCopy(aCh);
 }
 
-UnknownType * PUntypeEnsure(TypeCheckWorkspace * pTcwork, const Symbol * pSym)
+#if MOEB_TCJOB
+UnknownType * PUntypeEnsure(TypeCheckContext * pTcwork, const Symbol * pSym)
 {
 	UnknownType * pUntype = pTcwork->m_hashPSymUntype.Lookup(pSym);
 	if (!pUntype)
@@ -389,6 +434,7 @@ UnknownType * PUntypeEnsure(TypeCheckWorkspace * pTcwork, const Symbol * pSym)
 	}
 	return pUntype;
 }
+#endif
 
 NameMangler::NameMangler(Moe::Alloc * pAlloc, size_t cBStartingMax)
 :m_pAlloc(pAlloc)
@@ -829,7 +875,7 @@ TypeInfoProcedure * NameMangler::PTinprocDemangle(const InString & istrName, Sym
 	return pTinproc;
 }
 
-InString IstrComputeMangled(TypeCheckWorkspace * pTcwork, STNode * pStnod, SymbolTable * pSymtab)
+InString IstrComputeMangled(TypeCheckContext * pTcctx, STNode * pStnod, SymbolTable * pSymtab)
 {
 	auto pStproc = PStnodRtiCast<STProc *>(pStnod);
 	TypeInfoProcedure * pTinproc = nullptr;
@@ -849,7 +895,7 @@ InString IstrComputeMangled(TypeCheckWorkspace * pTcwork, STNode * pStnod, Symbo
 	}
 	else
 	{
-		auto istrMangled = pTcwork->m_mang.IstrMangleMethodName(pTinproc);
+		auto istrMangled = pTcctx->m_mang.IstrMangleMethodName(pTinproc);
 
 #if VALIDATE_NAME_MANGLING
 		char aCh[1024];
@@ -857,7 +903,7 @@ InString IstrComputeMangled(TypeCheckWorkspace * pTcwork, STNode * pStnod, Symbo
 
 		WriteTypeInfoSExpression(&strbuf, pTinproc, PARK_Nil, FSEW_UseSizedNumerics);
 
-		TypeInfoProcedure * pTinprocDemangled = pTcwork->m_mang.PTinprocDemangle(istrMangled, pSymtab);
+		TypeInfoProcedure * pTinprocDemangled = pTcctx->m_mang.PTinprocDemangle(istrMangled, pSymtab);
 		if (MOE_FVERIFY(pTinprocDemangled, "Name demangling failed - null procedure type"))
 		{
 			char aChAfter[1024];
@@ -1102,15 +1148,15 @@ InString IstrFromIvalkStnod(Alloc * pAlloc, STNode * pStnod)
 	return InString();
 }
 
-bool FVerifyIvalk(TypeCheckWorkspace * pTcwork, STNode * pStnod, IVALK ivalkExpected)
+bool FVerifyIvalk(TypeCheckContext * pTcctx, STNode * pStnod, IVALK ivalkExpected)
 {
 	auto ivalkActual = IvalkCompute(pStnod);
 	if (ivalkActual < ivalkExpected)
 	{
 		const char * pChzIvalk = PChzFromIvalk(ivalkExpected);
-		InString istrLhs = IstrFromIvalkStnod(pTcwork->m_pAlloc, pStnod);
+		InString istrLhs = IstrFromIvalkStnod(pTcctx->m_pAlloc, pStnod);
 		InString istrTin = IstrFromTypeInfo(pStnod->m_pTin);
-		EmitError(pTcwork, pStnod->m_lexsp, ERRID_IncorrectIvalk, 
+		EmitError(pTcctx, pStnod->m_lexsp, ERRID_IncorrectIvalk, 
 			"'%s%s%s' is not a valid %s", 
 			istrLhs.PChz(), 
 			(istrLhs.FIsEmpty()) ? "" : ": ",
@@ -1372,7 +1418,7 @@ bool FIsGenericType(TypeInfo * pTin)
 }
 
 static inline Symbol * PSymRemapGeneric(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	Symbol * pSymSrc,
 	Moe::CHash<Symbol *, Symbol *> * pmpPSymGenericPSymRemapped)
 {
@@ -1388,7 +1434,7 @@ static inline Symbol * PSymRemapGeneric(
 }
 
 void CopySymbolsForGenericInstantiation(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtabSrc, 
 	SymbolTable * pSymtabNew, 
 	GenericMap * pGenmap, 
@@ -1420,7 +1466,7 @@ void CopySymbolsForGenericInstantiation(
 		}
 
 		auto pSymNew = pSymtabNew->PSymEnsure(
-			pTcwork->m_pErrman,
+			pTcctx->PErrman(),
 			pSymSrc->m_istrName,
 			pSymSrc->m_pStnodDefinition,
 			pSymSrc->m_grfsym);
@@ -1428,7 +1474,7 @@ void CopySymbolsForGenericInstantiation(
 		auto ppStnodCopy = pmpPStnodGenPStnodNew->Lookup(pSymNew->m_pStnodDefinition);
 		if (!ppStnodCopy)
 		{
-			EmitError(pTcwork, pSymNew->m_pStnodDefinition->m_lexsp, ERRID_MissingSymbolDef,
+			EmitError(pTcctx, pSymNew->m_pStnodDefinition->m_lexsp, ERRID_MissingSymbolDef,
 				"cannot look up definition stNode for symbol %s", 
 				pSymNew->m_istrName.PChz());
 		}
@@ -1441,7 +1487,7 @@ void CopySymbolsForGenericInstantiation(
 		if (pTinSymSrc)
 		{
 			auto pTinSymNew = PTinSubstituteGenerics(
-								pTcwork,
+								pTcctx,
 								pSymtabNew,
 								pSymSrc->m_pStnodDefinition->m_lexsp,
 								pTinSymSrc,
@@ -1455,7 +1501,7 @@ void CopySymbolsForGenericInstantiation(
 }
 
 void RemapUsingArray(
-	TypeCheckWorkspace * pTcwork, 
+	TypeCheckContext * pTcctx, 
 	Moe::CHash<STNode *, STNode *> * pmpPStnodGenPStnodNew,
 	Moe::CHash<SymbolTable *, SymbolTable *> * pmpPSymtabSrcPSymtabNew,
 	SymbolTable * pSymtabSrc, 
@@ -1472,7 +1518,7 @@ void RemapUsingArray(
 		//  the instantiation of this procedure but needs to remap the argument's using list
 
 		STNode * pStnodUsing = pUsing->m_pStnod;
-		SymbolTable * pSymtabSrcType = PSymtabFromType(pTcwork, pUsing->m_pStnod->m_pTin, pStnodUsing->m_lexsp);
+		SymbolTable * pSymtabSrcType = PSymtabFromType(pTcctx, pUsing->m_pStnod->m_pTin, pStnodUsing->m_lexsp);
 		MOE_ASSERT(pSymtabSrcType == pUsing->m_pSymtab, "expected mapping failed");
 
 		STNode * pStnodAdj = pUsing->m_pStnod;
@@ -1480,7 +1526,7 @@ void RemapUsingArray(
 		if (ppStnodAdj)
 		{
 			pStnodAdj = *ppStnodAdj;
-			pSymtabAdj = PSymtabFromType(pTcwork, pStnodAdj->m_pTin, pStnodUsing->m_lexsp);
+			pSymtabAdj = PSymtabFromType(pTcctx, pStnodAdj->m_pTin, pStnodUsing->m_lexsp);
 		}
 		else
 		{
@@ -1491,12 +1537,12 @@ void RemapUsingArray(
 			}
 		}
 
-		pSymtabNew->AddUsingScope(pTcwork->m_pErrman, pSymtabAdj, pStnodAdj);
+		pSymtabNew->AddUsingScope(pTcctx->PErrman(), pSymtabAdj, pStnodAdj);
 	}
 }
 
 void RemapGenericStnodCopy(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	STNode * pStnodGen,
 	STNode * pStnodNew,
 	int iInsreq,
@@ -1507,12 +1553,12 @@ void RemapGenericStnodCopy(
 	SymbolTable * pSymtabSrc,
 	SymbolTable * pSymtabNew)
 {
-	CDynAry<STNode *> arypStnodStackGen(pTcwork->m_pAlloc, BK_TypeCheckGenerics);
-	CDynAry<STNode *> arypStnodStackNew(pTcwork->m_pAlloc, BK_TypeCheckGenerics);
+	CDynAry<STNode *> arypStnodStackGen(pTcctx->m_pAlloc, BK_TypeCheckGenerics);
+	CDynAry<STNode *> arypStnodStackNew(pTcctx->m_pAlloc, BK_TypeCheckGenerics);
 	arypStnodStackGen.Append(pStnodGen);
 	arypStnodStackNew.Append(pStnodNew);
 
-	CHash<SymbolTable *, SymbolTable *>	mpPSymtabSrcPSymtabNew(pTcwork->m_pAlloc, BK_TypeCheckGenerics);
+	CHash<SymbolTable *, SymbolTable *>	mpPSymtabSrcPSymtabNew(pTcctx->m_pAlloc, BK_TypeCheckGenerics);
 	mpPSymtabSrcPSymtabNew.Insert(pSymtabSrc, pSymtabNew);
 
 	struct SUsingRemap // tag = usrem
@@ -1520,7 +1566,7 @@ void RemapGenericStnodCopy(
 		STNode * m_pStnodGen;
 		STNode * m_pStnodNew;
 	};
-	CHash<SymbolTable *, SUsingRemap>	mpPSymtabUsrem(pTcwork->m_pAlloc, BK_TypeCheckGenerics);
+	CHash<SymbolTable *, SUsingRemap>	mpPSymtabUsrem(pTcctx->m_pAlloc, BK_TypeCheckGenerics);
 
 	while (arypStnodStackGen.C())
 	{
@@ -1532,7 +1578,7 @@ void RemapGenericStnodCopy(
 		if (pSymPrev)
 		{
 			bool fHasSymbolTin = pStnodNew->m_pTin == PTinFromSymbol(pSymPrev);
-			auto pSymNew = PSymRemapGeneric(pTcwork, pSymPrev, pmpPSymGenericPSymRemapped);
+			auto pSymNew = PSymRemapGeneric(pTcctx, pSymPrev, pmpPSymGenericPSymRemapped);
 			if (fHasSymbolTin)
 			{
 				pStnodNew->m_pTin = PTinFromSymbol(pSymNew);
@@ -1542,7 +1588,7 @@ void RemapGenericStnodCopy(
 		}
 		else if (pStnodNew->m_pTin && FIsGenericType(pStnodNew->m_pTin))
 		{
-			 auto pTinRemapped = PTinSubstituteGenerics(pTcwork, pSymtabNew, pStnodNew->m_lexsp, pStnodNew->m_pTin, pGenmap, ERREP_ReportErrors);
+			 auto pTinRemapped = PTinSubstituteGenerics(pTcctx, pSymtabNew, pStnodNew->m_lexsp, pStnodNew->m_pTin, pGenmap, ERREP_ReportErrors);
 			 if (pTinRemapped)
 			 {
 				 pStnodNew->m_pTin = pTinRemapped;
@@ -1577,7 +1623,7 @@ void RemapGenericStnodCopy(
 				STNode ** ppStnodBaked = pmpPSymSrcPStnodConstant->Lookup(pSymGen);
 				if (ppStnodBaked)
 				{
-					auto pStnodCopy = PStnodCopy(pTcwork->m_pAlloc, *ppStnodBaked);
+					auto pStnodCopy = PStnodCopy(pTcctx->m_pAlloc, *ppStnodBaked);
 
 					pStnodNew->ReplaceChild(pStnodChildNew, pStnodCopy);
 
@@ -1617,14 +1663,14 @@ void RemapGenericStnodCopy(
 				SymbolTable ** ppSymtabNew = &pStnodNew->m_pSymtab;
 				for (int iCopy = 0; iCopy < cCopy; ++iCopy)
 				{
-					auto pSymtabNew = PSymtabNew(pTcwork->m_pAlloc, pSymtabCopySrc, pSymtabCopySrc->m_istrNamespace);	
+					auto pSymtabNew = PSymtabNew(pTcctx->m_pAlloc, pSymtabCopySrc, pSymtabCopySrc->m_istrNamespace);	
 					MOE_ASSERT(pSymtabCopySrc->m_aryUsing.FIsEmpty(), "TBD - unmapped using");
 
 					*ppSymtabNew = pSymtabNew;
 					ppSymtabNew = &pSymtabNew->m_pSymtabParent;
 
 					CopySymbolsForGenericInstantiation(
-						pTcwork,
+						pTcctx,
 						pSymtabCopySrc,
 						pSymtabNew,
 						pGenmap,
@@ -1663,12 +1709,12 @@ void RemapGenericStnodCopy(
 		//if (pSymtabUsingNew->m_aryUsing.C())
 		//	continue;
 
-		RemapUsingArray(pTcwork, pmpPStnodGenPStnodNew, &mpPSymtabSrcPSymtabNew, pSymtabUsingSrc, pSymtabUsingNew);
+		RemapUsingArray(pTcctx, pmpPStnodGenPStnodNew, &mpPSymtabSrcPSymtabNew, pSymtabUsingSrc, pSymtabUsingNew);
 	}
 }
 
 TypeInfoStruct * PTinstructEnsureUniqueInstance(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	TypeInfoStruct * pTinstruct)
 {
 	STNode * pStnodInstFrom = nullptr;
@@ -1677,7 +1723,7 @@ TypeInfoStruct * PTinstructEnsureUniqueInstance(
 		pStnodInstFrom = pTinstruct->m_pTinstructInstFrom->m_pStnodStruct;
 	}
 	MOE_ASSERT(pStnodInstFrom && pTinstruct->m_pGenmap, "expected generic structure with instanced AST");
-	auto pEntry = pTcwork->m_genreg.PEntryEnsure(pStnodInstFrom, pTinstruct->m_pGenmap);
+	auto pEntry = pTcctx->m_pWork->m_pGenreg->PEntryEnsure(pStnodInstFrom, pTinstruct->m_pGenmap);
 	if (pEntry->m_pTin == nullptr)
 	{
 		pEntry->m_pTin = pTinstruct;
@@ -1688,11 +1734,11 @@ TypeInfoStruct * PTinstructEnsureUniqueInstance(
 }
 
 InstantiateRequest * PInsreqLookup(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	STNode * pStnodDefinition,
 	GenericMap * pGenmap)
 {
-	auto pEntry = pTcwork->m_genreg.PEntryLookup(pStnodDefinition, pGenmap);
+	auto pEntry = pTcctx->m_pWork->m_pGenreg->PEntryLookup(pStnodDefinition, pGenmap);
 	if (pEntry)
 	{
 		return pEntry->m_pInsreq;
@@ -1997,8 +2043,11 @@ bool FIsCompileTimeConstant(STNode * pStnod)
 	return false;
 }
 
-TypeCheckStackEntry * PTcsentPush(TypeCheckFrame * pTcfram, TypeCheckStackEntry ** ppTcsentTop, STNode * pStnod)
+TypeCheckStackEntry * PTcsentPush(TypeCheckContext * pTcctx, TypeCheckStackEntry ** ppTcsentTop, STNode * pStnod)
 {
+	if (!pStnod)
+		return nullptr;
+
 	if (pStnod->m_strees >= STREES_TypeChecked)
 	{
 		// we can have type checked nodes here when we're dealing with baked constants
@@ -2006,25 +2055,25 @@ TypeCheckStackEntry * PTcsentPush(TypeCheckFrame * pTcfram, TypeCheckStackEntry 
 	}
 
 	// update ppTcsentTop to handle times when the dynArray reallocs.
-	size_t iTcsentTop = pTcfram->m_aryTcsent.IFromP(*ppTcsentTop);
+	size_t iTcsentTop = pTcctx->m_aryTcsent.IFromP(*ppTcsentTop);
 
-	size_t cPrev = pTcfram->m_aryTcsent.C()-1;
-	TypeCheckStackEntry * pTcsent = pTcfram->m_aryTcsent.AppendNew();
-	*pTcsent = pTcfram->m_aryTcsent[cPrev];
+	size_t cPrev = pTcctx->m_aryTcsent.C()-1;
+	TypeCheckStackEntry * pTcsent = pTcctx->m_aryTcsent.AppendNew();
+	*pTcsent = pTcctx->m_aryTcsent[cPrev];
 
 	pTcsent->m_nState = 0;
 	pTcsent->m_pStnod = pStnod;
 
-	*ppTcsentTop = &pTcfram->m_aryTcsent[iTcsentTop];
+	*ppTcsentTop = &pTcctx->m_aryTcsent[iTcsentTop];
 	return pTcsent;
 }
 
-void PopTcsent(TypeCheckFrame * pTcfram, TypeCheckStackEntry ** ppTcsentTop, STNode * pStnodDebug)
+void PopTcsent(TypeCheckContext * pTcctx, TypeCheckStackEntry ** ppTcsentTop, STNode * pStnodDebug)
 {
 	*ppTcsentTop = nullptr;
-	MOE_ASSERT(pTcfram->m_aryTcsent.PLast()->m_pStnod == pStnodDebug || pStnodDebug == nullptr, "type check entry pop mismatch");
+	MOE_ASSERT(pTcctx->m_aryTcsent.PLast()->m_pStnod == pStnodDebug || pStnodDebug == nullptr, "type check entry pop mismatch");
 
-	pTcfram->m_aryTcsent.PopLast();
+	pTcctx->m_aryTcsent.PopLast();
 }
 
 void RelocateTcfram(
@@ -2060,7 +2109,7 @@ void ValidateTcframArray(CAry<TypeCheckFrame *> * parypTcfram)
 	}
 }
 
-inline u64 NUnsignedLiteralCast(TypeCheckWorkspace * pTcwork, const STValue * pStval)
+inline u64 NUnsignedLiteralCast(TypeCheckContext * pTcctx, const STValue * pStval)
 {
 	switch (pStval->m_stvalk)
 	{
@@ -2074,7 +2123,7 @@ inline u64 NUnsignedLiteralCast(TypeCheckWorkspace * pTcwork, const STValue * pS
 		{
 			if (pStval->m_nSigned < 0)
 			{
-				EmitError(pTcwork, pStval->m_lexsp, ERRID_LiteralOutsideBounds, "Implicit cast will discard negative value");
+				EmitError(pTcctx, pStval->m_lexsp, ERRID_LiteralOutsideBounds, "Implicit cast will discard negative value");
 			}
 			return (u64)pStval->m_nSigned;
 		}
@@ -2084,7 +2133,7 @@ inline u64 NUnsignedLiteralCast(TypeCheckWorkspace * pTcwork, const STValue * pS
 	}
 }
 
-inline s64 NSignedLiteralCast(TypeCheckWorkspace * pTcwork, const STValue * pStval)
+inline s64 NSignedLiteralCast(TypeCheckContext * pTcctx, const STValue * pStval)
 {
 	switch (pStval->m_stvalk)
 	{
@@ -2092,7 +2141,7 @@ inline s64 NSignedLiteralCast(TypeCheckWorkspace * pTcwork, const STValue * pStv
 		{
 			if (pStval->m_nUnsigned > LLONG_MAX)
 			{
-				EmitError(pTcwork, pStval->m_lexsp, ERRID_LiteralOutsideBounds, "Literal is too large for implicit signed int cast.");
+				EmitError(pTcctx, pStval->m_lexsp, ERRID_LiteralOutsideBounds, "Literal is too large for implicit signed int cast.");
 			}
 			return (s64)pStval->m_nUnsigned;
 		}
@@ -2123,13 +2172,14 @@ inline f64 GLiteralCast(const STValue * pStval)
 	return 0.0;
 }
 
-void OnTypeResolve(TypeCheckWorkspace * pTcwork, const Symbol * pSym)
+void OnTypeResolve(TypeCheckContext * pTcctx, const Symbol * pSym)
 {
 	TypeInfo * pTinSym = PTinFromSymbol(pSym);
 	MOE_ASSERT(pTinSym, "expected type for completed symbol");
 
+#if MOEB_TCJOB
 	// BB - could replace this with a function that 'pops' a key/value pair from the hash and save a second lookup.
-	UnknownType * pUntype = pTcwork->m_hashPSymUntype.Lookup(pSym);
+	UnknownType * pUntype = pTcctx->m_hashPSymUntype.Lookup(pSym);
 	if (!pUntype)
 		return;
 
@@ -2140,12 +2190,29 @@ void OnTypeResolve(TypeCheckWorkspace * pTcwork, const Symbol * pSym)
 	{
 		TypeCheckFrame * pTcfram = pUntype->m_arypTcframDependent[iTcfram];
 
-		if (MOE_FVERIFY(pTcwork->m_arypTcframWaiting[pTcfram->m_ipTcframQueue] == pTcfram, "bookkeeping error (OnTypeResolve)"))
+		if (MOE_FVERIFY(pTcctx->m_arypTcframWaiting[pTcfram->m_ipTcframQueue] == pTcfram, "bookkeeping error (OnTypeResolve)"))
 		{
-			RelocateTcfram(pTcfram, &pTcwork->m_arypTcframWaiting, &pTcwork->m_arypTcframPending);
+			RelocateTcfram(pTcfram, &pTcctx->m_arypTcframWaiting, &pTcctx->m_arypTcframPending);
 		}
 	}
-	pTcwork->m_hashPSymUntype.Remove(pSym);
+	pTcctx->m_hashPSymUntype.Remove(pSym);
+#else
+
+	auto pWork = pTcctx->m_pWork;
+	Job ** ppJobWait = pWork->m_hashPSymPJobWait.Lookup(pSym);
+	if (!ppJobWait)
+		return;
+
+	Job * pJobWait = *ppJobWait;
+	MOE_ASSERT(pJobWait->m_cJobUnfinished == 2, "expected job dependency to be exactly two! (self + neverRun)");
+	pJobWait->m_cJobUnfinished = 0;
+	if (pJobWait->m_pFnCleanup)
+	{
+		(*pJobWait->m_pFnCleanup)(pTcctx->m_pWork, pJobWait);
+	}
+
+	pWork->m_hashPSymPJobWait.Remove(pSym);
+#endif
 }
 
 TypeInfo * PTinFromTypeArgument(STNode * pStnod)
@@ -2161,10 +2228,10 @@ TypeInfo * PTinFromTypeArgument(STNode * pStnod)
 	return nullptr;
 }
 
-GenericMap * PGenmapNew(TypeCheckWorkspace * pTcwork, const char * pChzPrefix, TypeInfo * pTinOwner)
+GenericMap * PGenmapNew(TypeCheckContext * pTcctx, const char * pChzPrefix, TypeInfo * pTinOwner)
 {
-	auto pGenmap = MOE_NEW(pTcwork->m_pAlloc, GenericMap) GenericMap(pTcwork->m_pAlloc, pChzPrefix, pTinOwner);
-	pTcwork->m_pErrman->m_pWork->m_arypGenmapManaged.Append(pGenmap);
+	auto pGenmap = MOE_NEW(pTcctx->m_pAlloc, GenericMap) GenericMap(pTcctx->m_pAlloc, pChzPrefix, pTinOwner);
+	pTcctx->m_pWork->m_arypGenmapManaged.Append(pGenmap);
 	return pGenmap;
 }
 
@@ -2218,7 +2285,7 @@ Anchor * GenericMap::PAncMapType(const InString & istrName, TypeInfo * pTin)
 //	we have anchored ALL generic types and baked values 
 
 inline bool FUnpackArgumentList(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	size_t cArgDefinition,
 	CAry<ArgUnpack> *pmpIArgArgunp,
@@ -2232,7 +2299,7 @@ inline bool FUnpackArgumentList(
 	const char * pChzStructOrProc)
 {
 	InString istrEmpty(IstrIntern("_"));
-	CDynAry<InString> mpIArgIstrName(pTcwork->m_pAlloc, BK_TypeCheckProcmatch, cArgDefinition);
+	CDynAry<InString> mpIArgIstrName(pTcctx->m_pAlloc, BK_TypeCheckProcmatch, cArgDefinition);
 	mpIArgIstrName.AppendFill(cArgDefinition, istrEmpty);
 
 	//	for cArgDefine build array of defaults for all arguments (both generic and concrete, typearg and named)
@@ -2268,7 +2335,7 @@ inline bool FUnpackArgumentList(
 				(*pmpIArgArgunp)[iArg].m_grfarg.AddFlags(FARG_TypeArgument);
 			}
 			
-			FindGenericAnchorNames(pTcwork->m_pAlloc, pStnodParamDecl, pGenmap);
+			FindGenericAnchorNames(pTcctx->m_pAlloc, pStnodParamDecl, pGenmap);
 		}
 	}
 
@@ -2311,7 +2378,7 @@ inline bool FUnpackArgumentList(
 				{
 					if (errep == ERREP_ReportErrors)
 					{
-						EmitError(pTcwork->m_pErrman, lexsp, ERRID_NamedArgumentNotFound,
+						EmitError(pTcctx, lexsp, ERRID_NamedArgumentNotFound,
 							"Cannot find argument named %s for %s %s",
 							istrIdentifier.PChz(),
 							pChzStructOrProc,
@@ -2330,7 +2397,7 @@ inline bool FUnpackArgumentList(
 					{
 						if (errep == ERREP_ReportErrors)
 						{
-							EmitError(pTcwork->m_pErrman, lexsp, ERRID_NamedArgumentNotFound,
+							EmitError(pTcctx, lexsp, ERRID_NamedArgumentNotFound,
 								"expected type value for named argument '%s' in generic %s %s",
 								istrIdentifier.PChz(),
 								pChzStructOrProc,
@@ -2354,7 +2421,7 @@ inline bool FUnpackArgumentList(
 			if (errep == ERREP_ReportErrors)
 			{
 				InString istrIdentifier(IstrFromIdentifier(pStnodName));
-				EmitError(pTcwork->m_pErrman, lexsp, ERRID_OrderedAfterNamed,
+				EmitError(pTcctx, lexsp, ERRID_OrderedAfterNamed,
 					"ordered argument %d must come before named argument '%s' in %s %s",
 					iArg + 1,
 					istrIdentifier.PChz(),
@@ -2369,7 +2436,7 @@ inline bool FUnpackArgumentList(
 		{
 			if (errep == ERREP_ReportErrors)
 			{
-				EmitError(pTcwork->m_pErrman, lexsp, ERRID_TooManyArgs,
+				EmitError(pTcctx, lexsp, ERRID_TooManyArgs,
 					"Too many arguments passed to %s %s",
 					pChzStructOrProc,
 					pChzOwner);
@@ -2386,7 +2453,7 @@ inline bool FUnpackArgumentList(
 		{
 			if (errep == ERREP_ReportErrors)
 			{
-				EmitError(pTcwork->m_pErrman, lexsp, ERRID_ArgumentSuppliedTwice,
+				EmitError(pTcctx, lexsp, ERRID_ArgumentSuppliedTwice,
 					"Argument %d '%s' to %s %s was supplied twice: as an ordered argument and specified by name.",
 					iArgDest + 1,
 					mpIArgIstrName[iArgDest].PChz(),
@@ -2433,7 +2500,7 @@ inline bool FUnpackArgumentList(
 				{
 					if (errep == ERREP_ReportErrors)
 					{
-						EmitError(pTcwork->m_pErrman, pStnodParamDef->m_lexsp, ERRID_BakingNonLiteralValue,
+						EmitError(pTcctx, pStnodParamDef->m_lexsp, ERRID_BakingNonLiteralValue,
 							"passing non-constant to argument %d of %s '%s'. '$%s' must be a compile-time constant",
 							iArg + 1,
 							pChzStructOrProc,
@@ -2469,7 +2536,7 @@ inline bool FUnpackArgumentList(
 						const char * pChzTypeArg = (pStnodType && pStnodType->PSym()) ? pStnodType->PSym()->m_istrName.PChz() : "unknown";
 						InString istrType = IstrFromTypeInfo(pStnodInit->m_pTin);
 
-						EmitError(pTcwork->m_pErrman, pStnodInit->m_lexsp, ERRID_BakingNonLiteralValue,
+						EmitError(pTcctx, pStnodInit->m_lexsp, ERRID_BakingNonLiteralValue,
 							"expected type for type argument $%s, encountered '%s'",
 							pChzTypeArg,
 							istrType.PChz());
@@ -2492,7 +2559,7 @@ inline bool FUnpackArgumentList(
 					auto pTinArg =  PTinFromTypeArgument(pStnodInit);
 					InString istrType = IstrFromTypeInfo(pTinArg);
 
-					EmitError(pTcwork->m_pErrman, pStnodInit->m_lexsp, ERRID_BakingNonLiteralValue,
+					EmitError(pTcctx, pStnodInit->m_lexsp, ERRID_BakingNonLiteralValue,
 						"expected value for argument %s, but encountered type :%s",
 						mpIArgIstrName[iArg].PChz(),
 						istrType.PChz());
@@ -2509,7 +2576,7 @@ inline bool FUnpackArgumentList(
 
 				if (errep == ERREP_ReportErrors)
 				{
-					EmitError(pTcwork->m_pErrman, lexsp, ERRID_TooFewArgs,
+					EmitError(pTcctx, lexsp, ERRID_TooFewArgs,
 						"Too few arguments to %s '%s'. cannot find value for parameter #%d: '%s'",
 						pChzStructOrProc,
 						pChzOwner,
@@ -2530,11 +2597,11 @@ inline bool FUnpackArgumentList(
 					pStnodInit = pStnodInit->PStnodChildSafe(1);
 				}
 
-				TypeInfo * pTinInitDefault = PTinPromoteUntypedArgument(pTcwork, pSymtab, pStnodInit, pTinParam, errep);
-				pTinInitDefault = PTinAfterRValueAssignment(pTcwork, pStnodInit->m_lexsp, pTinInitDefault, pSymtab, pTinParam);
+				TypeInfo * pTinInitDefault = PTinPromoteUntypedArgument(pTcctx, pSymtab, pStnodInit, pTinParam, errep);
+				pTinInitDefault = PTinAfterRValueAssignment(pTcctx, pStnodInit->m_lexsp, pTinInitDefault, pSymtab, pTinParam);
 
 				GRFGENCOMP grfgencomp = pArgunp->m_grfarg.FIsSet(FARG_ImplicitRef) ? FGENCOMP_ImplicitRef : FGENCOMP_None;
-				ERRID errid = ErridComputeDefinedGenerics(pTcwork, lexsp, errep, grfgencomp, pSymtab, pTinInitDefault, pStnodType, pGenmap);
+				ERRID errid = ErridComputeDefinedGenerics(pTcctx, lexsp, errep, grfgencomp, pSymtab, pTinInitDefault, pStnodType, pGenmap);
 				if (errid != ERRID_Nil)
 					return false;
 
@@ -2550,13 +2617,13 @@ inline bool FUnpackArgumentList(
 
 // find the subset of a generic map used by a given generic definition
 GenericMap * PGenmapTrimUnusedAnchors(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	STNode * pStnodInstFrom,
 	GenericMap * pGenmapSuperset, 
 	const LexSpan & lexsp)
 {
-	GenericMap genmapTrim(pTcwork->m_pAlloc, "trim", nullptr);
-	FindGenericAnchorNames(pTcwork->m_pAlloc, pStnodInstFrom, &genmapTrim);
+	GenericMap genmapTrim(pTcctx->m_pAlloc, "trim", nullptr);
+	FindGenericAnchorNames(pTcctx->m_pAlloc, pStnodInstFrom, &genmapTrim);
 
 	CHash<InString, Anchor>::CIterator iterTrim(&genmapTrim.m_mpIstrAnc);
 	InString * pStrTrim;
@@ -2579,7 +2646,7 @@ GenericMap * PGenmapTrimUnusedAnchors(
 	if (pGenmapSuperset->m_mpIstrAnc.C() == genmapTrim.m_mpIstrAnc.C())
 		return pGenmapSuperset;
 
-	auto pGenmapNew = PGenmapNew(pTcwork, "", nullptr);
+	auto pGenmapNew = PGenmapNew(pTcctx, "", nullptr);
 	pGenmapNew->Swap(&genmapTrim);
 
 	pGenmapNew->m_aryLexspSrc.Append(lexsp);
@@ -2738,7 +2805,7 @@ void FindGenericAnchorNames(
 	}
 }
 
-TypeInfo * PTinFindCanon(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, SymbolTable * pSymtab, ERREP errep)
+TypeInfo * PTinFindCanon(TypeCheckContext * pTcctx, TypeInfo * pTin, SymbolTable * pSymtab, ERREP errep)
 {
 	switch (pTin->m_tink)
 	{
@@ -2769,7 +2836,7 @@ TypeInfo * PTinFindCanon(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, SymbolTa
 			while (pTinstructFrom && pTinstructFrom->m_pGenmap)
 			{
 				auto pGenmapFrom = pTinstructFrom->m_pGenmap;
-				auto pGenmapNew = PGenmapNew(pTcwork, "Canon", pTinstructFrom);
+				auto pGenmapNew = PGenmapNew(pTcctx, "Canon", pTinstructFrom);
 
 				Moe::CHash<Moe::InString, Anchor>::CIterator iter(&pGenmapFrom->m_mpIstrAnc);
 				while ((pAncFrom = iter.Next(&pIstrAnchorFrom)))
@@ -2783,7 +2850,7 @@ TypeInfo * PTinFindCanon(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, SymbolTa
 							if (FIsGenericType(pAncFrom->m_pTin))
 							{
 								LexSpan lexspIt(pGenmapIt->LexspReporting());
-								pTinNew = PTinSubstituteGenerics(pTcwork, pSymtab, lexspIt, pAncFrom->m_pTin, pGenmapIt, errep);
+								pTinNew = PTinSubstituteGenerics(pTcctx, pSymtab, lexspIt, pAncFrom->m_pTin, pGenmapIt, errep);
 							}
 							pGenmapNew->PAncMapType(*pIstrAnchorFrom, pTinNew);
 						} break;
@@ -2818,12 +2885,12 @@ TypeInfo * PTinFindCanon(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, SymbolTa
 			TypeInfo * pTinNew = pTinstructIt;
 			if (pTinstructIt != pTinstruct || pGenmapIt != pTinstructIt->m_pGenmap)
 			{
-				pTinNew = PTinSubstituteGenerics(pTcwork, pSymtab, lexspIt, pTinstructFrom, pGenmapIt, errep);
+				pTinNew = PTinSubstituteGenerics(pTcctx, pSymtab, lexspIt, pTinstructFrom, pGenmapIt, errep);
 			}
 
 			auto pTinstructNew = PTinDerivedCast<TypeInfoStruct *>(pTinNew);
 
-			pTinstructNew = PTinstructEnsureUniqueInstance(pTcwork, pTinstructNew);
+			pTinstructNew = PTinstructEnsureUniqueInstance(pTcctx, pTinstructNew);
 			pTinstructNew->m_grftin.AddFlags(FTIN_IsCanon);
 
 			return pTinstructNew;
@@ -2839,7 +2906,7 @@ TypeInfo * PTinFindCanon(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, SymbolTa
 	case TINK_Qualifier:
 		{
 			auto pTinqual = (TypeInfoQualifier *)pTin;
-			auto pTinCanon = PTinFindCanon(pTcwork, pTinqual->m_pTin, pSymtab, errep);
+			auto pTinCanon = PTinFindCanon(pTcctx, pTinqual->m_pTin, pSymtab, errep);
 			if (pTinqual->m_pTin != pTinCanon)
 			{
 				pTinqual = pSymtab->PTinqualEnsure(pTinCanon, pTinqual->m_grfqualk);
@@ -2849,7 +2916,7 @@ TypeInfo * PTinFindCanon(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, SymbolTa
 	case TINK_Array:
 		{
 			auto pTinary = (TypeInfoArray *)pTin;
-			auto pTinCanon = PTinFindCanon(pTcwork, pTinary->m_pTin, pSymtab, errep);
+			auto pTinCanon = PTinFindCanon(pTcctx, pTinary->m_pTin, pSymtab, errep);
 			if (pTinary->m_pTin != pTinCanon)
 			{
 				pTinary = pSymtab->PTinaryCopyWithNewElementType(pTinary, pTinCanon);
@@ -2859,7 +2926,7 @@ TypeInfo * PTinFindCanon(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, SymbolTa
 	case TINK_Pointer:
 		{
 			auto pTinptr = (TypeInfoPointer *)pTin;
-			auto pTinCanon = PTinFindCanon(pTcwork, pTinptr->m_pTin, pSymtab, errep);
+			auto pTinCanon = PTinFindCanon(pTcctx, pTinptr->m_pTin, pSymtab, errep);
 			if (pTinptr->m_pTin != pTinCanon)
 			{
 				pTinptr = pSymtab->PTinptrAllocate(pTinCanon);
@@ -2873,7 +2940,7 @@ TypeInfo * PTinFindCanon(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, SymbolTa
 }
 
 TypeInfo * PTinSubstituteGenerics(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	const LexSpan & lexsp,
 	TypeInfo * pTinUnsub,
@@ -2891,7 +2958,7 @@ TypeInfo * PTinSubstituteGenerics(
 				{
 					if (errep == ERREP_ReportErrors)
 					{
-						EmitError(pTcwork->m_pErrman, lexsp, ERRID_GenericLookupFail,
+						EmitError(pTcctx, lexsp, ERRID_GenericLookupFail,
 							"Unable to pattern match instance type for generic value '$%s'", pTinanc->m_istrName.PChz());
 					}
 					return nullptr;
@@ -2909,7 +2976,7 @@ TypeInfo * PTinSubstituteGenerics(
 	    case TINK_Pointer:
 		    {
 		    	auto pTinptr = (TypeInfoPointer *)pTinUnsub;
-		    	auto pTinTarget = PTinSubstituteGenerics(pTcwork, pSymtab, lexsp, pTinptr->m_pTin, pGenmap, errep);
+		    	auto pTinTarget = PTinSubstituteGenerics(pTcctx, pSymtab, lexsp, pTinptr->m_pTin, pGenmap, errep);
 				return pSymtab->PTinptrAllocate(pTinTarget);
 		    }
 	    case TINK_Procedure:
@@ -2927,7 +2994,7 @@ TypeInfo * PTinSubstituteGenerics(
 						continue;
 
 					//...substitute types for the params that will remain
-					pTinproc->m_arypTinParams[ipTinDst] = PTinSubstituteGenerics(pTcwork, pSymtab, lexsp, pTinproc->m_arypTinParams[ipTinSrc], pGenmap, errep);
+					pTinproc->m_arypTinParams[ipTinDst] = PTinSubstituteGenerics(pTcctx, pSymtab, lexsp, pTinproc->m_arypTinParams[ipTinSrc], pGenmap, errep);
 					pTinproc->m_mpIptinGrfparmq[ipTinDst] = pTinprocUnsub->m_mpIptinGrfparmq[ipTinSrc];
 					++ipTinDst;
 				}
@@ -2940,7 +3007,7 @@ TypeInfo * PTinSubstituteGenerics(
 		    	auto cpTinReturn = pTinproc->m_arypTinReturns.C();
 				for (int ipTin = 0; ipTin < cpTinReturn; ++ipTin)
 				{
-					pTinproc->m_arypTinReturns[ipTin] = PTinSubstituteGenerics(pTcwork, pSymtab, lexsp, pTinproc->m_arypTinReturns[ipTin], pGenmap, errep);
+					pTinproc->m_arypTinReturns[ipTin] = PTinSubstituteGenerics(pTcctx, pSymtab, lexsp, pTinproc->m_arypTinReturns[ipTin], pGenmap, errep);
 				}
 
 				return pTinproc;
@@ -2953,9 +3020,9 @@ TypeInfo * PTinSubstituteGenerics(
 					return pTinstructUnsub;
 				}
 
-				auto pGenmapTrim = PGenmapTrimUnusedAnchors(pTcwork, pTinstructUnsub->m_pStnodStruct, pGenmap, lexsp);
+				auto pGenmapTrim = PGenmapTrimUnusedAnchors(pTcctx, pTinstructUnsub->m_pStnodStruct, pGenmap, lexsp);
 
-				auto pInsreq = PInsreqLookup(pTcwork, pTinstructUnsub->m_pStnodStruct, pGenmapTrim);
+				auto pInsreq = PInsreqLookup(pTcctx, pTinstructUnsub->m_pStnodStruct, pGenmapTrim);
 				if (pInsreq)
 				{
 					TypeInfo * pTinSym;
@@ -2977,9 +3044,9 @@ TypeInfo * PTinSubstituteGenerics(
 					pTinstructNew->m_aryTypemembField.Append(*pTypemembUnsub);
 				}
 
-				auto pTinCanon = PTinFindCanon(pTcwork, pTinstructNew, pSymtab, errep);
+				auto pTinCanon = PTinFindCanon(pTcctx, pTinstructNew, pSymtab, errep);
 				pTinstructNew = PTinDerivedCast<TypeInfoStruct *>(pTinCanon);
-				pTinstructNew =  PTinstructEnsureUniqueInstance(pTcwork, pTinstructNew);
+				pTinstructNew =  PTinstructEnsureUniqueInstance(pTcctx, pTinstructNew);
 
 				pTinstructNew->m_grftingen = pGenmapTrim->m_grftingenResult;
 		    	return pTinstructNew;
@@ -2989,7 +3056,7 @@ TypeInfo * PTinSubstituteGenerics(
 		    	auto pTinaryUnsub = (TypeInfoArray *)pTinUnsub;
 
 		    	auto pTinaryNew = pSymtab->PTinaryCopy(pTinaryUnsub);
-		    	pTinaryNew->m_pTin = PTinSubstituteGenerics(pTcwork, pSymtab, lexsp, pTinaryUnsub->m_pTin, pGenmap, errep);
+		    	pTinaryNew->m_pTin = PTinSubstituteGenerics(pTcctx, pSymtab, lexsp, pTinaryUnsub->m_pTin, pGenmap, errep);
 
 				if (pTinaryUnsub->m_pStnodBakedDim)
 				{
@@ -3003,7 +3070,7 @@ TypeInfo * PTinSubstituteGenerics(
 							auto pStvalDim = PStnodRtiCast<STValue *>(pAnc->m_pStnodBaked);
 							if (pStvalDim)
 							{
-								pTinaryNew->m_c = NUnsignedLiteralCast(pTcwork, pStvalDim);
+								pTinaryNew->m_c = NUnsignedLiteralCast(pTcctx, pStvalDim);
 								pTinaryNew->m_pStnodBakedDim = nullptr;
 							}
 						}
@@ -3015,7 +3082,7 @@ TypeInfo * PTinSubstituteGenerics(
 		case TINK_Qualifier:
 		    {
 		    	auto pTinqual = (TypeInfoQualifier *)pTinUnsub;
-		    	auto pTinTarget = PTinSubstituteGenerics(pTcwork, pSymtab, lexsp, pTinqual->m_pTin, pGenmap, errep);
+		    	auto pTinTarget = PTinSubstituteGenerics(pTcctx, pSymtab, lexsp, pTinqual->m_pTin, pGenmap, errep);
 				return pSymtab->PTinqualWrap(pTinTarget, pTinqual->m_grfqualk);
 		    }
 		default:
@@ -3027,7 +3094,7 @@ TypeInfo * PTinSubstituteGenerics(
 }
 
 InstantiateRequest * PInsreqInstantiateGenericStruct(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	STNode * pStnodGeneric,
 	STNode * pStnodInstantiation,
 	GenericMap * pGenmap)
@@ -3055,9 +3122,9 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 		return nullptr;
 
 	// remap the types for the argument list and build symbols for them
-	Moe::CHash<STNode *, STNode *> mpPStnodGenPStnodCopy(pTcwork->m_pAlloc, BK_TypeCheckGenerics);
+	Moe::CHash<STNode *, STNode *> mpPStnodGenPStnodCopy(pTcctx->m_pAlloc, BK_TypeCheckGenerics);
 
-	auto pStnodStructCopy = PStnodCopy(pTcwork->m_pAlloc, pStnodGeneric, &mpPStnodGenPStnodCopy);
+	auto pStnodStructCopy = PStnodCopy(pTcctx->m_pAlloc, pStnodGeneric, &mpPStnodGenPStnodCopy);
 	pStnodStructCopy->m_grfstnod.Clear(FSTNOD_NoCodeGeneration);
 
 	MOE_ASSERT(pStnodGeneric->m_strees = STREES_TypeChecked, "generic struct definition should be type checked prior to instantiation");
@@ -3070,12 +3137,12 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 	if (!MOE_FVERIFY(pSymtabSrc, "generic structure source has no symbol table"))
 		return nullptr;
 
-	SymbolTable * pSymtabNew = PSymtabNew(pTcwork->m_pAlloc, pSymtabSrc, pSymtabSrc->m_istrNamespace);	
+	SymbolTable * pSymtabNew = PSymtabNew(pTcctx->m_pAlloc, pSymtabSrc, pSymtabSrc->m_istrNamespace);	
 	pSymtabNew->m_pSymtabParent = pSymtabSrc->m_pSymtabParent;
 
-	GenericMapScope genscope(pTcwork->m_pErrman, pGenmap);
+	GenericMapScope genscope(pTcctx->PErrman(), pGenmap);
 
-	auto pInsreq = pTcwork->m_genreg.PInsreqNew(pStnodGeneric, pGenmap);
+	auto pInsreq = pTcctx->m_pWork->m_pGenreg->PInsreqNew(pStnodGeneric, pGenmap);
 	pInsreq->m_pGenmap = pGenmap;
 	pInsreq->m_pStnodGeneric = pStnodGeneric;
 
@@ -3088,15 +3155,15 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 	STNode * pStnodNewParams = nullptr;
 	int ipStnodFullyInstantated = -1;
 	{
-		GenericMap genmapNames(pTcwork->m_pAlloc, "findnames", nullptr);
-		CDynAry<STNode *> aryStnodChild(pTcwork->m_pAlloc, BK_TypeCheckGenerics);
+		GenericMap genmapNames(pTcctx->m_pAlloc, "findnames", nullptr);
+		CDynAry<STNode *> aryStnodChild(pTcctx->m_pAlloc, BK_TypeCheckGenerics);
 
 		int ipStnodMin = 1; // instantiation children are (name, arg0, arg1, arg2, ...)
 		for (int ipStnodArg = ipStnodMin; ipStnodArg < pStnodInstantiation->CPStnodChild(); ++ipStnodArg)
 		{
 			auto pStnodInstArg = pStnodInstantiation->PStnodChild(ipStnodArg);
 			size_t cAncPrev = genmapNames.m_mpIstrAnc.C();
-			FindGenericAnchorNames(pTcwork->m_pAlloc, pStnodInstArg, &genmapNames);
+			FindGenericAnchorNames(pTcctx->m_pAlloc, pStnodInstArg, &genmapNames);
 
 			if (genmapNames.m_mpIstrAnc.C() <= cAncPrev)
 			{
@@ -3109,7 +3176,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 			{
 				if (ipStnodFullyInstantated >= 0)
 				{
-					EmitError(pTcwork, pStnodInstantiation->m_lexsp, ERRID_GenericArgsMustBeFirst,
+					EmitError(pTcctx, pStnodInstantiation->m_lexsp, ERRID_GenericArgsMustBeFirst,
 						"Generic parameters (%d) are not allowed after fully instantiated parameter (%d)",
 						ipStnodArg,
 						ipStnodFullyInstantated);
@@ -3128,7 +3195,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 				{
 				case PARK_Decl:
 					{
-						auto pStnodCopy = PStnodCopy(pTcwork->m_pAlloc, pStnodInstArg);
+						auto pStnodCopy = PStnodCopy(pTcctx->m_pAlloc, pStnodInstArg);
 						pStdecl = PStnodRtiCast<STDecl * >(pStnodCopy);
 					} break;
 				case PARK_TypeArgument:
@@ -3136,10 +3203,10 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 						if (!MOE_FVERIFY(pStnodInstArg->CPStnodChild() >= 0, "type argument's first child should be type AST"))
 							break;
 
-						pStdecl = PStdeclAllocAfterParse(pTcwork->m_pAlloc, PARK_Decl, pStnodInstArg->m_lexsp);
+						pStdecl = PStdeclAllocAfterParse(pTcctx->m_pAlloc, PARK_Decl, pStnodInstArg->m_lexsp);
 
 						auto pStnodTypeOld = pStnodInstArg->PStnodChild(0);
-						auto pStnodTypeNew = PStnodCopy(pTcwork->m_pAlloc, pStnodTypeOld);
+						auto pStnodTypeNew = PStnodCopy(pTcctx->m_pAlloc, pStnodTypeOld);
 
 						pStdecl->m_pStnodType = pStnodTypeNew;
 
@@ -3158,8 +3225,8 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 
 		if (!aryStnodChild.FIsEmpty())
 		{
-			pStnodNewParams = PStnodAllocAfterParse(pTcwork->m_pAlloc, PARK_ParameterList, pStnodInstantiation->m_lexsp);
-			pStnodNewParams->CopyChildArray(pTcwork->m_pAlloc, aryStnodChild.A(), int(aryStnodChild.C()));
+			pStnodNewParams = PStnodAllocAfterParse(pTcctx->m_pAlloc, PARK_ParameterList, pStnodInstantiation->m_lexsp);
+			pStnodNewParams->CopyChildArray(pTcctx->m_pAlloc, aryStnodChild.A(), int(aryStnodChild.C()));
 		}
 
 
@@ -3177,8 +3244,8 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 	}
 
 	// Remap the top level symbol table
-	Moe::CHash<Symbol *, STNode *> mpPSymSrcPStnodValue(pTcwork->m_pAlloc, BK_TypeCheckGenerics);
-	Moe::CHash<Symbol *, Symbol *> mpPSymGenericPSymRemapped(pTcwork->m_pAlloc, BK_TypeCheckGenerics);
+	Moe::CHash<Symbol *, STNode *> mpPSymSrcPStnodValue(pTcctx->m_pAlloc, BK_TypeCheckGenerics);
+	Moe::CHash<Symbol *, Symbol *> mpPSymGenericPSymRemapped(pTcctx->m_pAlloc, BK_TypeCheckGenerics);
 	Moe::CHash<InString, Symbol *>::CIterator iterSrc(&pSymtabSrc->m_hashIstrPSym);
 	Symbol ** ppSymSrc;
 
@@ -3203,7 +3270,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 		}
 
 		auto pSymNew = pSymtabNew->PSymEnsure(
-			pTcwork->m_pErrman,
+			pTcctx->PErrman(),
 			pSymSrc->m_istrName,
 			pSymSrc->m_pStnodDefinition,
 			pSymSrc->m_grfsym);
@@ -3211,7 +3278,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 		auto ppStnodCopy = mpPStnodGenPStnodCopy.Lookup(pSymNew->m_pStnodDefinition);
 		if (!ppStnodCopy)
 		{
-			EmitError(pTcwork, pSymNew->m_pStnodDefinition->m_lexsp, ERRID_MissingSymbolDef,
+			EmitError(pTcctx, pSymNew->m_pStnodDefinition->m_lexsp, ERRID_MissingSymbolDef,
 				"cannot look up definition stNode for symbol %s", 
 				pSymNew->m_istrName.PChz());
 		}
@@ -3224,7 +3291,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 		if ((pTinSymSrc = PTinFromSymbol(pSymSrc)))
 		{
 			auto pTinSymNew = PTinSubstituteGenerics(
-								pTcwork,
+								pTcctx,
 								pSymtabNew,
 								pSymSrc->m_pStnodDefinition->m_lexsp,
 								pTinSymSrc,
@@ -3247,7 +3314,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 			continue;
 
 		auto pSymNew = pSymtabNew->PSymEnsure(
-									pTcwork->m_pErrman,
+									pTcctx->PErrman(),
 									*pIstrAnc,
 									pStnodBaked,
 									FSYM_None);
@@ -3278,7 +3345,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 		auto ppStnodCopy = mpPStnodGenPStnodCopy.Lookup(pTypememb->m_pStdecl);
 		if (!ppStnodCopy)
 		{
-			EmitError(pTcwork, pTypememb->m_pStdecl->m_lexsp, ERRID_MissingMemberDef,
+			EmitError(pTcctx, pTypememb->m_pStdecl->m_lexsp, ERRID_MissingMemberDef,
 				"cannot look up definition stNode for type member %s in %s", 
 				pTypememb->m_istrName.PChz(),
 				pTinstructSrc->m_istrName.PChz());
@@ -3299,7 +3366,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 	pTinstructNew->m_pTinstructInstFrom = pTinstructSrc;
 	pTinstructNew->m_pGenmap = pGenmap;
 
-	pTinstructNew = PTinstructEnsureUniqueInstance(pTcwork, pTinstructNew);
+	pTinstructNew = PTinstructEnsureUniqueInstance(pTcctx, pTinstructNew);
 	GRFTINGEN grftingen;
 	grftingen.AssignFlags(FTINGEN_HasBakedValueArgs, cGenericValue > 0);
 	grftingen.AssignFlags(FTINGEN_HasBakedTypeArgs, cGenericType > 0);
@@ -3328,7 +3395,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 	auto pStnodDeclSrc = pStstructSrc->m_pStnodDeclList;
 	auto pStnodDeclCopy = pStstructCopy->m_pStnodDeclList;
 	RemapGenericStnodCopy(
-		pTcwork,
+		pTcctx,
 		pStnodGeneric,
 		pStnodStructCopy,
 		pInsreq->m_iInsreq,
@@ -3346,14 +3413,22 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 		pStstructCopy->m_pStnodParameterList = pStnodNewParams;
 	}
 
-	TypeCheckFrame * pTcfram = pTcwork->m_blistTcfram.AppendNew();
-	pTcfram->m_ipTcframQueue = pTcwork->m_arypTcframPending.C();
-	pTcwork->m_arypTcframPending.Append(pTcfram);
+#if MOEB_TCJOB
+	TypeCheckFrame * pTcfram = pTcctx->m_blistTcfram.AppendNew();
+	pTcfram->m_ipTcframQueue = pTcctx->m_arypTcframPending.C();
+	pTcctx->m_arypTcframPending.Append(pTcfram);
 
-	WorkspaceEntry * pEntry = pTcwork->m_pblistEntry->AppendNew();
+	WorkspaceEntry * pEntry = pTcctx->m_pblistEntry->AppendNew();
 	pEntry->m_pStnod = pStnodStructCopy;
 	pEntry->m_pSymtab = pSymtabNew;
 	pTcfram->m_pEntry = pEntry;
+#else
+
+	Workspace * pWork = pTcctx->m_pWork;
+	WorkspaceEntry * pEntry = pWork->PEntryAppend(pStnodStructCopy, pSymtabNew);
+
+	Job * pJobNew = PJobCreateTypeCheckRequest(pWork->m_pComp, pWork, pEntry, pTcctx->m_pJobTc);
+#endif
 
 #if KEEP_TYPEINFO_DEBUG_STRING
 	pTinstructNew->m_istrDebug = StrFromTypeInfo(pTinstructNew);
@@ -3361,8 +3436,8 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 
 	if (!pTinstructNew->FHasGenericParams() || s_fTypecheckPartialGenericStructs)
 	{
-		pTcfram->m_aryTcsent.SetAlloc(pTcwork->m_pAlloc, Moe::BK_TypeCheckStack);
-		TypeCheckStackEntry * pTcsent = pTcfram->m_aryTcsent.AppendNew();
+		pTcctx->m_aryTcsent.SetAlloc(pTcctx->m_pAlloc, Moe::BK_TypeCheckStack);
+		TypeCheckStackEntry * pTcsent = pTcctx->m_aryTcsent.AppendNew();
 		pTcsent->m_nState = 0;
 		pTcsent->m_pStnod = pStnodStructCopy;
 		pTcsent->m_pSymtab = pSymtabNew;
@@ -3405,7 +3480,7 @@ struct MatchTypeInfo // tag = mtin
 };
 
  bool FTryComputeMatchTypeInfo(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	MatchTypeInfo * pMtin, 
 	STNode * pStnodArg,
@@ -3443,21 +3518,21 @@ struct MatchTypeInfo // tag = mtin
 			if (pTinParam->m_tink != TINK_Pointer)
 				return false;
 
-			if (!FVerifyIvalk(pTcwork, pStnodArg, IVALK_LValue))
+			if (!FVerifyIvalk(pTcctx, pStnodArg, IVALK_LValue))
 			{
-				EmitError(pTcwork->m_pErrman, pStnodArg->m_lexsp, ERRID_NotLvalue,
+				EmitError(pTcctx, pStnodArg->m_lexsp, ERRID_NotLvalue,
 					"Argument %d, must be an LValue for implicit conversion to pointer.",
 					iStnodArg+1);
 			}
 			pTinParam = ((TypeInfoPointer*)pTinParam)->m_pTin;
 		}
 
-		pTinCall = PTinPromoteUntypedTightest(pTcwork, pSymtab, pStnodArg, pTinParam, errep);
-		pTinCall = PTinAfterRValueAssignment(pTcwork, pStnodArg->m_lexsp, pTinCall, pSymtab, pTinParam);
+		pTinCall = PTinPromoteUntypedTightest(pTcctx, pSymtab, pStnodArg, pTinParam, errep);
+		pTinCall = PTinAfterRValueAssignment(pTcctx, pStnodArg->m_lexsp, pTinCall, pSymtab, pTinParam);
 	}
 
-	TypeInfo * pTinCallDefault = PTinPromoteUntypedArgument(pTcwork, pSymtab, pStnodArg, pTinParam, errep);
-	pTinCallDefault = PTinAfterRValueAssignment(pTcwork, pStnodArg->m_lexsp, pTinCallDefault, pSymtab, pTinParam);
+	TypeInfo * pTinCallDefault = PTinPromoteUntypedArgument(pTcctx, pSymtab, pStnodArg, pTinParam, errep);
+	pTinCallDefault = PTinAfterRValueAssignment(pTcctx, pStnodArg->m_lexsp, pTinCallDefault, pSymtab, pTinParam);
 
 	pMtin->m_pTinCall = pTinCall;
 	pMtin->m_pTinCallDefault = pTinCallDefault;
@@ -3470,7 +3545,7 @@ struct MatchTypeInfo // tag = mtin
 }
 
 PROCMATCH ProcmatchCheckStructArguments(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	TypeInfoStruct * pTinstruct,
 	ProcMatchParam * pPmparam,
@@ -3486,13 +3561,13 @@ PROCMATCH ProcmatchCheckStructArguments(
 	int cParam = pStnodDefParamList->CPStnodChild();
 
 	// unpack  the 'packed' args supplied in the code to the unpacked list resolving named, ordered and default args.
-	CDynAry<ArgUnpack> mpIArgArgunp(pTcwork->m_pAlloc, BK_TypeCheckGenerics, cParam);
+	CDynAry<ArgUnpack> mpIArgArgunp(pTcctx->m_pAlloc, BK_TypeCheckGenerics, cParam);
 	mpIArgArgunp.AppendNew(cParam);
 
-	GenericMap genmap(pTcwork->m_pAlloc, "CheckStructArg", pTinstruct);
+	GenericMap genmap(pTcctx->m_pAlloc, "CheckStructArg", pTinstruct);
 
 	if (!FUnpackArgumentList(
-		pTcwork,
+		pTcctx,
 		pSymtab,
 		cParam,
 		&mpIArgArgunp,
@@ -3511,7 +3586,7 @@ PROCMATCH ProcmatchCheckStructArguments(
 	// set cParam to size of trimmed argument list
 	cParam = (int)mpIArgArgunp.C();
 		
-	CDynAry<MatchTypeInfo> aryMtin(pTcwork->m_pAlloc, BK_TypeCheckProcmatch, pPmparam->m_cpStnodCall);
+	CDynAry<MatchTypeInfo> aryMtin(pTcctx->m_pAlloc, BK_TypeCheckProcmatch, pPmparam->m_cpStnodCall);
 
 
 	for (int iArg = 0; iArg < cParam; ++iArg)
@@ -3533,7 +3608,7 @@ PROCMATCH ProcmatchCheckStructArguments(
 		}
 
 		if (!FTryComputeMatchTypeInfo(
-			pTcwork,
+			pTcctx,
 			pSymtab,
 			pMtin,
 			pStnodArg,
@@ -3553,7 +3628,7 @@ PROCMATCH ProcmatchCheckStructArguments(
 		for (int iMtin = 0; iMtin < cMtin; ++iMtin)
 		{
 			auto pMtin = &aryMtin[iMtin];
-			pMtin->m_pTinParam = PTinSubstituteGenerics(pTcwork, pSymtab, pPmparam->m_lexsp, pMtin->m_pTinParam, &genmap, errep);
+			pMtin->m_pTinParam = PTinSubstituteGenerics(pTcctx, pSymtab, pPmparam->m_lexsp, pMtin->m_pTinParam, &genmap, errep);
 			if (!pMtin->m_pTinParam)
 			{
 				// errors should have been reported in PTinSubstituteGenerics
@@ -3562,11 +3637,11 @@ PROCMATCH ProcmatchCheckStructArguments(
 
 			if (pMtin->m_pStnodArg)
 			{
-				pMtin->m_pTinCall = PTinPromoteUntypedTightest(pTcwork, pSymtab, pMtin->m_pStnodArg, pMtin->m_pTinParam);
-				pMtin->m_pTinCallDefault = PTinPromoteUntypedArgument(pTcwork, pSymtab, pMtin->m_pStnodArg, pMtin->m_pTinParam, errep);
+				pMtin->m_pTinCall = PTinPromoteUntypedTightest(pTcctx, pSymtab, pMtin->m_pStnodArg, pMtin->m_pTinParam);
+				pMtin->m_pTinCallDefault = PTinPromoteUntypedArgument(pTcctx, pSymtab, pMtin->m_pStnodArg, pMtin->m_pTinParam, errep);
 
-				pMtin->m_pTinCall = PTinAfterRValueAssignment(pTcwork, pMtin->m_pStnodArg->m_lexsp, pMtin->m_pTinCall, pSymtab, pMtin->m_pTinParam);
-				pMtin->m_pTinCallDefault = PTinAfterRValueAssignment(pTcwork, pMtin->m_pStnodArg->m_lexsp, pMtin->m_pTinCallDefault, pSymtab, pMtin->m_pTinParam);
+				pMtin->m_pTinCall = PTinAfterRValueAssignment(pTcctx, pMtin->m_pStnodArg->m_lexsp, pMtin->m_pTinCall, pSymtab, pMtin->m_pTinParam);
+				pMtin->m_pTinCallDefault = PTinAfterRValueAssignment(pTcctx, pMtin->m_pStnodArg->m_lexsp, pMtin->m_pTinCallDefault, pSymtab, pMtin->m_pTinParam);
 			}
 			else
 			{
@@ -3591,11 +3666,11 @@ PROCMATCH ProcmatchCheckStructArguments(
 
 		if (!FCanImplicitCast(pMtin->m_pTinCall, pMtin->m_pTinParam))
 		{
-			GenericMapScope genscope(pTcwork->m_pErrman, (genmap.FIsEmpty()) ? nullptr : &genmap);
+			GenericMapScope genscope(pTcctx->PErrman(), (genmap.FIsEmpty()) ? nullptr : &genmap);
 
 			InString istrTinCall = IstrFromTypeInfo(pMtin->m_pTinCall);
 			InString istrTinParam = IstrFromTypeInfo(pMtin->m_pTinParam);
-			EmitError(pTcwork->m_pErrman, pStnodStruct->m_lexsp, ERRID_BadImplicitConversion,
+			EmitError(pTcctx, pStnodStruct->m_lexsp, ERRID_BadImplicitConversion,
 				"generic structure '%s' cannot convert argument %d from type %s to %s",
 				pTinstruct->m_istrName.m_pChz,
 				iStnodArg + 1,
@@ -3609,7 +3684,7 @@ PROCMATCH ProcmatchCheckStructArguments(
 	if (genmap.FIsEmpty())
 		return PROCMATCH_None;
 
-	auto pGenmap = PGenmapNew(pTcwork, "CheckStructArgs", pTinstruct);
+	auto pGenmap = PGenmapNew(pTcctx, "CheckStructArgs", pTinstruct);
 	pGenmap->m_aryLexspSrc.Append(pPmparam->m_lexsp);
 	pGenmap->Swap(&genmap);
 
@@ -3631,7 +3706,7 @@ inline const char * PChzProcName(TypeInfo * pTin, Symbol * pSym)
 }
 
 ERRID ErridComputeDefinedGenerics(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	const LexSpan & lexspRef,
 	ERREP errep,
 	GRFGENCOMP grfgencomp, 
@@ -3649,7 +3724,7 @@ ERRID ErridComputeDefinedGenerics(
 		TypeInfo *		m_pTinRef;
 	};
 
-	CDynAry<GenericFrame> aryGenfram(pTcwork->m_pAlloc, BK_TypeCheckGenerics, 16);
+	CDynAry<GenericFrame> aryGenfram(pTcctx->m_pAlloc, BK_TypeCheckGenerics, 16);
 
 	{
 		auto pGenfram = aryGenfram.AppendNew();
@@ -3684,7 +3759,7 @@ ERRID ErridComputeDefinedGenerics(
 					auto pAnc = pGenmapOut->PAncMapType(pSym->m_istrName, genfram.m_pTinRef);
 					if (!pAnc->m_pTin && errep == ERREP_ReportErrors)
 					{
-						EmitError(pTcwork, pStnodDockCur->m_lexsp, ERRID_CannotInferGeneric,
+						EmitError(pTcctx, pStnodDockCur->m_lexsp, ERRID_CannotInferGeneric,
 							"cannot infer type for generic argument '%s'",
 							pSym->m_istrName.PChz());
 					}
@@ -3739,7 +3814,7 @@ ERRID ErridComputeDefinedGenerics(
 							const char * pChzTink = (genfram.m_pTinRef) ? PChzFromTink(genfram.m_pTinRef->m_tink) : "null"; 
 							auto istrTinRef = IstrFromTypeInfo(genfram.m_pTinRef);
 							auto istrTinDock = IstrFromTypeInfo(pTinaryDock);
-							EmitError(pTcwork, pStnodDockCur->m_lexsp, ERRID_CannotInferGeneric,
+							EmitError(pTcctx, pStnodDockCur->m_lexsp, ERRID_CannotInferGeneric,
 								"Failed matching generic array : matching %s, encountered %s type '%s'",
 								istrTinDock.PChz(),
 								pChzTink,
@@ -3760,7 +3835,7 @@ ERRID ErridComputeDefinedGenerics(
 						{
 							auto istrIdent = IstrFromIdentifier(pStdecl->m_pStnodIdentifier);
 
-							auto pStvalLiteral = PStvalAllocAfterParse(pTcwork->m_pAlloc, PARK_Literal, pStnodDim->m_lexsp);
+							auto pStvalLiteral = PStvalAllocAfterParse(pTcctx->m_pAlloc, PARK_Literal, pStnodDim->m_lexsp);
 
 							//pStvalLiteral->m_litkLex = LITK_Numeric;
 							pStvalLiteral->SetU64(pTinaryRef->m_c);
@@ -3797,9 +3872,9 @@ ERRID ErridComputeDefinedGenerics(
 							auto istrTinRef = IstrFromTypeInfo(pTinRefEntry);
 							auto istrTinDock = IstrFromTypeInfo(pStnodDockEntry->m_pTin);
 
-							CLexerLookup lexlook(pTcwork->m_pErrman->m_pWork, pLexlocRef);
+							CLexerLookup lexlook(pTcctx->m_pWork, pLexlocRef);
 
-							EmitError(pTcwork, pStnodDockCur->m_lexsp, ERRID_CannotInferGeneric,
+							EmitError(pTcctx, pStnodDockCur->m_lexsp, ERRID_CannotInferGeneric,
 								"generic match missing qualifier : matching %s, encountered %s type '%s', matching %s (%d, %d)",
 								istrTinDock.PChz(),
 								pChzTink,
@@ -3841,7 +3916,7 @@ ERRID ErridComputeDefinedGenerics(
 								const char * pChzTink = (genfram.m_pTinRef) ? PChzFromTink(genfram.m_pTinRef->m_tink) : "null"; 
 								auto istrTinRef = IstrFromTypeInfo(genfram.m_pTinRef);
 								auto istrTinDock = IstrFromTypeInfo(pStnodDockCur->m_pTin);
-								EmitError(pTcwork, pStnodDockCur->m_lexsp, ERRID_CannotInferGeneric,
+								EmitError(pTcctx, pStnodDockCur->m_lexsp, ERRID_CannotInferGeneric,
 									"generic matching failed, matching %s, encountered %s type '%s'",
 									istrTinDock.PChz(),
 									pChzTink,
@@ -3863,7 +3938,7 @@ ERRID ErridComputeDefinedGenerics(
 						{
 							const char * pChzTink = (genfram.m_pTinRef) ? PChzFromTink(genfram.m_pTinRef->m_tink) : "null"; 
 							auto istrTin = IstrFromTypeInfo(genfram.m_pTinRef);
-							EmitError(pTcwork, pStnodDockCur->m_lexsp, ERRID_CannotInferGeneric,
+							EmitError(pTcctx, pStnodDockCur->m_lexsp, ERRID_CannotInferGeneric,
 								"matching expected generic struct, encountered %s type '%s'",
 								pChzTink,
 								istrTin.PChz());
@@ -3877,7 +3952,7 @@ ERRID ErridComputeDefinedGenerics(
 					if (!MOE_FVERIFY(pStnodDock, "expected definition"))
 						break;
 
-					LexLookup lexlookDoc(pTcwork->m_pErrman->m_pWork, pStnodDock);
+					LexLookup lexlookDoc(pTcctx->m_pWork, pStnodDock);
 					auto pStstructDock = PStnodRtiCast<STStruct *>(pStnodDock);
 					auto pTinstructDock = PTinRtiCast<TypeInfoStruct *>(pStnodDock->m_pTin);
 
@@ -3916,7 +3991,7 @@ ERRID ErridComputeDefinedGenerics(
 								auto pTinDock = pStnodDockType->m_pTin;
 								if (pTinDock && FIsGenericType(pTinDock))
 								{
-									ERRID errid = ErridComputeDefinedGenerics(pTcwork, lexspRef, errep, FGENCOMP_None,
+									ERRID errid = ErridComputeDefinedGenerics(pTcctx, lexspRef, errep, FGENCOMP_None,
 										pSymtab, 
 										pStnodParamRef->m_pTin,
 										pStnodDockType,
@@ -3937,7 +4012,7 @@ ERRID ErridComputeDefinedGenerics(
 					{
 						if (errep == ERREP_ReportErrors)
 						{
-							EmitError(pTcwork, pStnodDockCur->m_lexsp, ERRID_NoGenericRValue,
+							EmitError(pTcctx, pStnodDockCur->m_lexsp, ERRID_NoGenericRValue,
 								"cannot make a reference to a generic procedure definition '%s'",
 								pTinprocRef->m_istrName.PChz());
 						}
@@ -3987,7 +4062,7 @@ ERRID ErridComputeDefinedGenerics(
 
 
 PROCMATCH ProcmatchCheckProcArguments(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	TypeInfoProcedure * pTinproc,
 	ProcMatchParam * pPmparam,
@@ -3998,7 +4073,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 	size_t cArgCall = pPmparam->m_cpStnodCall;
 
 	auto pStnodDefinition = pTinproc->m_pStnodDefinition;
-	GenericMap genmap(pTcwork->m_pAlloc, "CheckProcArgs", pTinproc);
+	GenericMap genmap(pTcctx->m_pAlloc, "CheckProcArgs", pTinproc);
 
 	STNode * pStnodDefParamList = nullptr;
 	STProc * pStproc = nullptr;
@@ -4015,7 +4090,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 	// unpack  the 'packed' args supplied in the code to the unpacked list resolving named, ordered and default args.
 	size_t cArgTinproc = pTinproc->m_arypTinParams.C();
 	size_t cArgMax = moeMax(cArgCall, cArgTinproc); 
-	CDynAry<ArgUnpack> mpIArgArgunp(pTcwork->m_pAlloc, BK_TypeCheckGenerics, cArgMax);
+	CDynAry<ArgUnpack> mpIArgArgunp(pTcctx->m_pAlloc, BK_TypeCheckGenerics, cArgMax);
 	mpIArgArgunp.AppendNew(cArgMax);
 
 	if (!pTinproc->m_mpIptinGrfparmq.FIsEmpty() && pTinproc->m_mpIptinGrfparmq[0].FIsSet(FPARMQ_ImplicitRef)) 
@@ -4024,7 +4099,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 	}
 
 	if (!FUnpackArgumentList(
-		pTcwork,
+		pTcctx,
 		pSymtab,
 		cArgTinproc,
 		&mpIArgArgunp,
@@ -4049,7 +4124,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 	{
 		if (errep == ERREP_ReportErrors)
 		{
-			EmitError(pTcwork->m_pErrman, pPmparam->m_lexsp, ERRID_TooManyArgs,
+			EmitError(pTcctx, pPmparam->m_lexsp, ERRID_TooManyArgs,
 				"Too many arguments to procedure '%s'. Expected %d but encountered %d",
 				PChzProcName(pTinproc, pSymProc),
 				pTinproc->m_arypTinParams.C(),
@@ -4058,7 +4133,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 		return PROCMATCH_None;
 	}
 
-	CDynAry<MatchTypeInfo> aryMtin(pTcwork->m_pAlloc, BK_TypeCheckProcmatch, cArgMax);
+	CDynAry<MatchTypeInfo> aryMtin(pTcctx->m_pAlloc, BK_TypeCheckProcmatch, cArgMax);
 
 	//computes arypTinCallDefault and arypTinParam
 
@@ -4089,7 +4164,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 		}
 
 		if (!FTryComputeMatchTypeInfo(
-			pTcwork,
+			pTcctx,
 			pSymtab,
 			pMtin,
 			pStnodArg,
@@ -4108,7 +4183,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 			{
 				if (errep == ERREP_ReportErrors)
 				{
-					EmitError(pTcwork->m_pErrman, pPmparam->m_lexsp, ERRID_TooManyArgs,
+					EmitError(pTcctx, pPmparam->m_lexsp, ERRID_TooManyArgs,
 						"procedure '%s' expected %d arguments but encountered %d",
 						PChzProcName(pTinproc, pSymProc),
 						pTinproc->m_arypTinParams.C(),
@@ -4118,7 +4193,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 			}
 
 			pMtin->m_pTinCall = pMtin->m_pTinCallDefault;
-			pMtin->m_pTinParam = PTinPromoteVarArg(pTcwork, pSymtab, pMtin->m_pTinCall);
+			pMtin->m_pTinParam = PTinPromoteVarArg(pTcctx, pSymtab, pMtin->m_pTinCall);
 		}
 	}
 
@@ -4130,7 +4205,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 		for (int iMtin = 0; iMtin < cMtin; ++iMtin)
 		{
 			auto pMtin = &aryMtin[iMtin];
-			pMtin->m_pTinParam = PTinSubstituteGenerics(pTcwork, pSymtab, pPmparam->m_lexsp, pMtin->m_pTinParam, &genmap, errep);
+			pMtin->m_pTinParam = PTinSubstituteGenerics(pTcctx, pSymtab, pPmparam->m_lexsp, pMtin->m_pTinParam, &genmap, errep);
 			if (!pMtin->m_pTinParam)
 			{
 				// errors should have already been reported inside pTinSubstituteGenerics
@@ -4139,11 +4214,11 @@ PROCMATCH ProcmatchCheckProcArguments(
 
 			if (pMtin->m_pStnodArg)
 			{
-				pMtin->m_pTinCall = PTinPromoteUntypedTightest(pTcwork, pSymtab, pMtin->m_pStnodArg, pMtin->m_pTinParam);
-				pMtin->m_pTinCallDefault = PTinPromoteUntypedArgument(pTcwork, pSymtab, pMtin->m_pStnodArg, pMtin->m_pTinParam, errep);
+				pMtin->m_pTinCall = PTinPromoteUntypedTightest(pTcctx, pSymtab, pMtin->m_pStnodArg, pMtin->m_pTinParam);
+				pMtin->m_pTinCallDefault = PTinPromoteUntypedArgument(pTcctx, pSymtab, pMtin->m_pStnodArg, pMtin->m_pTinParam, errep);
 
-				pMtin->m_pTinCall = PTinAfterRValueAssignment(pTcwork, pMtin->m_pStnodArg->m_lexsp, pMtin->m_pTinCall, pSymtab, pMtin->m_pTinParam);
-				pMtin->m_pTinCallDefault = PTinAfterRValueAssignment(pTcwork, pMtin->m_pStnodArg->m_lexsp, pMtin->m_pTinCallDefault, pSymtab, pMtin->m_pTinParam);
+				pMtin->m_pTinCall = PTinAfterRValueAssignment(pTcctx, pMtin->m_pStnodArg->m_lexsp, pMtin->m_pTinCall, pSymtab, pMtin->m_pTinParam);
+				pMtin->m_pTinCallDefault = PTinAfterRValueAssignment(pTcctx, pMtin->m_pStnodArg->m_lexsp, pMtin->m_pTinCallDefault, pSymtab, pMtin->m_pTinParam);
 			}
 			else
 			{
@@ -4173,12 +4248,12 @@ PROCMATCH ProcmatchCheckProcArguments(
 		{
 			if (errep == ERREP_ReportErrors)
 			{
-				GenericMapScope genscope(pTcwork->m_pErrman, (genmap.FIsEmpty()) ? nullptr : &genmap);
+				GenericMapScope genscope(pTcctx->PErrman(), (genmap.FIsEmpty()) ? nullptr : &genmap);
 
 				InString istrTinCall = IstrFromTypeInfo(pMtin->m_pTinCall);
 				InString istrTinParam = IstrFromTypeInfo(pMtin->m_pTinParam);
 
-				EmitError(pTcwork->m_pErrman, pPmparam->m_lexsp, ERRID_BadImplicitConversion,
+				EmitError(pTcctx, pPmparam->m_lexsp, ERRID_BadImplicitConversion,
 					"procedure call '%s' cannot convert argument %d from type %s to %s",
 					PChzProcName(pTinproc, pSymProc),
 					iStnodArg+1,
@@ -4200,7 +4275,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 
 		if (!genmap.FIsEmpty())
 		{
-			auto pGenmap = PGenmapNew(pTcwork, "", nullptr);
+			auto pGenmap = PGenmapNew(pTcctx, "", nullptr);
 			pGenmap->m_aryLexspSrc.Append(pPmparam->m_lexsp);
 			pGenmap->Swap(&genmap);
 			pPmfit->m_pGenmap = pGenmap;
@@ -4211,8 +4286,7 @@ PROCMATCH ProcmatchCheckProcArguments(
 }
 
 TCRET TcretTryFindMatchingProcedureCall(
-	TypeCheckWorkspace * pTcwork, 
-	TypeCheckFrame * pTcfram,
+	TypeCheckContext * pTcctx, 
 	InString istrProcName,
 	SymbolTable * pSymtab,
 	ProcMatchParam * pPmparam,
@@ -4230,7 +4304,7 @@ TCRET TcretTryFindMatchingProcedureCall(
 	{
 		if (pPmparam->m_fMustFindMatch)
 		{
-			EmitError(pTcwork->m_pErrman, pPmparam->m_lexsp, ERRID_CantFindProc,
+			EmitError(pTcctx, pPmparam->m_lexsp, ERRID_CantFindProc,
 				"unknown procedure in type check: %s", istrProcName.m_pChz);
 		}
 		return TCRET_StoppingError;
@@ -4289,7 +4363,7 @@ TCRET TcretTryFindMatchingProcedureCall(
 
 			ProcMatchParam pmparamTry(*pPmparam);
 			auto procmatch = ProcmatchCheckStructArguments(
-								pTcwork,
+								pTcctx,
 								pSymtab,
 								pTinstructSym,
 								&pmparamTry,
@@ -4326,7 +4400,7 @@ TCRET TcretTryFindMatchingProcedureCall(
 			for (int argord = ARGORD_Min; argord < argordMax; ++argord)
 			{
 				ProcMatchParam pmparamTry(*pPmparam);
-				auto procmatch = ProcmatchCheckProcArguments(pTcwork, pSymtab, pTinprocSym, &pmparamTry, ERREP_HideErrors, (ARGORD)argord, pSymIt);
+				auto procmatch = ProcmatchCheckProcArguments(pTcctx, pSymtab, pTinprocSym, &pmparamTry, ERREP_HideErrors, (ARGORD)argord, pSymIt);
 				if (procmatch != PROCMATCH_None)
 				{
 					++mpProcmatchCSymmatch[procmatch];
@@ -4368,7 +4442,7 @@ TCRET TcretTryFindMatchingProcedureCall(
 		{
 			if (pPmparam->m_fMustFindMatch)
 			{
-				EmitError(pTcwork->m_pErrman, pPmparam->m_lexsp, ERRID_CantFindProc, "'%s' does not evaluate to a procedure.", istrProcName.PChz());
+				EmitError(pTcctx, pPmparam->m_lexsp, ERRID_CantFindProc, "'%s' does not evaluate to a procedure.", istrProcName.PChz());
 			}
 		}
 		else if (cSymOptions == 1)
@@ -4385,14 +4459,14 @@ TCRET TcretTryFindMatchingProcedureCall(
 					case TINK_Procedure:
 						{
 							auto pTinproc = (TypeInfoProcedure *)pTinSym;
-							(void)ProcmatchCheckProcArguments(pTcwork, pSymtab, pTinproc, pPmparam, ERREP_ReportErrors, ARGORD_Normal, pSymProc);
+							(void)ProcmatchCheckProcArguments(pTcctx, pSymtab, pTinproc, pPmparam, ERREP_ReportErrors, ARGORD_Normal, pSymProc);
 						}break;
 					case TINK_Struct:
 						{
 							auto pTinstruct = (TypeInfoStruct *)pTinSym;
 
 							(void)ProcmatchCheckStructArguments(
-								pTcwork,
+								pTcctx,
 								pSymtab,
 								pTinstruct,
 								pPmparam,
@@ -4403,16 +4477,16 @@ TCRET TcretTryFindMatchingProcedureCall(
 					}
 				}
 
-				if (!pTcwork->m_pErrman->FHasErrors() && !pTcwork->m_pErrman->FHasHiddenErrors())
+				if (!pTcctx->PErrman()->FHasErrors() && !pTcctx->PErrman()->FHasHiddenErrors())
 				{
-					EmitError(pTcwork->m_pErrman, pPmparam->m_lexsp, ERRID_UnknownError,
+					EmitError(pTcctx, pPmparam->m_lexsp, ERRID_UnknownError,
 						"error type matching symbol '%s' (one option, unknown match error)", istrProcName.PChz());
 				}
 			}
 		}
 		else if (pPmparam->m_fMustFindMatch)
 		{
-			Error error(pTcwork->m_pErrman);
+			Error error(pTcctx->PErrman());
 			PrintErrorLine(&error, "Error:", pPmparam->m_lexsp, "No overload matches procedure call. Options are:");
 
 			symiter = SymbolTable::SymbolIterator(pSymtab, istrProcName, pPmparam->m_lexsp, grfsymlook);
@@ -4441,7 +4515,7 @@ TCRET TcretTryFindMatchingProcedureCall(
 			return TCRET_StoppingError;
 
 		Symbol * pSymProc = pSymmatch->m_pSym;
-		TypeCheckStackEntry * pTcsentTop = pTcfram->m_aryTcsent.PLast();
+		TypeCheckStackEntry * pTcsentTop = pTcctx->m_aryTcsent.PLast();
 
 		// mark the symbol used if not a generic (generics will be marked used during instantiation)
 		if (!pPmparam->m_pPmfit || !pPmparam->m_pPmfit->m_pGenmap)
@@ -4455,7 +4529,7 @@ TCRET TcretTryFindMatchingProcedureCall(
 	else // cSymmatch > 1 
 	{	
 
-		Error error(pTcwork->m_pErrman, ERRID_AmbiguousOverload);
+		Error error(pTcctx->PErrman(), ERRID_AmbiguousOverload);
 		PrintErrorLine(&error, "Error:", pPmparam->m_lexsp, "Overloaded procedure is ambiguous. Options are:");
 
 		SymMatch * pSymmatchMac = arySymmatch.PMac();
@@ -4501,12 +4575,11 @@ struct SOverloadCheck // tag ovcheck
 
 
 SOverloadCheck OvcheckTryCheckOverload(
-	TypeCheckWorkspace * pTcwork,
-	TypeCheckFrame * pTcfram,
+	TypeCheckContext * pTcctx,
 	STNode * pStnod,
 	ProcMatchParam * pPmparam)
 {
-	CDynAry<TypeCheckStackEntry> * paryTcsent = &pTcfram->m_aryTcsent;
+	CDynAry<TypeCheckStackEntry> * paryTcsent = &pTcctx->m_aryTcsent;
 	TypeCheckStackEntry * pTcsentTop = paryTcsent->PLast();
 
 	SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
@@ -4518,16 +4591,15 @@ SOverloadCheck OvcheckTryCheckOverload(
 	Symbol * pSymProc = nullptr;
 	ARGORD argord = ARGORD_Normal;
 	TCRET tcret = TcretTryFindMatchingProcedureCall(
-					pTcwork, pTcfram, strProcName, pSymtab, pPmparam, &pSymProc, &argord, pTcsentTop->m_grfsymlook);
+					pTcctx, strProcName, pSymtab, pPmparam, &pSymProc, &argord, pTcsentTop->m_grfsymlook);
 
 	auto pTinproc = (pSymProc) ? PTinRtiCast<TypeInfoProcedure*>(PTinFromSymbol(pSymProc)) : nullptr;
 
 	if (pTinproc && tcret == TCRET_WaitingForSymbolDefinition)
 	{
 		// wait for this procedure's signature to be type checked.
-		UnknownType * pUntype = PUntypeEnsure(pTcwork, pSymProc);
-		pUntype->m_arypTcframDependent.Append(pTcfram);
 
+		SetupSymbolWait(pTcctx, pSymProc);
 		return SOverloadCheck(pTinproc, tcret, argord);
 	}
 	else if (tcret != TCRET_Complete)
@@ -4646,19 +4718,19 @@ SymbolBase * PSymbaseLookup(
 	return nullptr;
 }
 
-SymbolTable * PSymtabFromType(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, const LexSpan & lexsp)
+SymbolTable * PSymtabFromType(TypeCheckContext * pTcctx, TypeInfo * pTin, const LexSpan & lexsp)
 {
 	switch (pTin->m_tink)
 	{
 	case TINK_Pointer:
 		{
 			auto pTinptr = (TypeInfoPointer *)pTin;
-			return PSymtabFromType(pTcwork, pTinptr->m_pTin, lexsp);
+			return PSymtabFromType(pTcctx, pTinptr->m_pTin, lexsp);
 		}
 	case TINK_Qualifier:
 		{
 			auto pTinqual = (TypeInfoQualifier *)pTin;
-			return PSymtabFromType(pTcwork, pTinqual->m_pTin, lexsp);
+			return PSymtabFromType(pTcctx, pTinqual->m_pTin, lexsp);
 		}
 	case TINK_Struct:
 		{
@@ -4675,7 +4747,7 @@ SymbolTable * PSymtabFromType(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, con
 		} break;
 	default:
 		auto istrTin = IstrFromTypeInfo(pTin);
-		EmitError(pTcwork->m_pErrman, lexsp, ERRID_UsingStatementBadType,
+		EmitError(pTcctx, lexsp, ERRID_UsingStatementBadType,
 			"cannot supply type '%s' in a 'using' statement", istrTin.m_pChz);
 		return nullptr;
 	}
@@ -4762,7 +4834,7 @@ BigInt BintFromStval(STValue * pStval)
 }
 
 TypeInfo * PTinFromBint(
-	TypeCheckWorkspace *pTcwork,
+	TypeCheckContext *pTcctx,
 	SymbolTable * pSymtab,
 	BigInt bint)
 {
@@ -4782,7 +4854,7 @@ TypeInfo * PTinFromBint(
 }
 
 inline TypeInfo * PTinFromLiteralFinalized(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	const TypeInfoLiteral * pTinlit)
 {
@@ -4860,7 +4932,7 @@ int ITypemembLookup(TypeInfoStruct * pTinstruct, const InString & istrMemberName
 }
 
 static inline TypeInfo * PTinPromoteUntypedCommon(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	bool * pFWasHandled,
 	STNode * pStnodLit,
@@ -4916,7 +4988,7 @@ static inline TypeInfo * PTinPromoteUntypedCommon(
 			{
 				if (!pTinElement)
 				{
-					pTinElement = PTinPromoteUntypedDefault(pTcwork, pSymtab, pStnodInit->PStnodChild(0));
+					pTinElement = PTinPromoteUntypedDefault(pTcctx, pSymtab, pStnodInit->PStnodChild(0));
 				}
 
 				TypeInfoArray * pTinary = MOE_NEW(pSymtab->m_pAlloc, TypeInfoArray) TypeInfoArray();
@@ -4970,7 +5042,7 @@ static inline TypeInfo * PTinPromoteUntypedCommon(
 							auto istrLit = IstrFromTypeInfo(pTinlit);
 
 							// BB - We should generate a new literal that pads out the array values rather than error here
-							EmitError(pTcwork, pStnodLit->m_lexsp, ERRID_InvalidCast,
+							EmitError(pTcctx, pStnodLit->m_lexsp, ERRID_InvalidCast,
 								"cannot cast literal to different element count %s ->%s.  (should be fixed later)",
 								istrLit.m_pChz,
 								istrAry.m_pChz);
@@ -4983,7 +5055,7 @@ static inline TypeInfo * PTinPromoteUntypedCommon(
 						if (!pStnodIt->m_pTin || pStnodIt->m_pTin->m_tink != TINK_Literal)
 							continue;
 
-						(void) PTinPromoteUntypedCommon(pTcwork, pSymtab, &fWasHandled, pStnodIt, pTinary->m_pTin, errep);
+						(void) PTinPromoteUntypedCommon(pTcctx, pSymtab, &fWasHandled, pStnodIt, pTinary->m_pTin, errep);
 					}
 				} break;
 			case TINK_Struct:
@@ -5015,7 +5087,7 @@ static inline TypeInfo * PTinPromoteUntypedCommon(
 
 						auto pTypememb  = &pTinstruct->m_aryTypemembField[iTypememb];
 
-						auto pTinIt = PTinPromoteUntypedCommon(pTcwork, pSymtab, &fWasHandled, pStnodValue, pTypememb->m_pTin, errep);
+						auto pTinIt = PTinPromoteUntypedCommon(pTcctx, pSymtab, &fWasHandled, pStnodValue, pTypememb->m_pTin, errep);
 					}
 				} break;
 			default:
@@ -5028,7 +5100,7 @@ static inline TypeInfo * PTinPromoteUntypedCommon(
 
 	if (pTinlit->m_fIsFinalized)
 	{
-		auto pTinFinalized = PTinFromLiteralFinalized(pTcwork, pSymtab, pTinlit);
+		auto pTinFinalized = PTinFromLiteralFinalized(pTcctx, pSymtab, pTinlit);
 		return pSymtab->PTinqualWrap(pTinFinalized, FQUALK_Const);
 	}
 
@@ -5041,14 +5113,14 @@ static inline TypeInfo * PTinPromoteUntypedCommon(
 }
 
 TypeInfo * PTinPromoteUntypedDefault(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	STNode * pStnodLit,
 	TypeInfo * pTinExpected,
 	ERREP errep)
 {
 	bool fWasHandled;
-	TypeInfo * pTinReturn = PTinPromoteUntypedCommon(pTcwork, pSymtab, &fWasHandled, pStnodLit, pTinExpected, errep);
+	TypeInfo * pTinReturn = PTinPromoteUntypedCommon(pTcctx, pSymtab, &fWasHandled, pStnodLit, pTinExpected, errep);
 	if (fWasHandled)
 		return pTinReturn;
 
@@ -5068,7 +5140,7 @@ TypeInfo * PTinPromoteUntypedDefault(
 			if (fIsSigned == false)
 			{
 				const STValue * pStval = PStnodRtiCast<STValue *>(pStnodLit);
-				s64 nUnsigned = NUnsignedLiteralCast(pTcwork, pStval);
+				s64 nUnsigned = NUnsignedLiteralCast(pTcctx, pStval);
 				fIsSigned = (nUnsigned < LLONG_MAX);
 			}
 			return pSymtab->PTinqualBuiltinConst((fIsSigned) ? BuiltIn::g_istrInt : BuiltIn::g_istrUint);
@@ -5103,7 +5175,7 @@ TypeInfo * PTinPromoteUntypedDefault(
 }
 
 TypeInfo * PTinPromoteUntypedArgument(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	STNode * pStnodLit,
 	TypeInfo * pTinArgument,
@@ -5122,12 +5194,12 @@ TypeInfo * PTinPromoteUntypedArgument(
 		}
 	}
 
-	return PTinPromoteUntypedDefault(pTcwork, pSymtab, pStnodLit, pTinArgument, errep);
+	return PTinPromoteUntypedDefault(pTcctx, pSymtab, pStnodLit, pTinArgument, errep);
 }
 
 
 inline TypeInfo * PTinPromoteUntypedTightest(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	STNode * pStnodLit,	
 	TypeInfo * pTinDst,
@@ -5136,7 +5208,7 @@ inline TypeInfo * PTinPromoteUntypedTightest(
 	pTinDst = PTinStripQualifiers(pTinDst); 
 
 	bool fWasHandled;
-	TypeInfo * pTinReturn = PTinPromoteUntypedCommon(pTcwork, pSymtab, &fWasHandled, pStnodLit, pTinDst, errep);
+	TypeInfo * pTinReturn = PTinPromoteUntypedCommon(pTcctx, pSymtab, &fWasHandled, pStnodLit, pTinDst, errep);
 	if (fWasHandled)
 		return pTinReturn;
 
@@ -5178,14 +5250,14 @@ inline TypeInfo * PTinPromoteUntypedTightest(
 
 			if (fDestIsSigned == false && fIsValNegative == false)
 			{
-				s64 nUnsigned = NUnsignedLiteralCast(pTcwork, pStval);
+				s64 nUnsigned = NUnsignedLiteralCast(pTcctx, pStval);
 				if (nUnsigned <= UCHAR_MAX)	return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrU8);
 				if (nUnsigned <= USHRT_MAX)	return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrU16);
 				if (nUnsigned <= UINT_MAX)	return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrU32);
 				return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrU64);
 			}
 
-			s64 nSigned = NSignedLiteralCast(pTcwork, pStval);
+			s64 nSigned = NSignedLiteralCast(pTcctx, pStval);
 			if (fIsValNegative)
 			{
 				if (nSigned >= SCHAR_MIN)	return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrS8);
@@ -5208,13 +5280,13 @@ inline TypeInfo * PTinPromoteUntypedTightest(
 			bool fDestIsSigned = pTinDst->m_tink == TINK_Numeric && ((TypeInfoNumeric*)pTinDst)->m_grfnum.FIsSet(FNUM_IsSigned);
 			if (fDestIsSigned)
 			{
-				s64 nSigned = NSignedLiteralCast(pTcwork, pStval);
+				s64 nSigned = NSignedLiteralCast(pTcctx, pStval);
 				if ((nSigned <= SCHAR_MAX) & (nSigned > SCHAR_MIN))	return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrS8);
 				if ((nSigned <= SHRT_MAX) & (nSigned > SHRT_MIN))	return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrS16);
 				return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrS32);
 			}
 
-			s64 nUnsigned = NUnsignedLiteralCast(pTcwork, pStval);
+			s64 nUnsigned = NUnsignedLiteralCast(pTcctx, pStval);
 			if (nUnsigned <= UCHAR_MAX)	return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrU8);
 			if (nUnsigned <= USHRT_MAX)	return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrU16);
 			return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrU32);
@@ -5233,7 +5305,7 @@ inline TypeInfo * PTinPromoteUntypedTightest(
 				return pTinDst;
 			if (errep == ERREP_ReportErrors)
 			{
-				EmitError(pTcwork, pStnodLit->m_lexsp, ERRID_CannotConvertToNull, 
+				EmitError(pTcctx, pStnodLit->m_lexsp, ERRID_CannotConvertToNull, 
 					"Trying to initialize non pointer type with null value");
 			}
 		} break;
@@ -5378,7 +5450,7 @@ TypeInfo * PTinQualifyAfterAssignment(TypeInfo * pTin, SymbolTable * pSymtab, Ty
 	return pTinUnqual;
 }
 
-TypeInfo * PTinAfterRValueAssignment(TypeCheckWorkspace * pTcwork, const LexSpan & lexsp, TypeInfo * pTin, SymbolTable * pSymtab, TypeInfo * pTinDst)
+TypeInfo * PTinAfterRValueAssignment(TypeCheckContext * pTcctx, const LexSpan & lexsp, TypeInfo * pTin, SymbolTable * pSymtab, TypeInfo * pTinDst)
 {
 	if (!pTin)
 		return nullptr;
@@ -5392,7 +5464,7 @@ TypeInfo * PTinAfterRValueAssignment(TypeCheckWorkspace * pTcwork, const LexSpan
 		auto pTinproc = (TypeInfoProcedure *)pTin;
 		if (pTinproc->FHasGenericArgs())	
 		{
-			EmitError(pTcwork->m_pErrman, lexsp, ERRID_NoGenericRValue,
+			EmitError(pTcctx, lexsp, ERRID_NoGenericRValue,
 				"cannot make a reference to a generic procedure definition '%s'", pTinproc->m_istrName.m_pChz);
 		}
 	}
@@ -5554,13 +5626,13 @@ static bool FCanImplicitCast(TypeInfo * pTinSrc, TypeInfo * pTinDst)
 	return false;
 }
 
-inline bool FCanCastForInit(TypeCheckWorkspace * pTcwork, const LexSpan & lexsp, SymbolTable * pSymtab, TypeInfo * pTinSrc, TypeInfo * pTinDst)
+inline bool FCanCastForInit(TypeCheckContext * pTcctx, const LexSpan & lexsp, SymbolTable * pSymtab, TypeInfo * pTinSrc, TypeInfo * pTinDst)
 {
 	// Only require a const destination if the source is const, otherwise we'll strip it because it's ok to
 	//  initialize a const value (just not to assign to it)
 
-	auto pTinSrcAdj = PTinAfterRValueAssignment(pTcwork, lexsp, pTinSrc, pSymtab, pTinDst);
-	auto pTinDstAdj = PTinAfterRValueAssignment(pTcwork, lexsp, pTinDst, pSymtab, pTinDst);
+	auto pTinSrcAdj = PTinAfterRValueAssignment(pTcctx, lexsp, pTinSrc, pSymtab, pTinDst);
+	auto pTinDstAdj = PTinAfterRValueAssignment(pTcctx, lexsp, pTinDst, pSymtab, pTinDst);
 
 	return FCanImplicitCast(pTinSrcAdj, pTinDstAdj);
 }
@@ -5653,7 +5725,7 @@ bool FIsType(STNode * pStnod)
 }
 
 void FinalizeCompoundLiteralType(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtab,
 	TypeInfoLiteral * pTinlit,
 	TypeInfo * pTinDst,
@@ -5684,11 +5756,11 @@ void FinalizeCompoundLiteralType(
 		pTinlit = pTinlitNew;
 
 		// setup pTinlit->pStnodSource
-		auto pStnodDefCopy = PStnodCopy(pTcwork->m_pAlloc, pStnodDef);
+		auto pStnodDefCopy = PStnodCopy(pTcctx->m_pAlloc, pStnodDef);
 		pTinlitNew->m_pStnodDefinition = pStnodDefCopy;
 
 		// just tack the new value copy on the end of the literal so it gets cleaned up (yuck)
-		pStnodDef->AppendChildToArray(pTcwork->m_pAlloc, pStnodDefCopy);
+		pStnodDef->AppendChildToArray(pTcctx->m_pAlloc, pStnodDefCopy);
 		pStnodDef = pStnodDefCopy;
 	}
 
@@ -5713,7 +5785,7 @@ void FinalizeCompoundLiteralType(
 
 			if (pTinlit->m_c < pTinary->m_c)
 			{
-				EmitError(pTcwork, pStnodDef->m_lexsp, ERRID_InitTypeMismatch,
+				EmitError(pTcctx, pStnodDef->m_lexsp, ERRID_InitTypeMismatch,
 					"too few elements in array literal definition '%s'",
 					IstrFromTypeInfo(pTinlit).m_pChz);
 				break;
@@ -5724,7 +5796,7 @@ void FinalizeCompoundLiteralType(
 				auto pStnodIt = pStnodList->PStnodChild(iStnod);
 				if (pStnodIt && pStnodIt->m_park == PARK_ArgumentLabel)
 				{
-					EmitError(pTcwork, pStnodLit->m_lexsp, ERRID_InvalidLabel,
+					EmitError(pTcctx, pStnodLit->m_lexsp, ERRID_InvalidLabel,
 						"labeled member not allowed in array literal"); 
 					pStnodIt = pStnodIt->PStnodChildSafe(1);
 				}
@@ -5732,22 +5804,22 @@ void FinalizeCompoundLiteralType(
 				TypeInfo * pTinInit = pStnodIt->m_pTin;
 				if (!pTinInit || pTinInit->m_tink != TINK_Literal)
 				{
-					EmitError(pTcwork, pStnodIt->m_lexsp, ERRID_NonConstantInLiteral,
+					EmitError(pTcctx, pStnodIt->m_lexsp, ERRID_NonConstantInLiteral,
 						"array element %d cannot be initialized with a non-literal type '%s'",
 						iStnod,
 						IstrFromTypeInfo(pTinInit).m_pChz);
 					continue;
 				}
 
-				auto pTinElement = PTinPromoteUntypedTightest(pTcwork, pSymtab, pStnodIt, pTinary->m_pTin);
+				auto pTinElement = PTinPromoteUntypedTightest(pTcctx, pSymtab, pStnodIt, pTinary->m_pTin);
 
-				if (FCanCastForInit(pTcwork, pStnodIt->m_lexsp, pSymtab, pTinElement, pTinary->m_pTin))
+				if (FCanCastForInit(pTcctx, pStnodIt->m_lexsp, pSymtab, pTinElement, pTinary->m_pTin))
 				{
-					FinalizeLiteralType(pTcwork, pSymtab, pTinary->m_pTin, pStnodIt);
+					FinalizeLiteralType(pTcctx, pSymtab, pTinary->m_pTin, pStnodIt);
 				}
 				else
 				{
-					EmitError(pTcwork, pStnodIt->m_lexsp, ERRID_InitTypeMismatch,
+					EmitError(pTcctx, pStnodIt->m_lexsp, ERRID_InitTypeMismatch,
 						"array element %d is type '%s', cannot initialize with type '%s'",
 						iStnod,
 						IstrFromTypeInfo(pTinary->m_pTin).m_pChz,
@@ -5761,7 +5833,7 @@ void FinalizeCompoundLiteralType(
 			pTinlit->m_pTinSource = pTinstruct;
 
 			int cTypememb = int(pTinstruct->m_aryTypemembField.C());
-	        CDynAry<STNode *> arypStnodInit(pTcwork->m_pAlloc, BK_CodeGen, cTypememb);
+	        CDynAry<STNode *> arypStnodInit(pTcctx->m_pAlloc, BK_CodeGen, cTypememb);
 	        arypStnodInit.AppendFill(cTypememb, nullptr);
 
 			int iStnodNamed = -1;
@@ -5780,7 +5852,7 @@ void FinalizeCompoundLiteralType(
 					int iTypememb = ITypemembLookup(pTinstruct, istrIdentifier);
 					if (iTypememb < 0)
 					{
-						EmitError(pTcwork, pStnodLit->m_lexsp, ERRID_LiteralMemberNotFound,
+						EmitError(pTcctx, pStnodLit->m_lexsp, ERRID_LiteralMemberNotFound,
 							"struct '%s' has no member named '%s'", 
 							pTinstruct->m_istrName.m_pChz, 
 							istrIdentifier.m_pChz);
@@ -5796,14 +5868,14 @@ void FinalizeCompoundLiteralType(
 				{
 					if (iStnodNamed >= 0)
 					{
-						EmitError(pTcwork, pStnodLit->m_lexsp, ERRID_LiteralUnnamedMember, 
+						EmitError(pTcctx, pStnodLit->m_lexsp, ERRID_LiteralUnnamedMember, 
 							"Unnamed expression encountered after named expression %d", iStnodNamed + 1);
 						return;
 					}
 
 					if (iStnod > pTinstruct->m_aryTypemembField.C())
 					{
-						EmitError(pTcwork, pStnodLit->m_lexsp, ERRID_TooManyInitializers,
+						EmitError(pTcctx, pStnodLit->m_lexsp, ERRID_TooManyInitializers,
 							"too many initializers for struct '%s'", pTinstruct->m_istrName.m_pChz);
 						return;
 					}
@@ -5823,25 +5895,25 @@ void FinalizeCompoundLiteralType(
 					TypeInfo * pTinInit = pStnodIt->m_pTin;
 					if (!pTinInit || pTinInit->m_tink != TINK_Literal)
 					{
-						EmitError(pTcwork, pStnodIt->m_lexsp, ERRID_NonConstantInLiteral,
+						EmitError(pTcctx, pStnodIt->m_lexsp, ERRID_NonConstantInLiteral,
 							"struct member '%s' cannot be initialize with a non-literal type '%s'",
 							pTypememb->m_istrName.m_pChz,
 							IstrFromTypeInfo(pTinInit).m_pChz);
 						continue;
 					}
 
-					pTinInit = PTinPromoteUntypedTightest(pTcwork, pSymtab, pStnodIt, pTypememb->m_pTin);
+					pTinInit = PTinPromoteUntypedTightest(pTcctx, pSymtab, pStnodIt, pTypememb->m_pTin);
 
 					// the top level literal is implicitly const so it's members are too
 
 					auto pTinqualMember = pSymtab->PTinqualWrap(pTypememb->m_pTin, FQUALK_Const);
-					if (FCanCastForInit(pTcwork, pStnodIt->m_lexsp, pSymtab, pTinInit, pTinqualMember))
+					if (FCanCastForInit(pTcctx, pStnodIt->m_lexsp, pSymtab, pTinInit, pTinqualMember))
 					{
-						FinalizeLiteralType(pTcwork, pSymtab, pTypememb->m_pTin, pStnodIt);
+						FinalizeLiteralType(pTcctx, pSymtab, pTypememb->m_pTin, pStnodIt);
 					}
 					else
 					{
-						EmitError(pTcwork, pStnodIt->m_lexsp, ERRID_InitTypeMismatch,
+						EmitError(pTcctx, pStnodIt->m_lexsp, ERRID_InitTypeMismatch,
 							"struct member '%s' is type '%s', cannot initialize with type '%s'",
 							pTypememb->m_istrName.m_pChz,
 							IstrFromTypeInfo(pTinqualMember).m_pChz,
@@ -5856,7 +5928,7 @@ void FinalizeCompoundLiteralType(
 	}
 }
 
-void FinalizeLiteralType(TypeCheckWorkspace * pTcwork, SymbolTable * pSymtab, TypeInfo * pTinDst, STNode * pStnodLit)
+void FinalizeLiteralType(TypeCheckContext * pTcctx, SymbolTable * pSymtab, TypeInfo * pTinDst, STNode * pStnodLit)
 {
 	if (!pStnodLit->m_pTin || pStnodLit->m_pTin->m_tink != TINK_Literal)
 		return;
@@ -5932,12 +6004,12 @@ void FinalizeLiteralType(TypeCheckWorkspace * pTcwork, SymbolTable * pSymtab, Ty
 				} break;
 			case LITK_Compound:
 				{
-					auto pTinPromoted = PTinPromoteUntypedDefault(pTcwork, pSymtab, pStnodLit, pTinDst);
+					auto pTinPromoted = PTinPromoteUntypedDefault(pTcctx, pSymtab, pStnodLit, pTinDst);
 
 					// strip const here, as it is under a literal, so it's implicitly const
 
 					auto pTinDst = PTinStripQualifiers(pTinPromoted);
-					FinalizeCompoundLiteralType(pTcwork, pSymtab, pTinlitPrev, pTinDst, pStnodLit);
+					FinalizeCompoundLiteralType(pTcctx, pSymtab, pTinlitPrev, pTinDst, pStnodLit);
 				} break;
 			default: MOE_ASSERT(false, "unexpected literal type");
 			}
@@ -5964,13 +6036,13 @@ void FinalizeLiteralType(TypeCheckWorkspace * pTcwork, SymbolTable * pSymtab, Ty
 			if (pTinlitPrev && pTinlitPrev->m_litty.m_litk == LITK_Compound)
 			{
 				pTinlitPrev->m_pTinSource = pTinDst;
-				FinalizeCompoundLiteralType(pTcwork, pSymtab, pTinlitPrev, pTinDst, pStnodLit);
+				FinalizeCompoundLiteralType(pTcctx, pSymtab, pTinlitPrev, pTinDst, pStnodLit);
 			}
 			else
 			{
 				const char * pChzExpect = (pTinDst->m_tink == TINK_Array) ? "array literal" : "struct literal";
 
-				EmitError(pTcwork, pStnodLit->m_lexsp, ERRID_NonConstantInLiteral, 
+				EmitError(pTcctx, pStnodLit->m_lexsp, ERRID_NonConstantInLiteral, 
 					"Expected %s in literal but encountered %s",
 					pChzExpect,
 					IstrFromTypeInfo(pStnodLit->m_pTin).m_pChz);
@@ -5978,7 +6050,7 @@ void FinalizeLiteralType(TypeCheckWorkspace * pTcwork, SymbolTable * pSymtab, Ty
 		} break;
 	case TINK_Anchor:
 		{
-			(void) PTinPromoteUntypedDefault(pTcwork, pSymtab, pStnodLit);
+			(void) PTinPromoteUntypedDefault(pTcctx, pSymtab, pStnodLit);
 		}break;
 	case TINK_Null: // fall through
 	case TINK_Void: // fall through
@@ -5987,7 +6059,7 @@ void FinalizeLiteralType(TypeCheckWorkspace * pTcwork, SymbolTable * pSymtab, Ty
 	}
 }
 
-TypeInfo * PTinPromoteVarArg(TypeCheckWorkspace * pTcwork, SymbolTable * pSymtab, TypeInfo * pTinIn)
+TypeInfo * PTinPromoteVarArg(TypeCheckContext * pTcctx, SymbolTable * pSymtab, TypeInfo * pTinIn)
 {
 	// C99 requires that all floats are promoted to double and all integers < 32 bit are promoted to 32 bit.
 
@@ -6012,7 +6084,7 @@ TypeInfo * PTinPromoteVarArg(TypeCheckWorkspace * pTcwork, SymbolTable * pSymtab
 	case TINK_Enum:
 		{
 			auto pTinenum = (TypeInfoEnum *)pTinIn;
-			return PTinPromoteVarArg(pTcwork, pSymtab, pTinenum->m_pTinLoose);
+			return PTinPromoteVarArg(pTcctx, pSymtab, pTinenum->m_pTinLoose);
 		}
 	case TINK_Array:
 		{
@@ -6035,14 +6107,14 @@ QUALK QualkFromRword(InString istr)
 }
 
 TypeInfo * PTinFromTypeSpecification(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcctx,
 	SymbolTable * pSymtabRoot,
 	STNode * pStnod,
 	GRFSYMLOOK grfsymlook,
 	Symbol **ppSymType,
 	bool * pFIsValidTypeSpec)
 {
-	CDynAry<TinSpecEntry> aryTinse(pTcwork->m_pAlloc, BK_TypeCheck);
+	CDynAry<TinSpecEntry> aryTinse(pTcctx->m_pAlloc, BK_TypeCheck);
 
 	// Returns null if this is an instance of an unknown type, if this is a reference to an unknown type we will return
 	//  tinptr->tin(TINK_Unknown) because we need this to handle a struct with a pointer to an instance of itself.
@@ -6068,7 +6140,7 @@ TypeInfo * PTinFromTypeSpecification(
 				Symbol * pSym = nullptr;
 				if (!pSymbase)
 				{
-					EmitError(pTcwork, pStnod->m_lexsp, ERRID_UnknownIdentifier, 
+					EmitError(pTcctx, pStnod->m_lexsp, ERRID_UnknownIdentifier, 
 						"'%s' unknown identifier detected in type specificattion", istrIdent.m_pChz);
 					*pFIsValidTypeSpec = false;
 				}
@@ -6079,7 +6151,7 @@ TypeInfo * PTinFromTypeSpecification(
 
 				if (!pSym || !pSym->m_grfsym.FIsSet(FSYM_IsType))
 				{
-					EmitError(pTcwork, pStnod->m_lexsp, ERRID_TypeSpecifierExpected,
+					EmitError(pTcctx, pStnod->m_lexsp, ERRID_TypeSpecifierExpected,
 						"Expected type specification but encountered '%s'", istrIdent.m_pChz);
 					return nullptr;
 				}
@@ -6087,7 +6159,7 @@ TypeInfo * PTinFromTypeSpecification(
 				auto pTinstruct = PTinRtiCast<TypeInfoStruct *>(PTinFromSymbol(pSym));
 				if (pTinstruct && pTinstruct->FHasGenericParams())
 				{
-					EmitError(pTcwork, pStnod->m_lexsp, ERRID_GenericArgsExpected,
+					EmitError(pTcctx, pStnod->m_lexsp, ERRID_GenericArgsExpected,
 						"Generic struct '%s' needs argument list for instantiation", istrIdent.m_pChz);
 					*pFIsValidTypeSpec = false;
 				}
@@ -6128,7 +6200,7 @@ TypeInfo * PTinFromTypeSpecification(
 				}
 				else if (nState == 1)
 				{
-					auto pSymtabTin = PSymtabFromType(pTcwork, pTinse->m_pTin, pStnod->m_lexsp);
+					auto pSymtabTin = PSymtabFromType(pTcctx, pTinse->m_pTin, pStnod->m_lexsp);
 
 					STNode * pStnodIdent = pStnod->PStnodChild(1);
 					auto strIdent = IstrFromIdentifier(pStnodIdent);
@@ -6162,7 +6234,7 @@ TypeInfo * PTinFromTypeSpecification(
 						s64 cTinary = 0;
 						if (!FIsCompileTimeConstant(pStnodDim))
 						{
-							EmitError(pTcwork, pStnod->m_lexsp, ERRID_FeatureNotImplemented,
+							EmitError(pTcctx, pStnod->m_lexsp, ERRID_FeatureNotImplemented,
 								"Only static sized arrays are currently supported");
 							*pFIsValidTypeSpec = false;
 						}
@@ -6177,24 +6249,24 @@ TypeInfo * PTinFromTypeSpecification(
 							{
 								Symbol * pSymDim = pStnodDim->PSym();
 								TypeInfo * pTinCount = pTinse->m_pSymtab->PTinBuiltin(BuiltIn::g_istrInt);
-								TypeInfo * pTinPromoted = PTinPromoteUntypedTightest(pTcwork, pTinse->m_pSymtab, pStnodDim, pTinCount);
-								pTinPromoted = PTinAfterRValueAssignment(pTcwork, pStnodDim->m_lexsp, pTinPromoted, pTinse->m_pSymtab, pTinCount);
+								TypeInfo * pTinPromoted = PTinPromoteUntypedTightest(pTcctx, pTinse->m_pSymtab, pStnodDim, pTinCount);
+								pTinPromoted = PTinAfterRValueAssignment(pTcctx, pStnodDim->m_lexsp, pTinPromoted, pTinse->m_pSymtab, pTinCount);
 
 								if (!FCanImplicitCast(pTinPromoted, pTinCount))
 								{
 
-									EmitError(pTcwork, pStnod->m_lexsp, ERRID_BadArrayIndex, "static integer array size expected");
+									EmitError(pTcctx, pStnod->m_lexsp, ERRID_BadArrayIndex, "static integer array size expected");
 									*pFIsValidTypeSpec = false;
 								}
 								else
 								{
-									FinalizeLiteralType(pTcwork, pTinse->m_pSymtab, pTinCount, pStnodDim);
+									FinalizeLiteralType(pTcctx, pTinse->m_pSymtab, pTinCount, pStnodDim);
 									pStvalDim = PStnodRtiCast<STValue *>(pStnodDim);
 								}
 
 								if (pStvalDim)
 								{
-									cTinary = NUnsignedLiteralCast(pTcwork, pStvalDim);
+									cTinary = NUnsignedLiteralCast(pTcctx, pStvalDim);
 								}
 							}
 						}
@@ -6209,7 +6281,7 @@ TypeInfo * PTinFromTypeSpecification(
 
 					if (pTinary->m_aryk == ARYK_Dynamic)
 					{
-						EmitError(pTcwork, pStnod->m_lexsp, ERRID_NotYetSupported, "Dynamic arrays are not yet supported");
+						EmitError(pTcctx, pStnod->m_lexsp, ERRID_NotYetSupported, "Dynamic arrays are not yet supported");
 					}
 
 					pStnod->m_pTin = pTinary;
@@ -6282,7 +6354,7 @@ TypeInfo * PTinFromTypeSpecification(
 	return pTinReturn;
 }
 
-PARK ParkDefinition(TypeCheckWorkspace * pTcwork, const Symbol * pSym)
+PARK ParkDefinition(TypeCheckContext * pTcctx, const Symbol * pSym)
 {
 	if (MOE_FVERIFY(pSym->m_pStnodDefinition, "symbol without definition"))
 	{
@@ -6293,7 +6365,7 @@ PARK ParkDefinition(TypeCheckWorkspace * pTcwork, const Symbol * pSym)
 		case PARK_Decl:					return parkDef; 
 		case PARK_StructDefinition:		return PARK_Decl; // instances and types shadow each other
 		default: 
-			EmitError(pTcwork, pSym->m_pStnodDefinition->m_lexsp, ERRID_UnexpectedSymbolDef,
+			EmitError(pTcctx, pSym->m_pStnodDefinition->m_lexsp, ERRID_UnexpectedSymbolDef,
 				"Unexpected PARK %s for symbol definition", PChzLongFromPark(parkDef));
 		}
 	}
@@ -6411,26 +6483,25 @@ void ComputeSymbolDependencies(Alloc * pAlloc, ErrorManager * pErrman, SymbolTab
 	}
 }
 
-TCRET TcretWaitForTypeSymbol(TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, Symbol * pSymType, STNode * pStnodType)
+TCRET TcretWaitForTypeSymbol(TypeCheckContext * pTcctx, Symbol * pSymType, STNode * pStnodType)
 {
 	if (!pSymType)
 	{
 		InString istrTypename = IstrTypenameFromTypeSpecification(pStnodType);
-		EmitError(pTcwork, pStnodType->m_lexsp, ERRID_UnknownSymbol, "'%s' unknown symbol detected", istrTypename.PChz());
+		EmitError(pTcctx, pStnodType->m_lexsp, ERRID_UnknownSymbol, "'%s' unknown symbol detected", istrTypename.PChz());
 		return TCRET_StoppingError;
 	}
 
 	if (!pSymType->m_grfsym.FIsSet(FSYM_IsType))
 	{
 		InString istrName = IstrFullyQualifiedSymbol(pSymType);
-		EmitError(pTcwork, pStnodType->m_lexsp, ERRID_TypeExpected, "%s symbol refers to instance, but was expecting type", istrName.PChz());
+		EmitError(pTcctx, pStnodType->m_lexsp, ERRID_TypeExpected, "%s symbol refers to instance, but was expecting type", istrName.PChz());
 		return TCRET_StoppingError;
 	}
 	else
 	{
 		// wait for this type to be resolved.
-		UnknownType * pUntype = PUntypeEnsure(pTcwork, pSymType);
-		pUntype->m_arypTcframDependent.Append(pTcfram);
+		SetupSymbolWait(pTcctx, pSymType);
 		return TCRET_WaitingForSymbolDefinition;
 	}
 }
@@ -6453,7 +6524,7 @@ struct TcretDebug
 	TCRET	m_tcret;
 };
 
-TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, TypeCheckStackEntry * pTcsentTop)
+TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
 	auto pStproc = PStnodRtiCast<STProc *>(pStnod);
 	if (!MOE_FVERIFY(pStproc, "missing procedure parse data"))
@@ -6476,7 +6547,7 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 			{
 				STNode * pStnodParamList = pStproc->m_pStnodParameterList;
 
-				auto pTcsentPushed = PTcsentPush(pTcfram, &pTcsentTop, pStnodParamList);
+				auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStnodParamList);
 				if (pTcsentPushed)
 				{
 					pTcsentPushed->m_pSymtab = pStnodParamList->m_pSymtab;
@@ -6489,7 +6560,7 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 			// push the return type
 			if (STNode * pStnodReturn = pStproc->m_pStnodReturnType)
 			{
-				auto pTcsentPushed = PTcsentPush(pTcfram, &pTcsentTop, pStnodReturn);
+				auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStnodReturn);
 
 				// if we have a parameter list, use it's symbol table so we can return generic types 
 				//  defined in the arguments
@@ -6528,7 +6599,7 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 					STNode * pStnodReturn = pStproc->m_pStnodReturnType;
 					bool fIsValidTypeSpec;
 					TypeInfo * pTinReturn = PTinFromTypeSpecification(
-												pTcwork,
+												pTcctx,
 												pStnodReturn->m_pSymtab,
 												pStnodReturn,
 												pTcsentTop->m_grfsymlook,
@@ -6539,7 +6610,7 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 
 					if (!pTinReturn)
 					{
-						EmitError(pTcwork, pStnod->m_lexsp, ERRID_ReturnTypeExpected, "failed to parse return type");
+						EmitError(pTcctx, pStnod->m_lexsp, ERRID_ReturnTypeExpected, "failed to parse return type");
 					}
 					pStnodReturn->m_pTin = pTinReturn;
 
@@ -6558,7 +6629,7 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 
 				if (pStnodIdent->m_tok != TOK_Identifier) // must be op overloaded procedure
 				{
-					auto errid = ErridCheckOverloadSignature(pStnodIdent->m_tok, pTinproc, pTcwork->m_pErrman, pStnod->m_lexsp);
+					auto errid = ErridCheckOverloadSignature(pStnodIdent->m_tok, pTinproc, pTcctx->PErrman(), pStnod->m_lexsp);
 					if (errid != ERRID_Nil)
 						return TCRET_StoppingError;
 				}
@@ -6587,14 +6658,14 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 					{
 						auto istrType = IstrFromTypeInfo(pStnodParam->m_pTin);
 						EmitError(
-							pTcwork, pStnod->m_lexsp, ERRID_InvalidArgument,
+							pTcctx, pStnod->m_lexsp, ERRID_InvalidArgument,
 							"Argument %d is not a valid argument type. '%s' does not define an assignment operator", 
 							iStnod + 1,
 							istrType.m_pChz);
 					}
 				}
 
-				if (pTcwork->m_pErrman->FHasErrors())
+				if (pTcctx->PErrman()->FHasErrors())
 				{
 					return TCRET_StoppingError;
 				}
@@ -6614,7 +6685,7 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 			{
 				auto pTinproc = PTinDerivedCast<TypeInfoProcedure *>(pTinSym);
 
-				OnTypeResolve(pTcwork, pSymProc);
+				OnTypeResolve(pTcctx, pSymProc);
 
 				for (int ipTin = 0; ipTin < pTinproc->m_arypTinParams.C(); ++ipTin)
 				{
@@ -6622,7 +6693,7 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 				}
 
 				pStnod->m_grfstnod.AddFlags(FSTNOD_NoCodeGeneration);
-				PopTcsent(pTcfram, &pTcsentTop, pStnod);
+				PopTcsent(pTcctx, &pTcsentTop, pStnod);
 				return TCRET_Complete;
 			}
 
@@ -6630,7 +6701,7 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 			if (pStproc->m_pStnodBody)
 			{
 				STNode * pStnodBody = pStproc->m_pStnodBody;
-				auto pTcsentPushed = PTcsentPush(pTcfram, &pTcsentTop, pStnodBody);
+				auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStnodBody);
 
 				if (pTcsentPushed)
 				{
@@ -6641,8 +6712,8 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 		}break;
 	case 3:
 		{
-			pTinproc->m_istrMangled = IstrComputeMangled(pTcwork, pStnod, pTcsentTop->m_pSymtab);
-			PopTcsent(pTcfram, &pTcsentTop, pStnod);
+			pTinproc->m_istrMangled = IstrComputeMangled(pTcctx, pStnod, pTcsentTop->m_pSymtab);
+			PopTcsent(pTcctx, &pTcsentTop, pStnod);
 
 			Symbol * pSymProc = pStnod->PSym();
 			if (pStproc->m_grfstproc.FIsSet(FSTPROC_PublicLinkage))
@@ -6651,13 +6722,13 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 			}
 
 			pStnod->m_strees = STREES_TypeChecked;
-			OnTypeResolve(pTcwork, pSymProc);
+			OnTypeResolve(pTcctx, pSymProc);
 		}break;
 	}
 	return TCRET_Continue;
 } 
 
-TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, TypeCheckStackEntry * pTcsentTop)
+TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
 	auto pStdecl = PStnodDerivedCast<STDecl *>(pStnod);
 
@@ -6687,7 +6758,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 	{
 		if (pStdecl->PStnodChild(pTcsentTop->m_nState) != pStdecl->m_pStnodIdentifier)
 		{
-			auto pTcsentPushed = PTcsentPush(pTcfram, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState));
+			auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState));
 			if (pTcsentPushed)
 			{
 				auto pStnodChild = pStdecl->PStnodChild(pTcsentTop->m_nState);
@@ -6716,7 +6787,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 			Symbol * pSymType = nullptr;
 			bool fIsValidTypeSpec;
 			TypeInfo * pTinType = PTinFromTypeSpecification(
-										pTcwork,
+										pTcctx,
 										pSymtab,
 										pStnodType,
 										pTcsentTop->m_grfsymlook,
@@ -6733,21 +6804,21 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 			else
 			{
 				TypeInfo * pTinTypeDebug = PTinFromTypeSpecification(
-										pTcwork,
+										pTcctx,
 										pSymtab,
 										pStnodType,
 										pTcsentTop->m_grfsymlook,
 										&pSymType,
 										&fIsValidTypeSpec);
 
-				return TcretWaitForTypeSymbol(pTcwork, pTcfram, pSymType, pStnodType);
+				return TcretWaitForTypeSymbol(pTcctx, pSymType, pStnodType);
 			}
 		}
 
 		STNode * pStnodInit = pStdecl->m_pStnodInit;
 		if (pStnodInit)
 		{
-			if (!FVerifyIvalk(pTcwork, pStnodInit, IVALK_RValue))
+			if (!FVerifyIvalk(pTcctx, pStnodInit, IVALK_RValue))
 			{
 				pStnodInit->m_park = PARK_Uninitializer;
 			}
@@ -6769,16 +6840,16 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 				{
 					if (!pSymPrior->m_pStnodDefinition)
 					{
-						EmitError(pTcwork, pStnod->m_lexsp, ERRID_InitTypeMismatch,
+						EmitError(pTcctx, pStnod->m_lexsp, ERRID_InitTypeMismatch,
 							"'%s' is already declared. \n"
 							"Type inference is not allowed on overloaded variables. Did you type ':=' but meant '='?",
 							istrIdent.m_pChz);
 					}
 					else
 					{
-						LexLookup lexlook(pTcwork->m_pErrman->m_pWork, pSymPrior->m_pStnodDefinition);
+						LexLookup lexlook(pTcctx->m_pWork, pSymPrior->m_pStnodDefinition);
 
-						EmitError(pTcwork, pStnod->m_lexsp, ERRID_InitTypeMismatch,
+						EmitError(pTcctx, pStnod->m_lexsp, ERRID_InitTypeMismatch,
 							"'%s' is already declared at %s (%d, %d). \n"
 							"Type inference is not allowed on overloaded variables. Did you type ':=' but meant '='?",
 							istrIdent.PChz(),
@@ -6790,7 +6861,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 
 				if (!pStnodInit->m_pTin)
 				{
-					EmitError(pTcwork, pStnod->m_lexsp, ERRID_InitTypeMismatch, "trying to initialize %s with a 'void' type", istrIdent.PChz());
+					EmitError(pTcctx, pStnod->m_lexsp, ERRID_InitTypeMismatch, "trying to initialize %s with a 'void' type", istrIdent.PChz());
 					return TCRET_StoppingError;
 				}
 
@@ -6798,7 +6869,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 				{
 				case TINK_Void:
 				case TINK_Type:
-					EmitError(pTcwork, pStnod->m_lexsp, ERRID_UninstantiableType,
+					EmitError(pTcctx, pStnod->m_lexsp, ERRID_UninstantiableType,
 						"cannot initialize variable %s with type '%s'.", istrIdent.PChz(), PChzFromTink(pStnodInit->m_pTin->m_tink));
 					return TCRET_StoppingError;
 				default:
@@ -6807,10 +6878,10 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 
 				// BB - This won't allow an override of operator:= to return a different type
 				// I'm planning on coming back to it when I handle return types values as regular LValues
-				pTinInitDefault = PTinPromoteUntypedDefault(pTcwork, pTcsentTop->m_pSymtab, pStnodInit);
+				pTinInitDefault = PTinPromoteUntypedDefault(pTcctx, pTcsentTop->m_pSymtab, pStnodInit);
 
 				// pass pTin as pTinDst - we aren't assigning it to a different type
-				pTinInitDefault = PTinAfterRValueAssignment(pTcwork, pStnodInit->m_lexsp, pTinInitDefault, pTcsentTop->m_pSymtab, pTinInitDefault);
+				pTinInitDefault = PTinAfterRValueAssignment(pTcctx, pStnodInit->m_lexsp, pTinInitDefault, pTcsentTop->m_pSymtab, pTinInitDefault);
 
 				MOE_ASSERT(pTinInitDefault, "failed to compute default init type");
 			}
@@ -6842,11 +6913,11 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 				apStnod[0] = pStnodOpLhs;
 				apStnod[1] = pStnodInit;
 
-				ProcMatchParam pmparam(pTcwork->m_pAlloc, pStnod->m_lexsp);
+				ProcMatchParam pmparam(pTcctx->m_pAlloc, pStnod->m_lexsp);
 				pmparam.m_cpStnodCall = 2;
 				pmparam.m_ppStnodCall = apStnod;
 
-				ovcheck = OvcheckTryCheckOverload(pTcwork, pTcfram, pStnod, &pmparam);
+				ovcheck = OvcheckTryCheckOverload(pTcctx, pStnod, &pmparam);
 				pStnodOpLhs->m_pTin = nullptr;
 			}
 
@@ -6866,7 +6937,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 				MOE_ASSERT(ovcheck.m_argord == ARGORD_Normal, "Decl arguments cannot be commutative");
 
 				pStnod->m_pTin = pTinInitDefault;
-				FinalizeLiteralType(pTcwork, pTcsentTop->m_pSymtab, pStop->m_optype.m_pTinLhs, pStnodInit);
+				FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pStop->m_optype.m_pTinLhs, pStnodInit);
 			}
 			else
 			{
@@ -6879,14 +6950,14 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 				{
 					// just make sure the init type fits the specified one
 					TypeInfo * pTinInit = pStnodInit->m_pTin;
-					pTinInit = PTinPromoteUntypedTightest(pTcwork, pSymtab, pStnodInit, pStnod->m_pTin);
+					pTinInit = PTinPromoteUntypedTightest(pTcctx, pSymtab, pStnodInit, pStnod->m_pTin);
 
 					// Strip the top level const, as we're declaring a new instance
-					if (pStnod->m_pTin->m_tink == TINK_Anchor || FCanCastForInit(pTcwork, pStnod->m_lexsp, pSymtab, pTinInit, pStnod->m_pTin))
+					if (pStnod->m_pTin->m_tink == TINK_Anchor || FCanCastForInit(pTcctx, pStnod->m_lexsp, pSymtab, pTinInit, pStnod->m_pTin))
 					{
 						if (fAllowFinalizing)
 						{
-							FinalizeLiteralType(pTcwork, pSymtab, pStnod->m_pTin, pStnodInit);
+							FinalizeLiteralType(pTcctx, pSymtab, pStnod->m_pTin, pStnodInit);
 						}
 						pTinInit = pStnod->m_pTin;
 					}
@@ -6897,7 +6968,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 							"Cannot initialize variable '%s' of type '%s' with '%s'";
 
 						InString istrIdent = IstrFromIdentifier(pStnodIdent);
-						EmitError(pTcwork, pStnod->m_lexsp, ERRID_InitTypeMismatch,
+						EmitError(pTcctx, pStnod->m_lexsp, ERRID_InitTypeMismatch,
 							pChzFormat,
 							istrIdent.PChz(),
 							IstrFromTypeInfo(pStnod->m_pTin).PChz(),
@@ -6909,7 +6980,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 					pStnod->m_pTin = pTinInitDefault;
 					if (fAllowFinalizing)
 					{
-						FinalizeLiteralType(pTcwork, pTcsentTop->m_pSymtab, pStnod->m_pTin, pStnodInit);
+						FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pStnod->m_pTin, pStnodInit);
 					}
 				}
 			}
@@ -6926,7 +6997,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 			if (pStnod->m_pTin == nullptr)
 			{
 				const char * pChzIdent = (pStnodIdent) ? IstrFromIdentifier(pStnodIdent).m_pChz : "declaration";
-				EmitError(pTcwork, pStnod->m_lexsp, ERRID_CannotInferType,
+				EmitError(pTcctx, pStnod->m_lexsp, ERRID_CannotInferType,
 					"Unable to calculate type for $%s", pChzIdent);
 				return TCRET_StoppingError;
 			}
@@ -6941,33 +7012,33 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 				if (pSymIdent)
 				{
 					pStnod->m_pSymbase = pSymIdent;
-					OnTypeResolve(pTcwork, pSymIdent);
+					OnTypeResolve(pTcctx, pSymIdent);
 				}
 			}
 			else if (!FIsGenericType(pStnod->m_pTin))
 			{
-				EmitError(pTcwork, pStnod->m_lexsp, ERRID_UnnamedNotAllowed, 
+				EmitError(pTcctx, pStnod->m_lexsp, ERRID_UnnamedNotAllowed, 
 					"Unnamed declaration must be used with a generic type specification");
 			}
 
 			if (pStdecl->m_fHasUsingPrefix)
 			{
 				auto pTinUsing = pStnod->m_pTin;
-				auto pSymtabUsing = PSymtabFromType(pTcwork, pTinUsing, pStnod->m_lexsp);
+				auto pSymtabUsing = PSymtabFromType(pTcctx, pTinUsing, pStnod->m_lexsp);
 				if (pSymtabUsing)
 				{
-					pSymtab->AddUsingScope(pTcwork->m_pErrman, pSymtabUsing, pStnod);
+					pSymtab->AddUsingScope(pTcctx->PErrman(), pSymtabUsing, pStnod);
 				}
 			}
 		}
 
 		pStnod->m_strees = STREES_TypeChecked;
-		PopTcsent(pTcfram, &pTcsentTop, pStnod);
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
 	}
 	return TCRET_Continue;
 }
 
-TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, TypeCheckStackEntry * pTcsentTop)
+TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
 	auto pStdecl = PStnodDerivedCast<STDecl *>(pStnod);
 	if (pTcsentTop->m_nState < 1)
@@ -6986,7 +7057,7 @@ TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork,
 	if (pTcsentTop->m_nState < pStnod->CPStnodChild())
 	{
 		auto pStnodCur = pStnod->PStnodChild(pTcsentTop->m_nState);
-		auto pTcsentPushed = PTcsentPush(pTcfram, &pTcsentTop, pStnodCur);
+		auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStnodCur);
 		if (pTcsentPushed && pStnodCur == pStdecl->m_pStnodType)
 		{
 			pTcsentPushed->m_tcctx = TCCTX_TypeSpecification;
@@ -7001,7 +7072,7 @@ TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork,
 	InString istrIdent = IstrFromIdentifier(pStnodIdent);
 	if (FIsType(pStnodInit))
 	{
-		EmitError(pTcwork, pStnod->m_lexsp, ERRID_InitTypeMismatch, 
+		EmitError(pTcctx, pStnod->m_lexsp, ERRID_InitTypeMismatch, 
 			"Cannot initialize constant '%s' to non-instance value.",istrIdent.PChz());
 		return TCRET_StoppingError;
 	}
@@ -7012,7 +7083,7 @@ TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork,
 	{
 		bool fIsValidTypeSpec;
 		TypeInfo * pTinType = PTinFromTypeSpecification(
-								pTcwork,
+								pTcctx,
 								pSymtab,
 								pStnodType,
 								pTcsentTop->m_grfsymlook,
@@ -7024,15 +7095,15 @@ TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork,
 
 		// just make sure the init type fits the specified one
 		TypeInfo * pTinInit = pStnodInit->m_pTin;
-		pTinInit = PTinPromoteUntypedTightest(pTcwork, pSymtab, pStnodInit, pTinType);
-		pTinInit = PTinAfterRValueAssignment(pTcwork, pStnodInit->m_lexsp, pTinInit, pSymtab, pTinType);
+		pTinInit = PTinPromoteUntypedTightest(pTcctx, pSymtab, pStnodInit, pTinType);
+		pTinInit = PTinAfterRValueAssignment(pTcctx, pStnodInit->m_lexsp, pTinInit, pSymtab, pTinType);
 		if (FCanImplicitCast(pTinInit, pTinType))
 		{
-			FinalizeLiteralType(pTcwork, pSymtab, pTinType, pStnodInit);
+			FinalizeLiteralType(pTcctx, pSymtab, pTinType, pStnodInit);
 		}
 		else
 		{
-			EmitError(pTcwork, pStnod->m_lexsp, ERRID_InitTypeMismatch, "Cannot initialize constant of type %s with %s",
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_InitTypeMismatch, "Cannot initialize constant of type %s with %s",
 				IstrFromTypeInfo(pTinType).PChz(),
 				IstrFromTypeInfo(pTinInit).PChz());
 		}
@@ -7041,7 +7112,7 @@ TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork,
 	{
 		// Promote as literal, just to error on untyped acasts. We don't actually force a type on
 		//  the constant until it gets used
-		(void) PTinPromoteUntypedDefault(pTcwork, pSymtab, pStnodInit);
+		(void) PTinPromoteUntypedDefault(pTcctx, pSymtab, pStnodInit);
 	}
 
 	auto pStval = PStnodRtiCast<STValue*>(pStnod);
@@ -7063,7 +7134,7 @@ TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork,
 
 		if (!pSymIdent || pSymIdent->m_pStnodDefinition != pStnod)
 		{
-			EmitError(pTcwork, pStnod->m_lexsp, ERRID_SymbolLookupFailed, "symbol lookup failed for '%s'", istrIdent.PChz());
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_SymbolLookupFailed, "symbol lookup failed for '%s'", istrIdent.PChz());
 			return TCRET_StoppingError;
 		}
 		else
@@ -7075,11 +7146,11 @@ TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckWorkspace * pTcwork,
 				pStnodIdent->m_pTin = pStnod->m_pTin;
 			}
 		}
-		OnTypeResolve(pTcwork, pSymIdent);
+		OnTypeResolve(pTcctx, pSymIdent);
 	}
 
 	pStnod->m_strees = STREES_TypeChecked;
-	PopTcsent(pTcfram, &pTcsentTop, pStnod);
+	PopTcsent(pTcctx, &pTcsentTop, pStnod);
 	return TCRET_Continue;
 }
 
@@ -7105,7 +7176,7 @@ static bool FIsEnumFlagLValue(SymbolBase * pSymbase)
 	return true;
 }
 
-TcretDebug TcretCheckIdentifier(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, TypeCheckStackEntry * pTcsentTop)
+TcretDebug TcretCheckIdentifier(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
 	// Note: we're only expecting to get here for identifiers within statements.
 	//  Identifiers for function names, declaration names*, should do their own type checking.
@@ -7119,7 +7190,7 @@ TcretDebug TcretCheckIdentifier(STNode * pStnod, TypeCheckWorkspace * pTcwork, T
 		auto pSymbase = PSymbaseLookup(pSymtab, istrIdent, pStnod->m_lexsp, pTcsentTop->m_grfsymlook);
 		if (!pSymbase)
 		{
-			EmitError(pTcwork, pStnod->m_lexsp, ERRID_UnknownIdentifier, "'%s' unknown identifier detected", istrIdent.PChz());
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_UnknownIdentifier, "'%s' unknown identifier detected", istrIdent.PChz());
 			return TCRET_StoppingError;
 		}
 
@@ -7194,14 +7265,13 @@ TcretDebug TcretCheckIdentifier(STNode * pStnod, TypeCheckWorkspace * pTcwork, T
 				{
 					// set up dependency for either the definition or the type...
 					
-					UnknownType * pUntype = PUntypeEnsure(pTcwork, pSymLast);
-					pUntype->m_arypTcframDependent.Append(pTcfram);
+					SetupSymbolWait(pTcctx, pSymLast);
 					return TCRET_WaitingForSymbolDefinition;
 				}
 			}
 			else
 			{
-				LexLookup lexlook(pTcwork->m_pErrman->m_pWork, pStnodDefinition->m_lexsp);
+				LexLookup lexlook(pTcctx->m_pWork, pStnodDefinition->m_lexsp);
 				MOE_ASSERT(false, "unexpected identifier source for '%s' in type check. %s %d:%d", 
 					istrIdent.PChz(),
 					lexlook.m_istrFilename.PChz(), lexlook.m_iLine, lexlook.m_iCodepoint);
@@ -7209,12 +7279,12 @@ TcretDebug TcretCheckIdentifier(STNode * pStnod, TypeCheckWorkspace * pTcwork, T
 		}
 	}
 
-	PopTcsent(pTcfram, &pTcsentTop, pStnod);
+	PopTcsent(pTcctx, &pTcsentTop, pStnod);
 	pStnod->m_strees = STREES_TypeChecked;
 	return TCRET_Continue;
 }
 
-TcretDebug TcretCheckLiteral(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, TypeCheckStackEntry * pTcsentTop)
+TcretDebug TcretCheckLiteral(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
 	if (MOE_FVERIFY(pStnod->m_pTin == nullptr, "STypeInfoLiteral should not be constructed before type checking"))
 	{
@@ -7229,11 +7299,11 @@ TcretDebug TcretCheckLiteral(STNode * pStnod, TypeCheckWorkspace * pTcwork, Type
 	}
 	
 	pStnod->m_strees = STREES_TypeChecked;
-	PopTcsent(pTcfram, &pTcsentTop, pStnod);
+	PopTcsent(pTcctx, &pTcsentTop, pStnod);
 	return TCRET_Continue;
 }
 
-TcretDebug TcretCheckList(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram, TypeCheckStackEntry * pTcsentTop)
+TcretDebug TcretCheckList(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
 	if (pTcsentTop->m_nState >= pStnod->CPStnodChild())
 	{
@@ -7249,7 +7319,7 @@ TcretDebug TcretCheckList(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 				case PARK_Cast:
 				case PARK_Literal:
 					{
-						EmitError(pTcwork, pStnod->m_lexsp, ERRID_LhsHasNoEffect, 
+						EmitError(pTcctx, pStnod->m_lexsp, ERRID_LhsHasNoEffect, 
 							"%s is left hand side, has no effect",
 							PChzLongFromPark(pStnodChild->m_park));
 					} break;
@@ -7260,11 +7330,11 @@ TcretDebug TcretCheckList(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 		}
 
 		pStnod->m_strees = STREES_TypeChecked;
-		PopTcsent(pTcfram, &pTcsentTop, pStnod);
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
 		return TCRET_Continue;
 	}
 
-	auto pTcsentPushed = PTcsentPush(pTcfram, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+	auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
 	if (pTcsentPushed)
 	{
 		if (pStnod->m_park == PARK_List || pStnod->m_park == PARK_ExpressionList)
@@ -7288,13 +7358,13 @@ TcretDebug TcretCheckList(STNode * pStnod, TypeCheckWorkspace * pTcwork, TypeChe
 	return TCRET_Continue;
 }
 
-TcretDebug TcretTypeCheckSubtree(TypeCheckWorkspace * pTcwork, TypeCheckFrame * pTcfram)
+TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 {
-	#define CONTINUE_OR_BREAK(tcret) if (tcret = TCRET_Continue) return tcret; break;
+	#define CONTINUE_OR_BREAK(tcret) if (tcret != TCRET_Continue) return tcret; break;
 
 	TCRET tcret;
 
-	CDynAry<TypeCheckStackEntry> * paryTcsent = &pTcfram->m_aryTcsent;
+	CDynAry<TypeCheckStackEntry> * paryTcsent = &pTcctx->m_aryTcsent;
 	while (paryTcsent->C())
 	{
 		TypeCheckStackEntry * pTcsentTop = paryTcsent->PLast();
@@ -7303,23 +7373,23 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckWorkspace * pTcwork, TypeCheckFrame * 
 		switch (pStnod->m_park)
 		{
 		case PARK_ProcedureDefinition:
-			tcret = TcretCheckProcedureDef(pStnod, pTcwork, pTcfram, pTcsentTop);
+			tcret = TcretCheckProcedureDef(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_Decl:
-			tcret = TcretCheckDecl(pStnod, pTcwork, pTcfram, pTcsentTop);
+			tcret = TcretCheckDecl(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_ConstantDecl:
-			tcret = TcretCheckConstantDecl(pStnod, pTcwork, pTcfram, pTcsentTop);
+			tcret = TcretCheckConstantDecl(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_Identifier:
-			tcret = TcretCheckIdentifier(pStnod, pTcwork, pTcfram, pTcsentTop);
+			tcret = TcretCheckIdentifier(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_Literal:
-			tcret = TcretCheckLiteral(pStnod, pTcwork, pTcfram, pTcsentTop);
+			tcret = TcretCheckLiteral(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_ArrayDecl:
@@ -7328,7 +7398,7 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckWorkspace * pTcwork, TypeCheckFrame * 
 		case PARK_ParameterList:
 		case PARK_List:
 		case PARK_ExpressionList:
-			tcret = TcretCheckList(pStnod, pTcwork, pTcfram, pTcsentTop);
+			tcret = TcretCheckList(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_Uninitializer:
@@ -7336,7 +7406,7 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckWorkspace * pTcwork, TypeCheckFrame * 
 		case PARK_VariadicArg:
 			{
 				pStnod->m_strees = STREES_TypeChecked;
-				PopTcsent(pTcfram, &pTcsentTop, pStnod);
+				PopTcsent(pTcctx, &pTcsentTop, pStnod);
 			} break;
 
 		default:
@@ -7349,6 +7419,7 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckWorkspace * pTcwork, TypeCheckFrame * 
 	#undef CONTINUE_OR_BREAK
 }
 
+#if MOEB_TCJOB
 void PerformTypeCheck(
 	Alloc * pAlloc,
 	ErrorManager * pErrman,
@@ -7423,7 +7494,7 @@ void PerformTypeCheck(
 			while (pTcfram->m_aryTcsent.C())
 			{
 				TypeCheckStackEntry * pTcsentTop = pTcfram->m_aryTcsent.PLast();
-				PopTcsent(pTcfram, &pTcsentTop, nullptr);
+				PopTcsent(pTcctx, &pTcsentTop, nullptr);
 			}
 
 			RelocateTcfram(pTcfram, &pTcwork->m_arypTcframPending, nullptr);
@@ -7477,7 +7548,7 @@ void PerformTypeCheck(
 			while (pTcfram->m_aryTcsent.C())
 			{
 				TypeCheckStackEntry * pTcsentTop = pTcfram->m_aryTcsent.PLast();
-				PopTcsent(pTcfram, &pTcsentTop, nullptr);
+				PopTcsent(pTcctx, &pTcsentTop, nullptr);
 			}
 		}
 	}
@@ -7544,3 +7615,111 @@ void PerformTypeCheck(
 
 	pAlloc->MOE_DELETE(pTcwork);
 }
+#endif
+
+struct TypeCheckJobData // tag = tcjd
+{
+						TypeCheckJobData(Workspace * pWork, Alloc * pAlloc, WorkspaceEntry * pEntry)
+						:m_tcctx(pWork, pAlloc, pEntry)
+							{ ; }
+
+	TypeCheckContext	m_tcctx;
+};
+
+JOBRET JobretExecuteTypeCheckJob(Compilation * pComp, Workspace * pWork, Job * pJob)
+{
+	auto pTcjd = (TypeCheckJobData *)pJob->m_pVData;
+
+	TypeCheckContext * pTcctx = &pTcjd->m_tcctx;
+	TCRET tcret = TcretTypeCheckSubtree(pTcctx);
+
+	switch (tcret)
+	{
+	case TCRET_WaitingForSymbolDefinition:
+		return JOBRET_Waiting;
+
+	case TCRET_Complete:
+		if (pJob->m_comphaseDesired > COMPHASE_TypeCheck)
+		{
+			// build codegen job
+		}
+		break;
+	}
+
+	return JOBRET_Complete;
+}
+
+void CleanupTypeCheckJob(Workspace * pWork, Job * pJob)
+{
+	if (pJob->m_pVData)
+	{
+		auto pTcjd = (TypeCheckJobData *)pJob->m_pVData;
+		pWork->m_pAlloc->MOE_DELETE(pTcjd);
+		pJob->m_pVData = nullptr;
+	}
+}
+
+JOBRET JobretExecuteWait(Compilation * pComp, Workspace * pWork, Job * pJob)
+{
+	MOE_ASSERT(false, "wait job should never execute.");
+	return JOBRET_Waiting;
+}
+
+Job * PJobCreateWait(Compilation * pComp)
+{
+	auto pJobWait = PJobAllocate(pComp, nullptr);
+	pJobWait->m_pFnUpdate = JobretExecuteWait;
+	pJobWait->m_pFnCleanup = nullptr;
+
+	// adding an extra wait to make sure this is never run, only finished by an external event (like encountering the wait symbol)
+	++pJobWait->m_cJobUnfinished;
+	return pJobWait;
+}
+
+Job * PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, WorkspaceEntry * pEntry, Job * pJobSource)
+{
+	Alloc * pAlloc = pWork->m_pAlloc;
+	TypeCheckJobData * pTcjd = MOE_NEW(pAlloc, TypeCheckJobData) TypeCheckJobData(pWork, pAlloc, pEntry);
+
+	// job that waits for parsing and adds type check exec jobs to the master job when ready
+	auto pJobTc = PJobAllocate(pComp, pTcjd);
+	pJobTc->m_pFnUpdate = JobretExecuteTypeCheckJob;
+	pJobTc->m_pFnCleanup = CleanupTypeCheckJob;
+
+	TypeCheckContext * pTcctx = &pTcjd->m_tcctx;
+	pTcctx->m_pJobTc = pJobTc;
+
+	Symbol * pSymRoot = nullptr;
+	// if we're in a unit test we spoof a top level implicit function symbol
+	if (pWork->m_grfunt.FIsSet(FUNT_ImplicitProc))
+	{
+		pSymRoot = pWork->m_pSymtab->PSymEnsure(pWork->m_pErrman, IstrIntern("__ImplicitMethod"), nullptr);
+	}
+
+	MOE_ASSERT(pEntry->m_pSymtab, "entry point without symbol table");
+
+	pTcctx->m_aryTcsent.SetAlloc(pAlloc, Moe::BK_TypeCheckStack);
+	TypeCheckStackEntry * pTcsent = pTcctx->m_aryTcsent.AppendNew();
+	pTcsent->m_nState = 0;
+	pTcsent->m_pStnod = pEntry->m_pStnod;
+	pTcsent->m_pSymtab = pEntry->m_pSymtab;
+	pTcsent->m_pStnodProcedure = nullptr;
+	pTcsent->m_pSymContext = pSymRoot;
+	pTcsent->m_grfsymlook = FSYMLOOK_Default;
+	pTcsent->m_parkDeclContext = PARK_Nil;
+	pTcsent->m_fAllowForwardDecl = false;
+	pTcsent->m_tcctx = TCCTX_Normal;
+
+	pTcctx->m_pEntry = pEntry;
+
+	// Any job that depends on the parse job depends on us too
+	Job ** ppJobMac = pJobSource->m_arypJobDependents.PMac();
+	for (Job ** ppJobIt = pJobSource->m_arypJobDependents.A(); ppJobIt != ppJobMac; ++ppJobIt)
+	{
+		(*ppJobIt)->AddDependency(pComp, pJobTc);
+	}
+
+	EnqueueJob(pComp, pJobTc);
+	return pJobTc;
+}
+

@@ -571,6 +571,7 @@ enum BK // block kind
 	BK_ByteCodeTest,
 	BK_ForeignFunctions,
 	BK_Request,
+	BK_Job,
 };
 
 #define MOE_ALLOC(numBytes, alignment) 			AllocImpl(numBytes, alignment, __FILE__, __LINE__)

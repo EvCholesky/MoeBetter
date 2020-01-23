@@ -938,7 +938,7 @@ TESTRES TestresRunUnitTest(
 
 	Compilation comp(work.m_pAlloc);
 
-	BeginWorkspace(&work);
+	BeginWorkspace(&work, &comp);
 
 	StringEditBuffer sebFilename(work.m_pAlloc);
 	StringEditBuffer sebInput(work.m_pAlloc);
@@ -968,7 +968,7 @@ TESTRES TestresRunUnitTest(
 	//work.m_pErrman->Clear();
 
 	// Parse
-	auto pJobParse = PJobCreateParse(&comp, &work, pFile->m_pChzFileBody, pFile->m_istrFilename);
+	auto pJobParse = PJobCreateParse(&comp, &work, pFile->m_pChzFileBody, pFile->m_istrFilename, COMPHASE_TypeCheck);
 	WaitForJob(&comp, &work, pJobParse);
 	//ParseGlobalScope(&work, &lex, work.m_grfunt);
 	//EndParse(&work, &lex);

@@ -22,21 +22,22 @@
 using namespace Moe;
 
 Compilation::Compilation(Moe::Alloc * pAlloc)
-:m_aryRqsrc(pAlloc, BK_Request)
+:m_pAlloc(pAlloc)
+,m_aryRqsrc(pAlloc, BK_Request)
 ,m_aryRq(pAlloc, BK_Request)
 ,m_arypRqres(pAlloc, BK_Request)
-,m_aryJob(pAlloc, BK_Request, 128)
+,m_aryJob(pAlloc, BK_Job, 128)
 ,m_arypJobQueued(pAlloc, BK_Request, 128)
 {
 }
 
-void RequestSymbol(Request * pRq, RQK rqk, Moe::InString istrSymbolPath)
+void AddRequestSymbol(Request * pRq, RQK rqk, Moe::InString istrSymbolPath)
 {
 	pRq->m_rqk = rqk;
 	pRq->m_istrPath = istrSymbolPath;
 }
 
-void RequestLocation(Request * pRq, RQK rqk, Moe::InString istrFilename, s32 iLine, s32 iCodepoint)
+void AddRequestLocation(Request * pRq, RQK rqk, Moe::InString istrFilename, s32 iLine, s32 iCodepoint)
 {
 	pRq->m_rqk = rqk;
 	pRq->m_istrPath = istrFilename;
@@ -109,8 +110,11 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 
 		//printf("Parsing %s\n", pFile->m_qqistrFilename.m_pChz);
 
-		auto pJobParse = PJobCreateParse(pComp, pWork, pChzFileBody, pFile->m_istrFilename);
-		WaitForJob(pComp, pWork, pJobParse);
+		COMPHASE comphase = COMPHASE_TypeCheck;
+		auto pJobParse = PJobCreateParse(pComp, pWork, pChzFileBody, pFile->m_istrFilename, comphase);
+		auto pJobMaster = PJobCreateMaster(pComp, pJobParse, comphase);
+
+		WaitForJob(pComp, pWork, pJobMaster);
 
 		BlockListEntry::CIterator iter(&pWork->m_blistEntry);
 		while (WorkspaceEntry * pEntry = iter.Next())
@@ -139,10 +143,6 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 			printf("+++ Success: 0 errors, %d warnings +++\n", cWarning);
 		}
 
-		if (pJobParse->m_pFnCleanup)
-		{
-			(*pJobParse->m_pFnCleanup)(pWork, pJobParse);
-		}
 	}
 
 	for (size_t ipFile = 0; ipFile < pWork->m_arypFile.C(); ++ipFile)
@@ -166,13 +166,23 @@ Job * PJobAllocate(Compilation * pComp, void * pVData)
 {
 	Job * pJob = pComp->m_aryJob.AppendNew();
 	pJob->m_pVData = pVData;
+	pJob->m_arypJobDependents.SetAlloc(pComp->m_pAlloc, BK_Job, 8);
+
+	pJob->m_cJobUnfinished = 1; // 1 == no dependency, job has not been completed
 	return pJob;
 }
 
 void EnqueueJob(Compilation * pComp, Job * pJob)
 {
-	pJob->m_cJobUnfinished = 1;
-	pComp->m_arypJobQueued.Append(pJob);
+//	pJob->m_cJobUnfinished += 1;
+
+	if (pJob->m_cJobUnfinished == 1)
+	{
+		pComp->m_arypJobQueued.Append(pJob);
+	}
+	else if (pJob->m_cJobUnfinished > 1)
+	{
+	}
 }
 
 bool FHasJobCompleted(const Job * pJob)
@@ -182,29 +192,148 @@ bool FHasJobCompleted(const Job * pJob)
 
 Job * PJobGet(Compilation * pComp)
 {
+#if 1
+	for (size_t ipJob = pComp->m_arypJobQueued.C(); --ipJob >= 0; )
+	{
+		Job * pJob = pComp->m_arypJobQueued.TPopLast();
+		//Job * pJob = pComp->m_arypJobQueued[ipJob];
+		if (pJob->m_cJobUnfinished > 1)
+		{
+			//pComp->m_arypJobWaiting.Append(pJob);
+		}
+		else
+		{
+			return pJob;
+		}
+	}
+	return nullptr;
+
+#else
 	if (pComp->m_arypJobQueued.FIsEmpty())
 		return nullptr;
 
-	return pComp->m_arypJobQueued.TPopLast();
+	for (size_t ipJob = pComp->m_arypJobQueued.C(); --ipJob >= 0; )
+	{
+		Job * pJob = pComp->m_arypJobQueued[ipJob];
+		if (pJob->m_cJobUnfinished <= 1)
+		{
+			pComp->m_arypJobQueued.RemoveByI(ipJob);
+			return pJob;
+		}
+	}
+//	return pComp->m_arypJobQueued.TPopLast();
+	return nullptr;
+#endif
 }
 
 void FinishJob(Compilation * pComp, Job * pJob)
 {
+	Job ** ppJobMac = pJob->m_arypJobDependents.PMac();
+	for (Job ** ppJobIt = pJob->m_arypJobDependents.A(); ppJobIt != ppJobMac; ++ppJobIt)
+	{
+		Job * pJobIt = *ppJobIt;
+		const s32 cJobUnfinished = --(pJobIt->m_cJobUnfinished);
+		MOE_ASSERT(cJobUnfinished >= 0, "job count underflow");
+
+		pJobIt->m_arypJobDependents.Remove(pJob);
+
+		if (cJobUnfinished == 1)
+		{
+			pComp->m_arypJobQueued.Append(pJobIt);
+		}
+	}
+
+
     const s32 cJobUnfinished = --(pJob->m_cJobUnfinished);
-    MOE_ASSERT(cJobUnfinished >= 0, "job count underflow");
+	MOE_ASSERT(cJobUnfinished == 0, "job count underflow");
 }
 
-void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJob)
+void Job::AddDependency(Compilation * pComp, Job * pJobDep)
+{
+	// Add a job that we depend on
+
+	const s32 cJobUnfinished = ++(m_cJobUnfinished);
+
+	// Adding a dependency to a job already in the active queue will not pull it from the queue, it will
+	//  just fall off when we try to update it
+
+	if (pJobDep)
+	{
+		pJobDep->m_arypJobDependents.Append(this);
+	}
+}
+
+#if 0
+void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJobWait)
 {
 	// wait until the job has completed. in the meantime, work on any other job.
 
-	while (!FHasJobCompleted(pJob))
+	while (!FHasJobCompleted(pJobWait))
 	{
-		Job * pJobjNext = PJobGet(pComp);
-		if (pJobjNext)
+		Job * pJob = PJobGet(pComp);
+		if (pJob)
 		{
 			pJob->m_pFnUpdate(pComp, pWork, pJob);
-			FinishJob(pComp, pJob);
+
+			// This job is finished: assuming that updating the job once will complete the job, should jobs be the
+			//  ones to mark themselves as complete?
+
+			Job ** ppJobMac = pJob->m_arypJobDependents.PMac();
+			for (Job ** ppJobIt = pJob->m_arypJobDependents.A(); ppJobIt != ppJobMac; ++ppJobIt)
+			{
+				FinishJob(pComp, pJob);
+			}
+
+			const s32 cJobUnfinished = --(pJob->m_cJobUnfinished);
+			if (MOE_FVERIFY(cJobUnfinished == 0, "expected job (and it's dependencies to be finished)"))
+			{
+				if (pJob->m_pFnCleanup)
+				{
+					(*pJob->m_pFnCleanup)(pWork, pJob);
+				}
+			}
+		}
+	}
+}
+#endif
+
+void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJobWait)
+{
+	// wait until the job has completed. in the meantime, work on any other job.
+
+	while (!FHasJobCompleted(pJobWait))
+	{
+		Job * pJob = PJobGet(pComp);
+
+		// BB - this is not the right way to deal with this 
+		if (pJob->m_cJobUnfinished > 1)
+		{
+			printf("ERROR: circular job dependencies!\n");
+			return;
+		}
+
+		if (pJob)
+		{
+			JOBRET jobret = pJob->m_pFnUpdate(pComp, pWork, pJob);
+			switch (jobret)
+			{
+			case JOBRET_StoppingError:
+				break;
+
+			case JOBRET_Waiting:
+				EnqueueJob(pComp, pJob);
+				break;
+
+			case JOBRET_Complete:
+				{
+					FinishJob(pComp, pJob);
+
+					if (pJob->m_pFnCleanup)
+					{
+						(*pJob->m_pFnCleanup)(pWork, pJob);
+					}
+				} break;
+			}
 		}
 	}
 }

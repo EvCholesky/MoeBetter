@@ -5,9 +5,12 @@
 #include "MoeString.h"
 #include "MoeTypes.h"
 
+struct GenericRegistry;
+struct Job;
 struct Lexer;
 struct ParseContext;
 struct STNode;
+struct Symbol;
 struct SymbolTable;
 struct TypeRegistry;
 struct Workspace;
@@ -124,7 +127,7 @@ struct Workspace	// tag = work
 
 	void				CopyUnitTestFiles(Workspace * pWorkOther);
 	char *				PChzLoadFile(const Moe::InString & istrFilename, Moe::Alloc * pAlloc);
-	void				AppendEntry(STNode * pStnod, SymbolTable * pSymtab);
+	WorkspaceEntry *	PEntryAppend(STNode * pStnod, SymbolTable * pSymtab);
 
 	File *				PFileEnsure(const Moe::InString istrFilename, FILEK filek);
 	File *				PFileLookup(const char * pChzFile, FILEK filek);
@@ -132,6 +135,7 @@ struct Workspace	// tag = work
 						PHashHvIPFile(FILEK filek);
 
 	Moe::Alloc *						m_pAlloc;
+	Compilation *						m_pComp;
 	BlockListEntry 						m_blistEntry;
 	Moe::CDynAry<WorkspaceEntry *> 		m_arypEntryChecked;		// order in which entry points were successfully type checked
 	Moe::CDynAry<GenericMap *>			m_arypGenmapManaged;	// generic maps to be deleted
@@ -145,6 +149,9 @@ struct Workspace	// tag = work
 	TypeRegistry *						m_pTyper;
 	UniqueNameSet						m_unset;
 	UniqueNameSet						m_unsetTin;				// unique names used by types
+
+	Moe::CHash<const Symbol *, Job*>	m_hashPSymPJobWait;
+	GenericRegistry *					m_pGenreg;				// registry of instantiated generic types
 
 	ErrorManager *						m_pErrman;
 	size_t								m_cbFreePrev;
@@ -213,7 +220,7 @@ struct ConsoleColorAmbit // tag = ccolamb
 
 void SetConsoleTextColor(GRFCCOL grfccol);
 
-void BeginWorkspace(Workspace * pWork);
+void BeginWorkspace(Workspace * pWork, Compilation * pComp);
 void BeginParse(Workspace * pWork, Lexer * pLex, const char * pChzIn, const char * pChzFilename = nullptr);
 void EndParse(Workspace * pWork, Lexer * pLex);
 void EndWorkspace(Workspace * pWork);

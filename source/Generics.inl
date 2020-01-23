@@ -28,7 +28,7 @@ struct STNode;
 struct SymbolTable;
 struct Workspace;
 struct Symbol;
-struct TypeCheckWorkspace;
+struct TypeCheckContext;
 struct TypeInfo;
 
 enum GENK	// GENeric Kind
@@ -162,7 +162,7 @@ struct InstantiateRequest // tag = insreq
 	int							m_iInsreq;
 };
 
-class GenericRegistry // tag = genreg
+struct GenericRegistry // tag = genreg
 {
 public:
 	struct Entry
@@ -218,7 +218,7 @@ void FindGenericAnchorNames(Moe::Alloc * pAlloc, STNode * pStnodParamDecl, Gener
 
 // find the subset of a generic map used by a given generic definition
 GenericMap * PGenmapTrimUnusedAnchors(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	STNode * pStnodDef,
 	GenericMap * pGenmapSuperset,
 	const LexSpan & lexsp);
@@ -235,7 +235,7 @@ MOE_DEFINE_GRF(GRFGENCOMP, FGENCOMP, u32);
 
 // Compute a generic map (values/types for all anchors)
 ERRID ErridComputeDefinedGenerics( 
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	const LexSpan & lexsp, 
 	ERREP errep,
 	GRFGENCOMP grfgencomp, 
@@ -247,7 +247,7 @@ ERRID ErridComputeDefinedGenerics(
 // FindCanon
 //   given SFoo($DIM=2) instantiated from SFoo($C=$DIM) compute SFoo($C=2)
 
-TypeInfo * PTinFindCanon(TypeCheckWorkspace * pTcwork, TypeInfo * pTin, SymbolTable * pSymtab, ERREP errep);
+TypeInfo * PTinFindCanon(TypeCheckContext * pTcwork, TypeInfo * pTin, SymbolTable * pSymtab, ERREP errep);
 void AssertIsCanon(TypeInfo * pTin);
 
 // Create a type by replacing the supplied type anchors, 
@@ -255,7 +255,7 @@ void AssertIsCanon(TypeInfo * pTin);
 //  Note: doesn't instantiate AST for generic type
 //  NOTE: this should always return a canonical type with a trimmed generic map
 TypeInfo * PTinSubstituteGenerics(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	SymbolTable * pSymtab,
 	const LexSpan & lexsp,
 	TypeInfo * pTinUnsub,
@@ -264,30 +264,30 @@ TypeInfo * PTinSubstituteGenerics(
 
 // lookup a instantiation request, via a generic map and pStnod that defined the base.
 InstantiateRequest * PInsreqLookup(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	STNode * pStnodDefinition,
 	GenericMap * pGenmap);
 
 TypeInfoStruct * PTinstructEnsureUniqueInstance(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	TypeInfoStruct * pTinstruct);
 
 // instantiate symbol & AST for generic procedure
 InstantiateRequest * PInsreqInstantiateGenericProcedure(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	STNode * pStnodGeneric,
 	GenericMap * pGenmap);
 
 // instantiate symbol & AST for generic struct
 InstantiateRequest * PInsreqInstantiateGenericStruct(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	STNode * pStnodGeneric,
 	STNode * pStnodInstantiation,
 	GenericMap * pGenmap);
 
 // actually do the walking to remap a syntax tree copy
 void RemapGenericStnodCopy(
-	TypeCheckWorkspace * pTcwork,
+	TypeCheckContext * pTcwork,
 	STNode * pStnodGen,
 	STNode * pStnodNew,
 	int iInsreq,

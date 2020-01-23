@@ -299,7 +299,7 @@ int main(int cpChzArg, const char * apChzArg[])
 		if (CommandLineManager::Command * pCom = pCmdlineman->PComLookup(s_optAst))
 		{
 			Request rq;
-			RequestSymbol(&rq, RQK_FindAst, IstrIntern(pCom->m_pChzValue));
+			AddRequestSymbol(&rq, RQK_FindAst, IstrIntern(pCom->m_pChzValue));
 			AddRequest(&comp, &rq);
 		}
 
@@ -311,7 +311,7 @@ int main(int cpChzArg, const char * apChzArg[])
 			work.m_optlevel = OPTLEVEL_Release;
 		}
 
-		BeginWorkspace(&work);
+		BeginWorkspace(&work, &comp);
 
 #ifdef MOE_TRACK_ALLOCATION
 		u8 aBAltrac[1024 * 100];

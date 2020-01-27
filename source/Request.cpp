@@ -112,9 +112,8 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 
 		COMPHASE comphase = COMPHASE_TypeCheck;
 		auto pJobParse = PJobCreateParse(pComp, pWork, pChzFileBody, pFile->m_istrFilename, comphase);
-		auto pJobMaster = PJobCreateMaster(pComp, pJobParse, comphase);
 
-		WaitForJob(pComp, pWork, pJobMaster);
+		WaitForJob(pComp, pWork, pJobParse);
 
 		BlockListEntry::CIterator iter(&pWork->m_blistEntry);
 		while (WorkspaceEntry * pEntry = iter.Next())
@@ -162,178 +161,115 @@ void PrintResult(Compilation * pComp, int iRqres, char * aCh, size_t cChMax)
 {
 }
 
-Job * PJobAllocate(Compilation * pComp, void * pVData)
+Job * PJobAllocate(Compilation * pComp, void * pVData, Job * pJobParent)
 {
+	if (pJobParent)
+	{
+        (pJobParent->m_cJobChild)++;
+	}
+
 	Job * pJob = pComp->m_aryJob.AppendNew();
 	pJob->m_pVData = pVData;
-	pJob->m_arypJobDependents.SetAlloc(pComp->m_pAlloc, BK_Job, 8);
+	pJob->m_cPrereq = 0;
+	pJob->m_pJobParent = pJobParent;
 
-	pJob->m_cJobUnfinished = 1; // 1 == no dependency, job has not been completed
+	pJob->m_cPrereq = 1; // self(1) + 0 children
 	return pJob;
 }
 
 void EnqueueJob(Compilation * pComp, Job * pJob)
 {
-//	pJob->m_cJobUnfinished += 1;
-
-	if (pJob->m_cJobUnfinished == 1)
+	if (pJob->m_cPrereq == 1)
 	{
 		pComp->m_arypJobQueued.Append(pJob);
 	}
-	else if (pJob->m_cJobUnfinished > 1)
-	{
-	}
-}
-
-bool FHasJobCompleted(const Job * pJob)
-{
-	return pJob->m_cJobUnfinished <= 0;
 }
 
 Job * PJobGet(Compilation * pComp)
 {
-#if 1
-	for (size_t ipJob = pComp->m_arypJobQueued.C(); --ipJob >= 0; )
+	for (int ipJob = (int)pComp->m_arypJobQueued.C(); --ipJob >= 0; )
 	{
 		Job * pJob = pComp->m_arypJobQueued.TPopLast();
-		//Job * pJob = pComp->m_arypJobQueued[ipJob];
-		if (pJob->m_cJobUnfinished > 1)
+		if (pJob->m_cPrereq <= 1)
 		{
-			//pComp->m_arypJobWaiting.Append(pJob);
+			return pJob;
 		}
 		else
 		{
-			return pJob;
+			// popping waiting job but leaving it off the list, it will need to re-add when it's prerequisites are satisfied
 		}
 	}
 	return nullptr;
-
-#else
-	if (pComp->m_arypJobQueued.FIsEmpty())
-		return nullptr;
-
-	for (size_t ipJob = pComp->m_arypJobQueued.C(); --ipJob >= 0; )
-	{
-		Job * pJob = pComp->m_arypJobQueued[ipJob];
-		if (pJob->m_cJobUnfinished <= 1)
-		{
-			pComp->m_arypJobQueued.RemoveByI(ipJob);
-			return pJob;
-		}
-	}
-//	return pComp->m_arypJobQueued.TPopLast();
-	return nullptr;
-#endif
 }
 
 void FinishJob(Compilation * pComp, Job * pJob)
 {
-	Job ** ppJobMac = pJob->m_arypJobDependents.PMac();
-	for (Job ** ppJobIt = pJob->m_arypJobDependents.A(); ppJobIt != ppJobMac; ++ppJobIt)
+    const s32 cPrereq = --(pJob->m_cPrereq);
+	MOE_ASSERT(cPrereq == 0, "job count underflow");
+
+	Job * pJobIt = pJob;
+	while (pJobIt->FHasJobCompleted() && pJobIt->m_pJobParent)
 	{
-		Job * pJobIt = *ppJobIt;
-		const s32 cJobUnfinished = --(pJobIt->m_cJobUnfinished);
-		MOE_ASSERT(cJobUnfinished >= 0, "job count underflow");
-
-		pJobIt->m_arypJobDependents.Remove(pJob);
-
-		if (cJobUnfinished == 1)
-		{
-			pComp->m_arypJobQueued.Append(pJobIt);
-		}
+		pJobIt = pJobIt->m_pJobParent;
+		--(pJobIt->m_cJobChild);
 	}
-
-
-    const s32 cJobUnfinished = --(pJob->m_cJobUnfinished);
-	MOE_ASSERT(cJobUnfinished == 0, "job count underflow");
 }
 
-void Job::AddDependency(Compilation * pComp, Job * pJobDep)
+void AddJobPrereq(Job * pJob)
 {
-	// Add a job that we depend on
-
-	const s32 cJobUnfinished = ++(m_cJobUnfinished);
-
-	// Adding a dependency to a job already in the active queue will not pull it from the queue, it will
-	//  just fall off when we try to update it
-
-	if (pJobDep)
-	{
-		pJobDep->m_arypJobDependents.Append(this);
-	}
+	MOE_ASSERT(pJob->m_cPrereq >= 1, "adding prerequisite after job has run");
+    ++(pJob->m_cPrereq);
 }
 
-#if 0
-void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJobWait)
+void CompletePrereq(Compilation * pComp, Job * pJob)
 {
-	// wait until the job has completed. in the meantime, work on any other job.
+    const s32 cPrereq = --(pJob->m_cPrereq);
 
-	while (!FHasJobCompleted(pJobWait))
+	if (cPrereq == 1)
 	{
-		Job * pJob = PJobGet(pComp);
-		if (pJob)
-		{
-			pJob->m_pFnUpdate(pComp, pWork, pJob);
-
-			// This job is finished: assuming that updating the job once will complete the job, should jobs be the
-			//  ones to mark themselves as complete?
-
-			Job ** ppJobMac = pJob->m_arypJobDependents.PMac();
-			for (Job ** ppJobIt = pJob->m_arypJobDependents.A(); ppJobIt != ppJobMac; ++ppJobIt)
-			{
-				FinishJob(pComp, pJob);
-			}
-
-			const s32 cJobUnfinished = --(pJob->m_cJobUnfinished);
-			if (MOE_FVERIFY(cJobUnfinished == 0, "expected job (and it's dependencies to be finished)"))
-			{
-				if (pJob->m_pFnCleanup)
-				{
-					(*pJob->m_pFnCleanup)(pWork, pJob);
-				}
-			}
-		}
+		pComp->m_arypJobQueued.Append(pJob);
 	}
 }
-#endif
 
 void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJobWait)
 {
 	// wait until the job has completed. in the meantime, work on any other job.
 
-	while (!FHasJobCompleted(pJobWait))
+	while (!pJobWait->FHasJobCompleted())
 	{
 		Job * pJob = PJobGet(pComp);
 
 		// BB - this is not the right way to deal with this 
-		if (pJob->m_cJobUnfinished > 1)
+		if (!pJob || !pJob->FCanStartJob())
 		{
 			printf("ERROR: circular job dependencies!\n");
 			return;
 		}
 
-		if (pJob)
+		JOBRET jobret;
+		//if (pJob->m_cPrereq == 1)
 		{
-			JOBRET jobret = pJob->m_pFnUpdate(pComp, pWork, pJob);
-			switch (jobret)
+			jobret = pJob->m_pFnUpdate(pComp, pWork, pJob);
+		}
+
+		switch (jobret)
+		{
+		case JOBRET_StoppingError:
+			break;
+
+		case JOBRET_Waiting:
+			EnqueueJob(pComp, pJob);
+			break;
+
+		case JOBRET_Complete:
 			{
-			case JOBRET_StoppingError:
-				break;
+				FinishJob(pComp, pJob);
 
-			case JOBRET_Waiting:
-				EnqueueJob(pComp, pJob);
-				break;
-
-			case JOBRET_Complete:
+				if (pJob->m_pFnCleanup)
 				{
-					FinishJob(pComp, pJob);
-
-					if (pJob->m_pFnCleanup)
-					{
-						(*pJob->m_pFnCleanup)(pWork, pJob);
-					}
-				} break;
-			}
+					(*pJob->m_pFnCleanup)(pWork, pJob);
+				}
+			} break;
 		}
 	}
 }

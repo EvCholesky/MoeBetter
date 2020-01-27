@@ -102,7 +102,6 @@ struct Symbol : public SymbolBase	// tag = sym
 	Moe::CDynAry<Symbol *>	m_aryPSymReferencedBy;
 	Moe::CDynAry<Symbol *>	m_aryPSymHasRefTo;			// this symbol has a reference to all of these symbols
 
-	TypeInfo *				PTin();
 	void					AssertIsValid();
 };
 
@@ -132,6 +131,7 @@ protected:
 							,m_pAlloc(pAlloc)
 							,m_hashIstrPSym(pAlloc, Moe::BK_Symbol)
 							,m_hashIstrPTinBuiltIn(pAlloc, Moe::BK_Symbol)
+							,m_hashIstrPStnodBuiltIn(pAlloc, Moe::BK_Symbol)
 							,m_arypTinManaged(pAlloc, Moe::BK_Symbol)
 							,m_arypGenmapManaged(pAlloc, Moe::BK_Symbol)
 							,m_arypSymGenerics(pAlloc, Moe::BK_Symbol)	
@@ -251,7 +251,11 @@ public:
 	Moe::CHash<Moe::InString, Symbol *>	m_hashIstrPSym;			// All the symbols defined within this scope, a full lookup requires
 																//  walking up the parent list
 	Moe::CHash<Moe::InString, TypeInfo *>	
-										m_hashIstrPTinBuiltIn;	// Builtin Types declared in this scope
+										m_hashIstrPTinBuiltIn;		// Builtin Types declared in this scope
+	Moe::CHash<Moe::InString, STNode *>	
+										m_hashIstrPStnodBuiltIn;	// stub AST nodes for Builtin Types declared in this scope
+																	//  (these exist so that symbols can map to pTin via an AST node, and prevent 
+																	//  having both pSym->m_pStnodDefinition and pSym->m_pTin that must agree on pTin
 
 	Moe::CDynAry<TypeInfo *>			m_arypTinManaged;		// all type info structs that need to be deleted.
 	Moe::CDynAry<GenericMap *>			m_arypGenmapManaged;	// generic mappings used by instantiated generic structs

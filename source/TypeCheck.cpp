@@ -311,20 +311,16 @@ Moe::InString IstrFromTypeInfo(TypeInfo * pTin)
 
 static inline void SetupSymbolWait(TypeCheckContext * pTcctx, Symbol * pSym)
 {
+	//@NotThreadSafe
 	Workspace * pWork = pTcctx->m_pWork;
-	Job * pJobWait;
-	Job ** ppJobWait = pWork->m_hashPSymPJobWait.Lookup(pSym);
-	if (ppJobWait)
+	JobPrereqSet * pJps;
+	if (pWork->m_hashPSymJps.InresEnsureKey(pSym, &pJps) == INRES_Inserted)
 	{
-		pJobWait = *ppJobWait;
-	}
-	else
-	{
-		pJobWait = PJobCreateWait(pTcctx->m_pWork->m_pComp);
-		(void)pWork->m_hashPSymPJobWait.InresEnsureKeyAndValue(pSym, pJobWait);
+		pJps->m_arypJob.SetAlloc(pTcctx->m_pAlloc, BK_Job, 16);
 	}
 
-	pTcctx->m_pJobTc->AddDependency(pWork->m_pComp, pJobWait);
+	AddJobPrereq(pTcctx->m_pJobTc);
+	pJps->m_arypJob.Append(pTcctx->m_pJobTc);
 }
 
 void AppendTypenameFromTypeSpecification(STNode * pStnodArg, Moe::StringBuffer * pStrbuf)
@@ -2199,19 +2195,17 @@ void OnTypeResolve(TypeCheckContext * pTcctx, const Symbol * pSym)
 #else
 
 	auto pWork = pTcctx->m_pWork;
-	Job ** ppJobWait = pWork->m_hashPSymPJobWait.Lookup(pSym);
-	if (!ppJobWait)
+	JobPrereqSet * pJps = pWork->m_hashPSymJps.Lookup(pSym);
+	if (!pJps)
 		return;
 
-	Job * pJobWait = *ppJobWait;
-	MOE_ASSERT(pJobWait->m_cJobUnfinished == 2, "expected job dependency to be exactly two! (self + neverRun)");
-	pJobWait->m_cJobUnfinished = 0;
-	if (pJobWait->m_pFnCleanup)
+	Job ** ppJobMax = pJps->m_arypJob.PMac();
+	for (Job ** ppJobIt = pJps->m_arypJob.A(); ppJobIt != ppJobMax; ++ppJobIt)
 	{
-		(*pJobWait->m_pFnCleanup)(pTcctx->m_pWork, pJobWait);
+		CompletePrereq(pWork->m_pComp, *ppJobIt);
 	}
 
-	pWork->m_hashPSymPJobWait.Remove(pSym);
+	pWork->m_hashPSymJps.Remove(pSym);
 #endif
 }
 
@@ -7659,30 +7653,13 @@ void CleanupTypeCheckJob(Workspace * pWork, Job * pJob)
 	}
 }
 
-JOBRET JobretExecuteWait(Compilation * pComp, Workspace * pWork, Job * pJob)
-{
-	MOE_ASSERT(false, "wait job should never execute.");
-	return JOBRET_Waiting;
-}
-
-Job * PJobCreateWait(Compilation * pComp)
-{
-	auto pJobWait = PJobAllocate(pComp, nullptr);
-	pJobWait->m_pFnUpdate = JobretExecuteWait;
-	pJobWait->m_pFnCleanup = nullptr;
-
-	// adding an extra wait to make sure this is never run, only finished by an external event (like encountering the wait symbol)
-	++pJobWait->m_cJobUnfinished;
-	return pJobWait;
-}
-
 Job * PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, WorkspaceEntry * pEntry, Job * pJobSource)
 {
 	Alloc * pAlloc = pWork->m_pAlloc;
 	TypeCheckJobData * pTcjd = MOE_NEW(pAlloc, TypeCheckJobData) TypeCheckJobData(pWork, pAlloc, pEntry);
 
 	// job that waits for parsing and adds type check exec jobs to the master job when ready
-	auto pJobTc = PJobAllocate(pComp, pTcjd);
+	auto pJobTc = PJobAllocate(pComp, pTcjd, pJobSource);
 	pJobTc->m_pFnUpdate = JobretExecuteTypeCheckJob;
 	pJobTc->m_pFnCleanup = CleanupTypeCheckJob;
 
@@ -7711,13 +7688,6 @@ Job * PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, Workspa
 	pTcsent->m_tcctx = TCCTX_Normal;
 
 	pTcctx->m_pEntry = pEntry;
-
-	// Any job that depends on the parse job depends on us too
-	Job ** ppJobMac = pJobSource->m_arypJobDependents.PMac();
-	for (Job ** ppJobIt = pJobSource->m_arypJobDependents.A(); ppJobIt != ppJobMac; ++ppJobIt)
-	{
-		(*ppJobIt)->AddDependency(pComp, pJobTc);
-	}
 
 	EnqueueJob(pComp, pJobTc);
 	return pJobTc;

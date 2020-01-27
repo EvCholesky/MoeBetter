@@ -56,6 +56,11 @@ struct UniqueNameSet // tag = unset
 
 extern void GenerateUniqueName(UniqueNameSet * pUnset, const char * pChzIn, char * pChzOut, size_t cBOutMax);
 
+struct JobPrereqSet // tag = Jps
+{
+	Moe::CDynAry<Job *>			m_arypJob;
+};
+
 struct WorkspaceEntry // tag = entry
 {
 							WorkspaceEntry()
@@ -150,7 +155,8 @@ struct Workspace	// tag = work
 	UniqueNameSet						m_unset;
 	UniqueNameSet						m_unsetTin;				// unique names used by types
 
-	Moe::CHash<const Symbol *, Job*>	m_hashPSymPJobWait;
+	Moe::CHash<const Symbol *, JobPrereqSet>	
+										m_hashPSymJps;
 	GenericRegistry *					m_pGenreg;				// registry of instantiated generic types
 
 	ErrorManager *						m_pErrman;

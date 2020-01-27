@@ -175,19 +175,25 @@ enum COMPHASE
 struct Job
 {
 								Job()
-								:m_cJobUnfinished(0)
-								,m_arypJobDependents()
+								:m_cPrereq(0)
+								,m_cJobChild(0)
+								,m_pJobParent(nullptr)
 								,m_pFnUpdate(nullptr)
 								,m_pFnCleanup(nullptr)
 								,m_pVData(nullptr)
 								,m_comphaseDesired(COMPHASE_Nil)
 									{ ; }
 
-	// Job dependencies, must complete before this job can start (and complete) 
-	std::atomic_int_fast32_t	m_cJobUnfinished;		// dependency count, 0 == complete, 1 == this job, >1 waiting for dependencies
-	Moe::CDynAry<Job *>			m_arypJobDependents;	// Which jobs depend on me?
 
-	void						AddDependency(Compilation * pComp, Job * pJobDe);
+	bool						FCanStartJob() const
+									{ return m_cPrereq <= 1; }
+	bool						FHasJobCompleted() const
+									{ return m_cPrereq <= 0 && m_cJobChild <= 0; }
+
+	// Job dependencies, must complete before this job can start (and complete) 
+	std::atomic_int_fast32_t	m_cPrereq;				// how many prerequisites are outstanding
+	std::atomic_int_fast32_t	m_cJobChild;			// child jobs + 1 for unfinshed self
+	Job *						m_pJobParent;
 	
 	PFnJobUpdate				m_pFnUpdate;
 	PFnJobCleanup				m_pFnCleanup;
@@ -196,10 +202,12 @@ struct Job
 	COMPHASE					m_comphaseDesired;	// What is the desired end phase for this job's output
 };
 
-Job * PJobAllocate(Compilation * pComp, void * pVData);
+Job * PJobAllocate(Compilation * pComp, void * pVData, Job * pJobParent = nullptr);
 void EnqueueJob(Compilation * pComp, Job * pJob);
 void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJob);
 
+void AddJobPrereq(Job * pJob);
+void CompletePrereq(Compilation * pComp, Job * pJob);
 
 
 struct Compilation // tag = comp

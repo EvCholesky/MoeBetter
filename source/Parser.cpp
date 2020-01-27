@@ -147,6 +147,7 @@ static ParkInfo s_mpParkParkinfo[] =
 	{ STEXK_Node,		"genStruct", "Generic Struct Spec" },
 	{ STEXK_Node,		"typeArg", "Type Argument" },
 	{ STEXK_Node,		"baked", "Baked Value" },
+	{ STEXK_Node,		"BuiltIn", "Built-In" },
 };
 
 MOE_CASSERT(MOE_DIM(s_mpParkParkinfo) == PARK_Max, "missing ParkInfo");
@@ -1164,6 +1165,67 @@ void AppendTypeDescriptor(TypeInfo * pTin, StringEditBuffer * pSeb)
 }
 
 
+
+template <typename T> struct StexAlloc	
+{ 
+	static T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+	{
+		T * pStnod = MOE_NEW(pAlloc, T) T(park, lexsp);
+		pStnod->SetDefaultChildArray();
+		return pStnod;
+	}
+};
+
+template <> struct StexAlloc<STNode>
+{ 
+	static STNode * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+	{
+		return MOE_NEW(pAlloc, STNode) STNode(STEXK_Node, park, lexsp);
+	}
+};
+
+template <typename T>
+T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, Lexer * pLex, const LexSpan & lexsp)
+{
+	T * pStnod = StexAlloc<T>::PStnodAlloc(pAlloc, park, lexsp);
+	if (pLex)
+	{
+		pStnod->m_tok = TOK(pLex->m_tok);
+	}
+
+	return pStnod;
+}
+
+template <typename T>
+T * PStnodAllocCopy(Moe::Alloc * pAlloc, T * pT)
+{
+	T * pStnod = StexAlloc<T>::PStnodAlloc(pAlloc, pT->m_park, pT->m_lexsp);
+	
+	auto apStnodChildNew = pStnod->m_apStnodChild;
+	*pStnod = *pT;
+	pStnod->m_apStnodChild = apStnodChildNew;
+	
+	return pStnod;
+}
+
+
+
+STNode * PStnodAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+{
+	return PStnodAlloc<STNode>(pAlloc, park, nullptr, lexsp);
+}
+
+STDecl * PStdeclAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+{
+	return PStnodAlloc<STDecl>(pAlloc, park, nullptr, lexsp);
+}
+
+STValue * PStvalAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
+{
+
+	return PStnodAlloc<STValue>(pAlloc, park, nullptr, lexsp);
+}
+
 LexSpan LexspFromSym(const Symbol * pSym)
 {
 	if (!pSym || !pSym->m_pStnodDefinition)
@@ -1946,7 +2008,6 @@ TypeInfoLiteral * SymbolTable::PTinlitCopy(TypeInfoLiteral * pTinlitSrc)
 	return pTinlitNew;
 }
 
-
 void SymbolTable::AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo * pTin, GRFSYM grfsym)
 {
 	// NOTE: This function is for built-in types without a lexical order, so we shouldn't be calling it on an ordered table
@@ -1964,6 +2025,13 @@ void SymbolTable::AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo 
 		*ppTinValue = pTin;
 
 		auto pSym = PSymEnsure(pErrman, istrName, nullptr, FSYM_IsBuiltIn | FSYM_IsType | FSYM_VisibleWhenNested | grfsym.m_raw);
+		auto pStnodDef = PStnodAlloc<STNode>(m_pAlloc, PARK_BuiltIn, nullptr, LexSpan());
+		pSym->m_pStnodDefinition = pStnodDef;
+
+		pStnodDef->m_pTin = pTin;
+		pStnodDef->m_pSymbase = pSym;
+		m_hashIstrPStnodBuiltIn.InresEnsureKeyAndValue(istrName, pStnodDef);
+
 		//pSym->m_pTin = pTin;
 	}
 	else
@@ -2031,6 +2099,27 @@ void AddBuiltInLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pC
 }
 
 
+void AddBuiltInUnfinalLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, LITK litk, GRFNUM grfnum)
+{
+	InString istrName = IstrIntern(pChzName);
+	TypeInfoLiteral * pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+	pTinlit->m_istrName = istrName;
+	pSymtab->AddBuiltInType(nullptr, nullptr, pTinlit);
+
+	pTinlit->m_litty.m_litk = litk;
+	pTinlit->m_litty.m_cBit = -1;
+	pTinlit->m_litty.m_grfnum = grfnum;
+	pTinlit->m_fIsFinalized = false;
+
+	Moe::CDynAry<TypeInfoLiteral *> * paryPTinlit = &pSymtab->m_mpLitkArypTinlit[litk];
+	if (!paryPTinlit->m_pAlloc)
+	{
+		paryPTinlit->SetAlloc(pSymtab->m_pAlloc, Moe::BK_Parse, 8);
+	}
+	paryPTinlit->Append(pTinlit);
+}
+
+
 void SymbolTable::AddBuiltInSymbols(Workspace * pWork)
 {
 	AddSimpleBuiltInType(pWork, this, BuiltIn::g_istrBool, TINK_Bool);
@@ -2081,6 +2170,13 @@ void SymbolTable::AddBuiltInSymbols(Workspace * pWork)
 	AddBuiltInLiteral(pWork, this, "__string_Literal", LITK_String, -1, FNUM_IsSigned);
 	AddBuiltInLiteral(pWork, this, "__char_Literal", LITK_Char, 32, FNUM_IsSigned);
 	AddBuiltInLiteral(pWork, this, "__void_Literal", LITK_Null, -1, FNUM_None);
+
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_float", LITK_Numeric, FNUM_IsFloat | FNUM_IsSigned);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_SignedInt", LITK_Numeric, FNUM_IsSigned);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_UnsignedInt", LITK_Numeric, FNUM_None);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_Null", LITK_Null, FNUM_None);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_Bool", LITK_Bool, FNUM_None);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_String", LITK_String, FNUM_None);
 }
 
 void DeleteTypeInfo(Alloc * pAlloc, TypeInfo * pTin)
@@ -2094,64 +2190,6 @@ void SymbolTable::AddManagedSymtab(SymbolTable * pSymtab)
 
 	pSymtab->m_pSymtabNextManaged = m_pSymtabNextManaged;
 	m_pSymtabNextManaged = pSymtab;
-}
-
-template <typename T> struct StexAlloc	
-{ 
-	static T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-	{
-		T * pStnod = MOE_NEW(pAlloc, T) T(park, lexsp);
-		pStnod->SetDefaultChildArray();
-		return pStnod;
-	}
-};
-
-template <> struct StexAlloc<STNode>
-{ 
-	static STNode * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-	{
-		return MOE_NEW(pAlloc, STNode) STNode(STEXK_Node, park, lexsp);
-	}
-};
-
-template <typename T>
-T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, Lexer * pLex, const LexSpan & lexsp)
-{
-	T * pStnod = StexAlloc<T>::PStnodAlloc(pAlloc, park, lexsp);
-	if (pLex)
-	{
-		pStnod->m_tok = TOK(pLex->m_tok);
-	}
-
-	return pStnod;
-}
-
-template <typename T>
-T * PStnodAllocCopy(Moe::Alloc * pAlloc, T * pT)
-{
-	T * pStnod = StexAlloc<T>::PStnodAlloc(pAlloc, pT->m_park, pT->m_lexsp);
-	
-	auto apStnodChildNew = pStnod->m_apStnodChild;
-	*pStnod = *pT;
-	pStnod->m_apStnodChild = apStnodChildNew;
-	
-	return pStnod;
-}
-
-STNode * PStnodAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-{
-	return PStnodAlloc<STNode>(pAlloc, park, nullptr, lexsp);
-}
-
-STDecl * PStdeclAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-{
-	return PStnodAlloc<STDecl>(pAlloc, park, nullptr, lexsp);
-}
-
-STValue * PStvalAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
-{
-
-	return PStnodAlloc<STValue>(pAlloc, park, nullptr, lexsp);
 }
 
 STNode * PStnodCopy(Alloc * pAlloc, STNode * pStnodSrc, Moe::CHash<STNode *, STNode *> * pmpPStnodSrcPStnodDst)
@@ -5780,23 +5818,6 @@ void CleanupParseJob(Workspace * pWork, Job * pJob)
 		pWork->m_pAlloc->MOE_DELETE(pParjd);
 		pJob->m_pVData = nullptr;
 	}
-}
-
-JOBRET JobretExecuteMasterJob(Compilation * pComp, Workspace * pWork, Job * pJob)
-{
-	return JOBRET_Complete;
-}
-
-Job * PJobCreateMaster(Compilation * pComp, Job * pJobChild, COMPHASE comphase)
-{
-	auto pJob = PJobAllocate(pComp, nullptr);
-	pJob->m_pFnUpdate = JobretExecuteMasterJob;
-	pJob->m_pFnCleanup = nullptr;
-	pJob->m_comphaseDesired = comphase;
-	pJob->AddDependency(pComp, pJobChild);
-
-	EnqueueJob(pComp, pJob);
-	return pJob;
 }
 
 Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename, COMPHASE comphase)

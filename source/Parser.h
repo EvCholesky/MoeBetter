@@ -86,6 +86,7 @@ enum PARK : s8 // PARse Kind
 	PARK_GenericStructSpec,		// 
 	PARK_TypeArgument,			// raw type, specified to a generic instantiation SFoo(:int)
 	PARK_BakedValue,
+	PARK_BuiltIn,
 	
 	MOE_MAX_MIN_NIL(PARK)
 };
@@ -624,10 +625,8 @@ Moe::InString IstrFromIdentifier(STNode * pStnod);
 Moe::InString IstrIdentifierFromDecl(STNode * pStnodDecl);
 ERRID ErridCheckOverloadSignature(TOK tok, TypeInfoProcedure * pTinproc, ErrorManager * pErrman, const LexSpan & lexsp);
 
-Job * PJobCreateMaster(Compilation * pComp, Job * pJobChild, COMPHASE comphase);
 Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename, COMPHASE comphase);
 Job * PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, WorkspaceEntry * pEntry, Job * pJobParse);
-Job * PJobCreateWait(Compilation * pComp);
 
 Moe::InString IstrOverloadNameFromTok(TOK tok);
 

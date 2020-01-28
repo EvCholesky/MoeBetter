@@ -111,15 +111,18 @@ int CRqresServiceRequest(Compilation * pComp, Workspace * pWork)
 		//printf("Parsing %s\n", pFile->m_qqistrFilename.m_pChz);
 
 		COMPHASE comphase = COMPHASE_TypeCheck;
-		auto pJobParse = PJobCreateParse(pComp, pWork, pChzFileBody, pFile->m_istrFilename, comphase);
+		JobRef pJobParse = PJobCreateParse(pComp, pWork, pChzFileBody, pFile->m_istrFilename, comphase);
 
-		WaitForJob(pComp, pWork, pJobParse);
+		WaitForJob(pComp, pWork, pJobParse.m_pJob);
 
 		BlockListEntry::CIterator iter(&pWork->m_blistEntry);
 		while (WorkspaceEntry * pEntry = iter.Next())
 		{
 			InString istrParse = IstrSExpression(pEntry->m_pStnod, SEWK_Parse);
-			printf("     : %s\n", istrParse.m_pChz);
+			printf("parse : %s\n", istrParse.m_pChz);
+		
+			InString istrTypeCheck = IstrSExpression(pEntry->m_pStnod, SEWK_TypeInfo);
+			printf("tc    : %s\n", istrTypeCheck.m_pChz);
 
 		//	InString istrPark = IstrSExpression(pEntry->m_pStnod, SEWK_Park);
 		//	printf("parse: %s\n", istrPark.m_pChz);
@@ -165,69 +168,51 @@ Job * PJobAllocate(Compilation * pComp, void * pVData, Job * pJobParent)
 {
 	if (pJobParent)
 	{
-        (pJobParent->m_cJobChild)++;
+        (pJobParent->m_cJobWaiting)++;
 	}
 
-	Job * pJob = pComp->m_aryJob.AppendNew();
+	Job * pJob = MOE_NEW_BK(pComp->m_pAlloc, BK_Job, Job) Job(pComp->m_pAlloc);
 	pJob->m_pVData = pVData;
-	pJob->m_cPrereq = 0;
+	pJob->m_cJobWaiting = 1;
 	pJob->m_pJobParent = pJobParent;
 
-	pJob->m_cPrereq = 1; // self(1) + 0 children
 	return pJob;
+}
+
+void DeleteJob(Job * pJob)
+{
+	MOE_ASSERT(pJob->m_cRef == 0, "deleting with nonzero ref count");
+	Alloc * pAlloc = pJob->m_pAlloc;
+	pAlloc->MOE_DELETE(pJob);
 }
 
 void EnqueueJob(Compilation * pComp, Job * pJob)
 {
-	if (pJob->m_cPrereq == 1)
-	{
-		pComp->m_arypJobQueued.Append(pJob);
-	}
+	pComp->m_arypJobQueued.Append(pJob);
 }
 
-Job * PJobGet(Compilation * pComp)
+void FinishJob(Workspace * pWork, Job * pJob)
 {
-	for (int ipJob = (int)pComp->m_arypJobQueued.C(); --ipJob >= 0; )
-	{
-		Job * pJob = pComp->m_arypJobQueued.TPopLast();
-		if (pJob->m_cPrereq <= 1)
-		{
-			return pJob;
-		}
-		else
-		{
-			// popping waiting job but leaving it off the list, it will need to re-add when it's prerequisites are satisfied
-		}
-	}
-	return nullptr;
-}
-
-void FinishJob(Compilation * pComp, Job * pJob)
-{
-    const s32 cPrereq = --(pJob->m_cPrereq);
-	MOE_ASSERT(cPrereq == 0, "job count underflow");
+    s32 cJobWaiting = --(pJob->m_cJobWaiting);
+	MOE_ASSERT(cJobWaiting >= 0, "job count underflow");
 
 	Job * pJobIt = pJob;
-	while (pJobIt->FHasJobCompleted() && pJobIt->m_pJobParent)
+	while (cJobWaiting <= 0)
 	{
-		pJobIt = pJobIt->m_pJobParent;
-		--(pJobIt->m_cJobChild);
-	}
-}
+		if (pJobIt->m_pFnCleanup)
+		{
+			(*pJobIt->m_pFnCleanup)(pWork, pJobIt);
+		}
 
-void AddJobPrereq(Job * pJob)
-{
-	MOE_ASSERT(pJob->m_cPrereq >= 1, "adding prerequisite after job has run");
-    ++(pJob->m_cPrereq);
-}
+		Job * pJobPrev  = pJobIt;
+		pJobIt = pJobIt->m_pJobParent.m_pJob;
+		pJobPrev->m_pJobParent = nullptr;
 
-void CompletePrereq(Compilation * pComp, Job * pJob)
-{
-    const s32 cPrereq = --(pJob->m_cPrereq);
+		if (!pJobIt)
+			break;
 
-	if (cPrereq == 1)
-	{
-		pComp->m_arypJobQueued.Append(pJob);
+		cJobWaiting = --(pJobIt->m_cJobWaiting);
+		MOE_ASSERT(cJobWaiting >= 0, "job count underflow");
 	}
 }
 
@@ -237,39 +222,23 @@ void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJobWait)
 
 	while (!pJobWait->FHasJobCompleted())
 	{
-		Job * pJob = PJobGet(pComp);
-
-		// BB - this is not the right way to deal with this 
-		if (!pJob || !pJob->FCanStartJob())
+		if (pComp->m_arypJobQueued.FIsEmpty())
 		{
 			printf("ERROR: circular job dependencies!\n");
 			return;
 		}
 
-		JOBRET jobret;
-		//if (pJob->m_cPrereq == 1)
+		JobRef pJob = pComp->m_arypJobQueued.TPopLast();
+
+		if (!pJob->m_fUpdateComplete)
 		{
-			jobret = pJob->m_pFnUpdate(pComp, pWork, pJob);
-		}
+			JOBRET jobret = pJob->m_pFnUpdate(pComp, pWork, pJob.m_pJob);
 
-		switch (jobret)
-		{
-		case JOBRET_StoppingError:
-			break;
-
-		case JOBRET_Waiting:
-			EnqueueJob(pComp, pJob);
-			break;
-
-		case JOBRET_Complete:
+			if (jobret == JOBRET_Complete)
 			{
-				FinishJob(pComp, pJob);
-
-				if (pJob->m_pFnCleanup)
-				{
-					(*pJob->m_pFnCleanup)(pWork, pJob);
-				}
-			} break;
+				pJob->m_fUpdateComplete = true;
+				FinishJob(pWork, pJob.m_pJob);
+			}	
 		}
 	}
 }

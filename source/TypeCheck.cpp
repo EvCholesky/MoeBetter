@@ -319,7 +319,6 @@ static inline void SetupSymbolWait(TypeCheckContext * pTcctx, Symbol * pSym)
 		pJps->m_arypJob.SetAlloc(pTcctx->m_pAlloc, BK_Job, 16);
 	}
 
-	AddJobPrereq(pTcctx->m_pJobTc);
 	pJps->m_arypJob.Append(pTcctx->m_pJobTc);
 }
 
@@ -2202,7 +2201,7 @@ void OnTypeResolve(TypeCheckContext * pTcctx, const Symbol * pSym)
 	Job ** ppJobMax = pJps->m_arypJob.PMac();
 	for (Job ** ppJobIt = pJps->m_arypJob.A(); ppJobIt != ppJobMax; ++ppJobIt)
 	{
-		CompletePrereq(pWork->m_pComp, *ppJobIt);
+		EnqueueJob(pWork->m_pComp, *ppJobIt);
 	}
 
 	pWork->m_hashPSymJps.Remove(pSym);
@@ -3421,7 +3420,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 	Workspace * pWork = pTcctx->m_pWork;
 	WorkspaceEntry * pEntry = pWork->PEntryAppend(pStnodStructCopy, pSymtabNew);
 
-	Job * pJobNew = PJobCreateTypeCheckRequest(pWork->m_pComp, pWork, pEntry, pTcctx->m_pJobTc);
+	(void)PJobCreateTypeCheckRequest(pWork->m_pComp, pWork, pEntry, pTcctx->m_pJobTc);
 #endif
 
 #if KEEP_TYPEINFO_DEBUG_STRING
@@ -7653,7 +7652,7 @@ void CleanupTypeCheckJob(Workspace * pWork, Job * pJob)
 	}
 }
 
-Job * PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, WorkspaceEntry * pEntry, Job * pJobSource)
+JobRef PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, WorkspaceEntry * pEntry, Job * pJobSource)
 {
 	Alloc * pAlloc = pWork->m_pAlloc;
 	TypeCheckJobData * pTcjd = MOE_NEW(pAlloc, TypeCheckJobData) TypeCheckJobData(pWork, pAlloc, pEntry);
@@ -7689,7 +7688,8 @@ Job * PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, Workspa
 
 	pTcctx->m_pEntry = pEntry;
 
+	JobRef pJobReturn = pJobTc;
 	EnqueueJob(pComp, pJobTc);
-	return pJobTc;
+	return pJobReturn;
 }
 

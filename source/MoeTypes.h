@@ -579,6 +579,7 @@ enum BK // block kind
 #define MOE_ALLOC_TYPE(TYPE_NAME) 				AllocImpl(sizeof(TYPE_NAME), MOE_ALIGN_OF(TYPE_NAME), __FILE__, __LINE__)
 #define MOE_ALLOC_TYPE_ARRAY(TYPE_NAME, C_MAX) 	AllocImpl(sizeof(TYPE_NAME) * C_MAX, MOE_ALIGN_OF(TYPE_NAME), __FILE__, __LINE__)
 #define MOE_NEW(PALLOC, TYPE_NAME)				new ( (PALLOC)->AllocImpl(sizeof(TYPE_NAME), MOE_ALIGN_OF(TYPE_NAME), __FILE__, __LINE__))
+#define MOE_NEW_BK(PALLOC, BK, TYPE_NAME)		new ( (PALLOC)->AllocImpl(sizeof(TYPE_NAME), MOE_ALIGN_OF(TYPE_NAME), __FILE__, __LINE__, BK))
 #define MOE_FREE(P) 							FreeImpl(P, __FILE__, __LINE__)
 #define MOE_DELETE(P) 							DeleteImpl(P, __FILE__, __LINE__)
 

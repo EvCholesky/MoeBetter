@@ -1326,6 +1326,16 @@ SymbolTable::~SymbolTable()
 		DeleteTypeInfo(m_pAlloc, *ppTin);
 		*ppTin = nullptr;
 	}
+
+	CHash<Moe::InString, STNode *>::CIterator iterPStnod(&m_hashIstrPStnodBuiltIn);
+	while (STNode ** ppStnod = iterPStnod.Next())
+	{
+		STNode * pStnod = *ppStnod;
+		m_pAlloc->MOE_DELETE(pStnod);
+
+		*ppStnod = nullptr;
+	}
+	
 }
 
 Symbol * SymbolTable::PSymGenericInstantiate(Symbol * pSymGeneric, STNode * pStnodDefinition)
@@ -5820,7 +5830,7 @@ void CleanupParseJob(Workspace * pWork, Job * pJob)
 	}
 }
 
-Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename, COMPHASE comphase)
+JobRef PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename, COMPHASE comphase)
 {
 	Alloc * pAlloc = pWork->m_pAlloc;
 	ParseJobData * pParjd = MOE_NEW(pAlloc, ParseJobData) ParseJobData(pAlloc, pWork);
@@ -5842,9 +5852,11 @@ Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzB
 	pJob->m_pFnCleanup = CleanupParseJob;
 	pJob->m_comphaseDesired = comphase;
 	pParctx->m_pJobParse = pJob;
+
+	JobRef pJobReturn = pJob;
 	EnqueueJob(pComp, pJob);
 
-	return pJob;
+	return pJobReturn;
 }
 
 #define MOE_CHECK_LEXER_SPANS 0

@@ -162,52 +162,102 @@ enum COMPHASE
 	MOE_MAX_MIN_NIL(COMPHASE)
 };
 
-// Here's my current thinking about the job queues, There are two queues: the active queue and the waiting queue. The waiting queue 
-//  holds jobs that an outstanding dependency and can be removed from the wait queue at any time, in random order. The active queue 
-//  pops jobs off of the end and cannot remove jobs internal to the queue. Jobs pulled from the active queue that have (new?) dependencies
-//  will be pushed onto the waiting queue without executing the job.
-
-// Strike that, I'm checking in and then I'll update to my new plan for jobs
-// Jobs have a Parent/child structure where the parent cannot be completed until all child jobs are complete (but can execute it's task)
-// In addition to that jobs have an atomic prerequisite count that must be decremented to zero before the job can execute
-//		Parser->TypeCheck->Codegen dependencies are parent child dependencies, Waiting for symbol resolution is a prerequisite dependency
-
-struct Job
+//  Jobs have a Parent/child structure where the parent cannot be completed until all child jobs are complete (but can execute it's task)
+// Waiting for symbol completion is done outside the job dependency system, typeCheck jobs waiting for a symbol add themselved to a 
+//  symbol->Job wait queue and the task returns JOBRET_Waiting
+struct Job;
+struct JobRef // tag = jobref
 {
-								Job()
-								:m_cPrereq(0)
-								,m_cJobChild(0)
+								JobRef() :m_pJob(nullptr)
+									{ ; }
+								JobRef(Job * pJob);
+								JobRef(JobRef const & jobref);
+
+								~JobRef();
+
+	Job *						operator->() 
+									{ return m_pJob; }
+	Job &						operator*()  
+									{ return *m_pJob; }
+	JobRef &					operator=(const JobRef & jobref);
+
+	Job *						m_pJob;
+};
+
+
+
+struct Job // tag = job
+{
+								Job(Moe::Alloc * pAlloc)
+								:m_cJobWaiting(0)
+								,m_cRef(0)
 								,m_pJobParent(nullptr)
 								,m_pFnUpdate(nullptr)
 								,m_pFnCleanup(nullptr)
 								,m_pVData(nullptr)
+								,m_pAlloc(pAlloc)
+								,m_fUpdateComplete(false)
 								,m_comphaseDesired(COMPHASE_Nil)
 									{ ; }
 
 
-	bool						FCanStartJob() const
-									{ return m_cPrereq <= 1; }
 	bool						FHasJobCompleted() const
-									{ return m_cPrereq <= 0 && m_cJobChild <= 0; }
+									{ return m_cJobWaiting <= 0; }
 
 	// Job dependencies, must complete before this job can start (and complete) 
-	std::atomic_int_fast32_t	m_cPrereq;				// how many prerequisites are outstanding
-	std::atomic_int_fast32_t	m_cJobChild;			// child jobs + 1 for unfinshed self
-	Job *						m_pJobParent;
+	std::atomic_int_fast32_t	m_cJobWaiting;		// child jobs + 1 for unfinshed self
+	u32							m_cRef;
+	JobRef						m_pJobParent;
 	
 	PFnJobUpdate				m_pFnUpdate;
 	PFnJobCleanup				m_pFnCleanup;
 	void *						m_pVData;
+	Moe::Alloc *				m_pAlloc;
 
+	bool						m_fUpdateComplete;	// This update completed, if (m_cJobWaiting >= 0) we're waiting on child jobs
 	COMPHASE					m_comphaseDesired;	// What is the desired end phase for this job's output
 };
 
 Job * PJobAllocate(Compilation * pComp, void * pVData, Job * pJobParent = nullptr);
+void DeleteJob(Job * pJob);
 void EnqueueJob(Compilation * pComp, Job * pJob);
 void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJob);
 
-void AddJobPrereq(Job * pJob);
-void CompletePrereq(Compilation * pComp, Job * pJob);
+inline JobRef::JobRef(Job * pJob) 
+	:m_pJob(pJob)
+	{ 
+		if (m_pJob)
+			++m_pJob->m_cRef; 
+	}
+inline JobRef::JobRef(JobRef const & jobref)
+	: m_pJob(jobref.m_pJob) 
+	{
+		if (m_pJob)
+			++m_pJob->m_cRef; 
+	}
+inline JobRef::~JobRef()
+	{ 
+		if (m_pJob && (--m_pJob->m_cRef == 0)) 
+		{
+			DeleteJob(m_pJob); 
+		}
+	}
+inline JobRef &	JobRef::operator=(const JobRef & jobref)
+	{ 
+		Job * const pJobOld = m_pJob;
+		m_pJob = jobref.m_pJob;
+		if (m_pJob)
+		{
+			++m_pJob->m_cRef;
+		}
+
+		if (pJobOld && (--pJobOld->m_cRef == 0) )
+		{
+			DeleteJob(pJobOld);
+		}
+		return *this;
+	}
+
 
 
 struct Compilation // tag = comp
@@ -220,7 +270,7 @@ struct Compilation // tag = comp
 	Moe::CDynAry<RequestResult *>		m_arypRqres;
 
 	Moe::CDynAry<Job>					m_aryJob;
-	Moe::CDynAry<Job *>					m_arypJobQueued;	// jobs ready to be executed
+	Moe::CDynAry<JobRef>				m_arypJobQueued;	// jobs ready to be executed
 };
 
 

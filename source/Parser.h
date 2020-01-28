@@ -625,8 +625,8 @@ Moe::InString IstrFromIdentifier(STNode * pStnod);
 Moe::InString IstrIdentifierFromDecl(STNode * pStnodDecl);
 ERRID ErridCheckOverloadSignature(TOK tok, TypeInfoProcedure * pTinproc, ErrorManager * pErrman, const LexSpan & lexsp);
 
-Job * PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename, COMPHASE comphase);
-Job * PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, WorkspaceEntry * pEntry, Job * pJobParse);
+JobRef PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename, COMPHASE comphase);
+JobRef PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, WorkspaceEntry * pEntry, Job * pJobParse);
 
 Moe::InString IstrOverloadNameFromTok(TOK tok);
 

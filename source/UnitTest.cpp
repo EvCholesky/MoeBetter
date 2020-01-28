@@ -968,15 +968,8 @@ TESTRES TestresRunUnitTest(
 	//work.m_pErrman->Clear();
 
 	// Parse
-	auto pJobParse = PJobCreateParse(&comp, &work, pFile->m_pChzFileBody, pFile->m_istrFilename, COMPHASE_TypeCheck);
-	WaitForJob(&comp, &work, pJobParse);
-	//ParseGlobalScope(&work, &lex, work.m_grfunt);
-	//EndParse(&work, &lex);
-
-	if (pJobParse->m_pFnCleanup)
-	{
-		(*pJobParse->m_pFnCleanup)(&work, pJobParse);
-	}
+	JobRef pJobParse = PJobCreateParse(&comp, &work, pFile->m_pChzFileBody, pFile->m_istrFilename, COMPHASE_TypeCheck);
+	WaitForJob(&comp, &work, pJobParse.m_pJob);
 
 	HideDebugStringForEntries(&work, cbPrereq);
 

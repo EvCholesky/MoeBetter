@@ -784,7 +784,6 @@ void WriteParseSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, GRFSEW 
 	WriteParseKindSExpression(pStrbuf, pStnod, grfsew);
 }
 
-/*
 void WriteAstName(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 {
 	if (!pStnod)
@@ -846,7 +845,6 @@ void WriteAstName(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 	default:						AppendChz(pStrbuf, "error");				return;
 	}
 }
-*/
 
 void WriteStnodFromSewk(StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, GRFSEW grfsew)
 {

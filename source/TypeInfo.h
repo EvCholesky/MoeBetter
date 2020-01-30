@@ -211,6 +211,13 @@ struct TypeInfoNumeric : public TypeInfo // tag = tinn
 			,m_grfnum(grfnum)
 				{ ; }
 
+	bool	FIsFloat() const
+				{ return m_grfnum.FIsSet(FNUM_IsFloat); }
+	bool	FIsInteger() const
+				{ return m_grfnum.FIsSet(FNUM_IsFloat) == false; }
+	bool	FIsSigned() const
+				{ return m_grfnum.FIsSet(FNUM_IsSigned); }
+
 	u32		m_cBit;
 	GRFNUM	m_grfnum;
 };
@@ -270,6 +277,11 @@ struct TypeInfoQualifier : public TypeInfo // tag == tinqual
 	TypeInfo *			m_pTin;
 	GRFQUALK			m_grfqualk;
 };
+
+TypeInfo * PTinStripQualifiers(TypeInfo * pTin, GRFQUALK * pGrfqualk);
+TypeInfo * PTinStripQualifiers(TypeInfo * pTin);
+
+
 
 enum MCALLCON
 {
@@ -390,6 +402,8 @@ enum LITK
 
 	MOE_MAX_MIN_NIL(LITK)
 };
+
+const char * PChzFromLitk(LITK litk);
 
 // subset of litk for simple types, (complex types aren't represented by a single stvalue?)
 enum STVALK // Syntax Tree VALue Kind

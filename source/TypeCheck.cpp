@@ -1,3 +1,4 @@
+#include "CodeGen.h"
 #include "Generics.inl"
 #include "Parser.h"
 #include "TypeInfo.h"
@@ -2166,6 +2167,264 @@ inline f64 GLiteralCast(const STValue * pStval)
 
 	return 0.0;
 }
+
+bool FDoesOperatorReturnBool(PARK park)
+{
+	// return if operator returns a bool (rather than the operand type)
+	return  (park == PARK_RelationalOp) | (park == PARK_LogicalAndOrOp);
+}
+
+inline void SetIntegerValue(TypeCheckContext * pTcctx, STValue * pStval, const BigInt bint)
+{
+	if (bint.m_fIsNegative)
+	{
+		if (bint.m_nAbs > LLONG_MAX)
+		{
+			EmitError(pTcctx, pStval->m_lexsp, ERRID_LitOverflow, "Literal value overflow. Value is too large for signed int.");
+		}
+		pStval->SetS64(bint.S64Coerce());
+	}
+	else
+	{
+		pStval->SetU64(bint.U64Coerce());
+	}
+}
+
+BigInt BintFromStval(STValue * pStval)
+{
+	switch (pStval->m_stvalk)
+	{
+	case STVALK_Bool:
+	case STVALK_Null:
+	case STVALK_UnsignedInt:	return BintFromUint(pStval->m_nUnsigned, false);
+	case STVALK_SignedInt:		return BintFromInt(pStval->m_nSigned);
+#if MOEB_LATER
+	case STVALK_ReservedWord:
+		{
+
+			MOE_ASSERT(pStval->m_litkLex == LITK_Integer || pStval->m_litkLex == LITK_Bool, "Can't create Bint from non integer reserved word");
+			return BintFromUint(pStval->m_nUnsigned, false);
+		}
+#endif
+	default:
+		MOE_ASSERT(false, "Can't create Bint from non integer value");
+		return BigInt();
+	}
+}
+
+inline TypeInfo * PTinResult(PARK park, SymbolTable * pSymtab, TypeInfo * pTinOp)
+{
+	if (FDoesOperatorReturnBool(park))
+		return pSymtab->PTinBuiltin(BuiltIn::g_istrBool);
+	return pTinOp;
+}
+
+OpTypes OptypeFromPark(
+	TypeCheckContext * pTcctx,
+	SymbolTable * pSymtab,
+	TOK tok,
+	PARK parkOperator,
+	TypeInfo * pTinLhs,
+	TypeInfo * pTinRhs)
+{
+	if (parkOperator == PARK_LogicalAndOrOp)
+	{
+		auto pTinBool = pSymtab->PTinBuiltin(BuiltIn::g_istrBool);
+		return OpTypes(pTinBool, pTinBool, pTinBool);
+	}
+
+	GRFQUALK grfqualkLhs = FQUALK_None;
+	GRFQUALK grfqualkRhs = FQUALK_None;
+	if (auto pTinqualLhs = PTinRtiCast<TypeInfoQualifier *>(pTinLhs))
+		{ grfqualkLhs = pTinqualLhs->m_grfqualk; }
+	if (auto pTinqualRhs = PTinRtiCast<TypeInfoQualifier *>(pTinRhs))
+		{ grfqualkRhs = pTinqualRhs->m_grfqualk; }
+	auto pTinUnqualLhs = PTinStripQualifiers(pTinLhs);
+	auto pTinUnqualRhs = PTinStripQualifiers(pTinRhs);
+
+	bool fLhsIsReference = (pTinUnqualLhs->m_tink == TINK_Pointer) | (pTinUnqualLhs->m_tink == TINK_Array);
+	bool fRhsIsReference = (pTinUnqualRhs->m_tink == TINK_Pointer) | (pTinUnqualRhs->m_tink == TINK_Array);
+
+	// BB - Could this be cleaner with a table?
+	if (fLhsIsReference | fRhsIsReference)
+	{
+		TypeInfo * pTinMin = pTinUnqualLhs;
+		TypeInfo * pTinMax = pTinUnqualRhs;
+		if (pTinMin->m_tink > pTinMax->m_tink)
+		{
+			moeSwap(pTinMin, pTinMax);
+		}
+		TINK tinkMin = pTinMin->m_tink;
+		TINK tinkMax = pTinMax->m_tink;
+
+		if (fLhsIsReference & fRhsIsReference)
+		{
+			bool fLhsIsArrayRef = pTinUnqualLhs->m_tink == TINK_Array && 
+									((TypeInfoArray*)pTinLhs)->m_aryk == ARYK_Reference;
+			TypeInfo * pTinRefMax = nullptr;
+			if (tinkMax == TINK_Array)
+			{
+				if (tinkMin != TINK_Pointer && !fLhsIsArrayRef) // no operand for array & array
+					return OpTypes();
+
+				pTinRefMax = PTinStripQualifiers(((TypeInfoArray *)pTinMax)->m_pTin);
+			}
+			else if (MOE_FVERIFY(tinkMax == TINK_Pointer, "unexpected reference type info"))
+			{
+				pTinRefMax = ((TypeInfoPointer *)pTinMax)->m_pTin;
+				pTinRefMax = PTinStripQualifiers(pTinRefMax);
+			}
+
+			auto pTinRefMin = ((TypeInfoPointer*)pTinMin)->m_pTin;
+			pTinRefMin = PTinStripQualifiers(pTinRefMin);
+
+			if (parkOperator == PARK_AssignmentOp)
+			{
+				if (tok == TOK('='))
+				{
+					bool fAreRefTypesSame = FTypesAreSame(pTinRefMin, pTinRefMax);
+
+					if (pTinLhs->m_tink == TINK_Array && !fLhsIsArrayRef)
+						return OpTypes();
+
+					if (!fAreRefTypesSame && 
+						(pTinLhs->m_tink != TINK_Pointer || ((TypeInfoPointer *)pTinLhs)->m_pTin->m_tink != TINK_Void))
+						return OpTypes();
+
+					return OpTypes(pTinLhs, pTinRhs, pSymtab->PTinBuiltin(BuiltIn::g_istrBool));
+				}
+			}
+
+			bool fAreRefTypesSame = FTypesAreSame(pTinRefMin, pTinRefMax);
+			bool fIsOneTypeVoid = (pTinRefMin->m_tink == TINK_Void) | (pTinRefMax->m_tink == TINK_Void);
+			if (parkOperator == PARK_RelationalOp && (fAreRefTypesSame | fIsOneTypeVoid))
+			{
+				if ((tok == TOK_EqualEqual) | (tok == TOK_NotEqual))
+				{
+					// cast the array to a pointer before comparing
+					return OpTypes(pTinMin, pTinMin, pSymtab->PTinBuiltin(BuiltIn::g_istrBool));
+				}
+			}
+
+			if (parkOperator == PARK_AdditiveOp)
+			{
+				if (tok == TOK('-') && fAreRefTypesSame)
+				{
+					return OpTypes(pTinLhs, pTinRhs, pSymtab->PTinBuiltin(BuiltIn::g_istrSSize));
+				}
+			}
+
+			return OpTypes();
+		}
+
+		TypeInfo * pTinRef = pTinLhs;
+		TypeInfo * pTinOther = pTinRhs;
+		if (pTinOther->m_tink == TINK_Pointer || pTinOther->m_tink == TINK_Array)
+		{
+			pTinRef = pTinRhs;
+			pTinOther = pTinLhs;
+		}
+
+		if (pTinRef->m_tink == TINK_Pointer && ((TypeInfoPointer *)pTinRef)->m_pTin->m_tink == TINK_Void)
+		{
+			return OpTypes();
+		}
+		
+		PARK parkOperatorAdj = parkOperator;
+		if (parkOperator == PARK_AssignmentOp && ((tok == TOK_PlusEqual) | (tok == TOK_MinusEqual)))
+		{
+			parkOperatorAdj = PARK_AdditiveOp;
+		}
+
+		if (parkOperatorAdj == PARK_AdditiveOp)
+		{
+			if (pTinOther->m_tink == TINK_Numeric && ((TypeInfoNumeric*)pTinOther)->FIsFloat() == false)
+			{
+				return OpTypes(pTinLhs, pTinRhs, pTinRef);
+			}
+			else
+			{
+				MOE_ASSERT(false, "unexpected Additive operator");
+			}
+		}
+	}
+
+	if (pTinLhs->m_tink == pTinRhs->m_tink)
+	{
+		switch(pTinLhs->m_tink)
+		{
+		case TINK_Numeric:
+			{
+				TypeInfoNumeric * pTinnLhs = (TypeInfoNumeric*)pTinLhs;
+				TypeInfoNumeric * pTinnRhs = (TypeInfoNumeric*)pTinRhs;
+
+				if (pTinnRhs->m_grfnum != pTinnRhs->m_grfnum)
+					return OpTypes();
+
+				auto pTinOp = pTinLhs;
+				if (pTinnLhs->m_cBit < pTinnRhs->m_cBit)
+				{
+					if (parkOperator == PARK_AssignmentOp)
+					{
+						return OpTypes();
+					}
+					pTinOp = pTinRhs;
+				}
+
+				return OpTypes(pTinOp, pTinOp, PTinResult(parkOperator, pSymtab, pTinOp));
+			}
+		case TINK_Array:
+			return OpTypes();
+		default:
+			break;
+		}
+
+		if (FTypesAreSame(pTinLhs, pTinRhs))
+		{
+			return OpTypes(pTinLhs, pTinLhs, PTinResult(parkOperator, pSymtab, pTinLhs));
+		}
+	}
+
+	if (pTinLhs->m_tink == TINK_Enum || pTinRhs->m_tink == TINK_Enum)
+	{
+		TypeInfo * pTinEnum = pTinLhs;
+		TypeInfo * pTinOther = pTinRhs;
+		if (pTinOther->m_tink == TINK_Enum)
+		{
+			pTinEnum = pTinRhs;
+			pTinOther = pTinLhs;
+		}
+
+		bool fIsInteger = (pTinOther->m_tink == TINK_Numeric && ((TypeInfoNumeric*)pTinOther)->FIsInteger());
+		if (parkOperator == PARK_AdditiveOp && fIsInteger)
+		{
+			return OpTypes(pTinEnum, pTinEnum, pTinEnum);
+		}
+		else if (parkOperator == PARK_ShiftOp && fIsInteger)
+		{
+			MOE_ASSERT(pTinEnum->m_tink == TINK_Enum && ((TypeInfoEnum*)pTinEnum)->m_pTinLoose, "expected loose type");
+			return OpTypes(pTinLhs, pTinRhs, ((TypeInfoEnum*)pTinEnum)->m_pTinLoose);
+		}
+	}
+
+	bool fIsRhsInteger = (pTinRhs->m_tink == TINK_Numeric && ((TypeInfoNumeric*)pTinRhs)->FIsInteger());
+	if (pTinLhs->m_tink == TINK_Bool || fIsRhsInteger)
+	{
+		if (parkOperator == PARK_AssignmentOp)
+		{
+			return OpTypes(pTinLhs, pTinLhs, pTinLhs);
+		}
+	}
+	if (pTinLhs->m_tink == TINK_Flag || pTinRhs->m_tink == TINK_Bool)
+	{
+		if (parkOperator == PARK_AssignmentOp)
+		{
+			return OpTypes(pTinLhs, pTinLhs, pTinLhs);
+		}
+	}
+	return OpTypes();
+}
+
 
 void OnTypeResolve(TypeCheckContext * pTcctx, const Symbol * pSym)
 {
@@ -4553,9 +4812,9 @@ TCRET TcretTryFindMatchingProcedureCall(
 
 
 
-struct SOverloadCheck // tag ovcheck
+struct OverloadCheck // tag ovcheck
 {
-			SOverloadCheck(TypeInfoProcedure * pTinproc, TCRET tcret = TCRET_StoppingError, ARGORD argord = ARGORD_Normal)
+			OverloadCheck(TypeInfoProcedure * pTinproc, TCRET tcret = TCRET_StoppingError, ARGORD argord = ARGORD_Normal)
 			:m_pTinproc(pTinproc)
 			,m_tcret(tcret)
 			,m_argord(argord)
@@ -4567,7 +4826,7 @@ struct SOverloadCheck // tag ovcheck
 };
 
 
-SOverloadCheck OvcheckTryCheckOverload(
+OverloadCheck OvcheckTryCheckOverload(
 	TypeCheckContext * pTcctx,
 	STNode * pStnod,
 	ProcMatchParam * pPmparam)
@@ -4578,7 +4837,7 @@ SOverloadCheck OvcheckTryCheckOverload(
 	SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
 	Moe::InString istrOverload = IstrOverloadNameFromTok(pStnod->m_tok);
 	if (istrOverload.FIsEmpty())
-		return SOverloadCheck(nullptr);
+		return OverloadCheck(nullptr);
 
 	InString strProcName(istrOverload);
 	Symbol * pSymProc = nullptr;
@@ -4593,11 +4852,11 @@ SOverloadCheck OvcheckTryCheckOverload(
 		// wait for this procedure's signature to be type checked.
 
 		SetupSymbolWait(pTcctx, pSymProc);
-		return SOverloadCheck(pTinproc, tcret, argord);
+		return OverloadCheck(pTinproc, tcret, argord);
 	}
 	else if (tcret != TCRET_Complete)
 	{
-		return SOverloadCheck(nullptr);
+		return OverloadCheck(nullptr);
 	}
 
 	if (pTinproc)
@@ -4610,7 +4869,7 @@ SOverloadCheck OvcheckTryCheckOverload(
 
 	MOE_ASSERT(pStnod->m_pTin == nullptr, "assignment op has no 'return' value");
 
-	return SOverloadCheck(pTinproc, TCRET_Complete, argord);
+	return OverloadCheck(pTinproc, TCRET_Complete, argord);
 }
 
 static SymbolPath * PSympLookup(
@@ -4802,28 +5061,6 @@ TypeInfo * PTinStripQualifiersAndPointers(TypeInfo * pTin)
 		}
 	}
 	return pTin;
-}
-
-BigInt BintFromStval(STValue * pStval)
-{
-	switch (pStval->m_stvalk)
-	{
-	case STVALK_Bool:
-	case STVALK_Null:
-	case STVALK_UnsignedInt:	return BintFromUint(pStval->m_nUnsigned, false);
-	case STVALK_SignedInt:		return BintFromInt(pStval->m_nSigned);
-#if MOEB_LATER
-	case STVALK_ReservedWord:
-		{
-
-			MOE_ASSERT(pStval->m_litkLex == LITK_Integer || pStval->m_litkLex == LITK_Bool, "Can't create Bint from non integer reserved word");
-			return BintFromUint(pStval->m_nUnsigned, false);
-		}
-#endif
-	default:
-		MOE_ASSERT(false, "Can't create Bint from non integer value");
-		return BigInt();
-	}
 }
 
 TypeInfo * PTinFromBint(
@@ -5308,6 +5545,19 @@ inline TypeInfo * PTinPromoteUntypedTightest(
 		MOE_ASSERT(false, "Cannot infer type for unknown literal kind");
 	}
 	return nullptr;
+}
+
+inline TypeInfo * PTinPromoteUntypedRvalueTightest(
+	TypeCheckContext * pTcctx,
+	SymbolTable * pSymtab,
+	STNode * pStnodLit,	
+	TypeInfo * pTinDst)
+{
+	// PromoteUntypedTightest may add a constant qualifier that  PTinAfterRValueAssignment will strip
+	//  it would be nice to optimize that out 
+	auto pTinPromoted = PTinPromoteUntypedTightest(pTcctx, pSymtab, pStnodLit, pTinDst);
+
+	return PTinAfterRValueAssignment(pTcctx, pStnodLit->m_lexsp, pTinPromoted, pSymtab, pTinDst);
 }
 
 struct TinSpecEntry // tag = tinse
@@ -6879,7 +7129,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckS
 				MOE_ASSERT(pTinInitDefault, "failed to compute default init type");
 			}
 
-			SOverloadCheck ovcheck(nullptr);
+			OverloadCheck ovcheck(nullptr);
 
 			auto pStnodOpLhs = pStnodIdent;
 #ifndef MOEB_LATER
@@ -7279,7 +7529,7 @@ TcretDebug TcretCheckIdentifier(STNode * pStnod, TypeCheckContext * pTcctx, Type
 
 TcretDebug TcretCheckLiteral(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
-	if (MOE_FVERIFY(pStnod->m_pTin == nullptr, "STypeInfoLiteral should not be constructed before type checking"))
+	if (MOE_FVERIFY(pStnod->m_pTin == nullptr, "TypeInfoLiteral should not be constructed before type checking"))
 	{
 		SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
 
@@ -7293,6 +7543,696 @@ TcretDebug TcretCheckLiteral(STNode * pStnod, TypeCheckContext * pTcctx, TypeChe
 	
 	pStnod->m_strees = STREES_TypeChecked;
 	PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	return TCRET_Continue;
+}
+
+inline bool FComputeUnaryOpOnLiteral(
+	TypeCheckContext * pTcctx,
+	STOperator * pStop,
+	SymbolTable * pSymtab,
+	STNode * pStnodOperand,
+	TypeInfoLiteral ** ppTinOperand,
+	TypeInfoLiteral ** ppTinReturn)
+{
+	TypeInfo * pTinOperand = pStnodOperand->m_pTin;
+
+	auto pStvalOperand = PStnodRtiCast<STValue *>(pStnodOperand);
+	if ((pTinOperand->m_tink != TINK_Literal) | (pStvalOperand == nullptr))
+		return false;
+
+	TypeInfoLiteral * pTinlitOperand = (TypeInfoLiteral *)pTinOperand;
+	const LiteralType & littyOperand = pTinlitOperand->m_litty;
+
+	bool fOperandIsNumber = (littyOperand.m_litk == LITK_Numeric) | (littyOperand.m_litk == LITK_Enum);
+	if (!fOperandIsNumber)
+		return false;
+
+	TOK tokOperator = pStop->m_tok;
+	bool fIsBoolOp = FDoesOperatorReturnBool(pStop->m_park);
+
+	if (littyOperand.m_grfnum.FIsSet(FNUM_IsFloat))
+	{
+		bool f;
+		f64 g = GLiteralCast(pStvalOperand);
+		switch ((u32)tokOperator)
+		{
+		case '-':         g = -g; break;
+		case '!':         f = !g; break;
+		default: return false;
+		}
+
+		STValue * pStvalResult =  PStvalAllocAfterParse(pSymtab->m_pAlloc, PARK_Literal, pStop->m_lexsp);
+		pStop->m_pStnodResult = pStvalResult;
+
+		if (fIsBoolOp)
+		{
+			pStvalResult->SetBool(f);
+	
+			TypeInfoLiteral * pTinBool = pSymtab->PTinlitFromLitk(LITK_Bool);
+			MOE_ASSERT(!pTinBool || pTinBool->m_tink == TINK_Literal, "expected literal type");
+
+			*ppTinReturn = pTinBool;
+			*ppTinOperand = pTinlitOperand;
+		}
+		else
+		{
+			pStvalResult->SetF64(g);
+
+			*ppTinReturn = pTinlitOperand;
+			*ppTinOperand = pTinlitOperand;
+		}
+		return true;
+	} 
+	else // LITK_Integer
+	{
+		MOE_ASSERT(littyOperand.m_cBit == -1, "expected unsized literal here");
+
+		BigInt bintOperand(BintFromStval(pStvalOperand));
+
+		auto pTinenum = PTinRtiCast<TypeInfoEnum *>(pTinlitOperand->m_pTinSource);
+		bool fIsFlagEnum = (pTinenum && pTinenum->m_enumk == ENUMK_FlagEnum);
+
+		bool f;
+		switch ((u32)tokOperator)
+		{
+			case TOK('-'):
+			{
+				if (fIsFlagEnum)
+					return false;
+
+				bintOperand.m_fIsNegative = !bintOperand.m_fIsNegative; break;
+			}
+			// BB - We're not really handling unsized literals correctly here - we'll just promote to a 64 bit type
+			case TOK('~'):       bintOperand = BintBitwiseNot(bintOperand); break;
+
+			case TOK('!'):         
+			{
+				if (fIsFlagEnum)
+					return false;
+				f = bintOperand.m_nAbs == 0; break;
+			}
+			default: return false;
+		}
+
+		STValue * pStvalResult =  PStvalAllocAfterParse(pSymtab->m_pAlloc, PARK_Literal, pStop->m_lexsp);
+		pStop->m_pStnodResult = pStvalResult;
+
+		if (fIsBoolOp)
+		{
+			pStvalResult->SetBool(f);
+	
+			TypeInfoLiteral * pTinBool = pSymtab->PTinlitFromLitk(LITK_Bool);
+			MOE_ASSERT(!pTinBool || pTinBool->m_tink == TINK_Literal, "expected literal type");
+
+			*ppTinReturn = pTinBool;
+			*ppTinOperand = pTinlitOperand;
+		}
+		else
+		{
+			SetIntegerValue(pTcctx, pStvalResult, bintOperand);
+
+			if (pTinlitOperand->m_litty.m_litk == LITK_Enum)
+			{
+#if 1
+				// BB - Is this supposed to end up being the loose type? if so we should find it from the enum rather than 
+				//  making a non-unique integer literal type
+				auto pTinlitInt = PTinRtiCast<TypeInfoLiteral *>(pStvalOperand->m_pTin);
+				MOE_ASSERT(pTinlitInt, "expected enum literal");
+#else // pre MOEB
+				// We need to make an unfinalized integer literal
+				auto pTinlitInt = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+				pTinlitInt->m_litty.m_litk = LITK_Numeric;
+				pSymtab->AddManagedTin(pTinlitInt);
+#endif
+
+				*ppTinReturn = pTinlitInt;
+				*ppTinOperand = pTinlitOperand;
+			}
+			else
+			{
+				MOE_ASSERT(pTinlitOperand->m_litty.m_litk == LITK_Numeric, "expected integer literal");
+				*ppTinReturn = pTinlitOperand;
+				*ppTinOperand = pTinlitOperand;
+			}
+		}
+		return true;
+	}
+}
+
+TcretDebug TcretCheckUnaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+	{
+		(void) PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+		return TCRET_Continue;
+	}
+
+	auto pStop = PStnodRtiCast<STOperator*>(pStnod);
+	if (MOE_FVERIFY(pStop, "expected unary operator"))
+		return TCRET_StoppingError;
+
+	STNode * pStnodOperand = pStnod->PStnodChild(0);
+	TypeInfo * pTinOperand = pStnodOperand->m_pTin;
+
+	ProcMatchParam pmparam(pTcctx->m_pAlloc, pStnod->m_lexsp);
+	pmparam.m_cpStnodCall = 1; //pStnod->m_arypStnodChild.C();
+	pmparam.m_ppStnodCall = (pmparam.m_cpStnodCall) ? pStnod->m_apStnodChild : nullptr;
+
+	OverloadCheck ovcheck = OvcheckTryCheckOverload(pTcctx, pStop, &pmparam);
+	if (ovcheck.m_pTinproc)
+	{
+		MOE_ASSERT(ovcheck.m_argord == ARGORD_Normal, "unary arguments cannot be commutative");
+		if (ovcheck.m_tcret != TCRET_Complete)
+			return ovcheck.m_tcret;
+
+		TypeInfoProcedure * pTinproc = ovcheck.m_pTinproc;
+		if (MOE_FVERIFY(pTinproc->m_arypTinParams.C() == 1 && pTinproc->m_arypTinReturns.C() == 1,
+					"bad operator overload signature"))
+		{
+			pStop->m_optype = OpTypes(pTinOperand, pTinOperand, pTinproc->m_arypTinReturns[0]);
+		}
+
+		pStop->m_optype.m_pTinprocOverload = ovcheck.m_pTinproc;
+		pStop->m_pTin = pStop->m_optype.m_pTinResult;
+	}
+	else
+	{
+		pStop->m_optype = OpTypes(pTinOperand, pTinOperand, pTinOperand);
+
+		IVALK ivalkExpected = (pStnod->m_tok == TOK_Reference) ? IVALK_LValue : IVALK_RValue;
+		if (!FVerifyIvalk(pTcctx, pStnodOperand, ivalkExpected))
+			return TCRET_StoppingError;
+
+		if (MOE_FVERIFY(pTinOperand != nullptr, "unknown type in unary operation"))
+		{
+			if (pTinOperand->m_tink == TINK_Literal)
+			{
+				// this needs to be explicitly handled, create a new literal with the result
+				if (MOE_FVERIFY(
+						pStnod->m_pTin == nullptr, 
+						"TypeInfoLiteral should be constructed during type checking"))
+				{
+					// NOTE: This computes the proper value and type, but will not collapse the AST
+					//  The codegen pass will stop recursing when it gets to this finalized literal type
+
+					SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
+					TypeInfoLiteral * pTinReturn;
+					TypeInfoLiteral * pTinlitOperand = nullptr;
+					if (FComputeUnaryOpOnLiteral(
+							pTcctx,
+							pStop,
+							pSymtab,
+							pStnodOperand,
+							&pTinlitOperand,
+							&pTinReturn))
+					{
+						pStnod->m_pTin = pTinReturn;
+					}
+					else
+					{
+						EmitError(pTcctx, pStnod->m_lexsp, ERRID_InvalidUnaryOp, 
+							"invalid unary operand %s for %s literal", 
+							PChzFromTok(pStnod->m_tok),
+							PChzFromLitk(((TypeInfoLiteral *)pTinOperand)->m_litty.m_litk));
+						return TCRET_StoppingError;
+					}
+				}
+			}
+			else
+			{
+				TOK tok = pStnod->m_tok;
+				switch ((u32)tok)
+				{
+				case TOK_Dereference:
+					{
+						if (pTinOperand->m_tink != TINK_Pointer)
+						{
+							auto istrOp = IstrFromTypeInfo(pTinOperand);
+							EmitError(pTcctx, pStnod->m_lexsp, ERRID_CannotDereference, "Cannot dereference type %s", istrOp.PChz());
+							return TCRET_StoppingError;
+						}
+						else
+						{
+							TypeInfoPointer * pTinptr = (TypeInfoPointer *)pTinOperand;
+							pStnod->m_pTin = pTinptr->m_pTin;
+						}
+					}break;
+				case TOK_Reference:
+					{
+						// NOTE: TINK cannot be a literal - handled above...
+						// NOTE: Can take a reference if we have a symbol that is not an enum or procedure
+						//  definition, but need to walk past member lookups 
+						
+						// Need a better method for this - this fails in lots of different ways
+
+						bool fCanTakeReference = false;
+						auto pStnodMember = pStnodOperand;
+
+						while (1)
+						{
+							if (!MOE_FVERIFY(pStnodMember, "bad member lookup child"))
+								break;
+
+							if (pStnodMember->m_park == PARK_MemberLookup)
+							{
+								TypeInfoEnum * pTinenum = nullptr;
+								auto pStnodLhs = pStnodMember->PStnodChildSafe(0);
+								if (pStnodLhs)
+								{
+									pTinenum = PTinRtiCast<TypeInfoEnum *>(pStnodLhs->m_pTin);
+								}
+
+								if (pTinenum && pTinenum->m_enumk == ENUMK_FlagEnum)
+								{
+									char aCh[2048];
+									Moe::StringBuffer strbuf(aCh, MOE_DIM(aCh));
+									WriteAstName(&strbuf, pStnodMember->PStnodChildSafe(0));
+									AppendChz(&strbuf, ".");
+									WriteAstName(&strbuf, pStnodMember->PStnodChildSafe(1));
+
+									EmitError(pTcctx, pStnod->m_lexsp, ERRID_CannotTakeReference, 
+										"Cannot take reference of enum_flag %s", (const char *)aCh);
+									return TCRET_StoppingError;
+								}
+								pStnodMember = pStnodMember->PStnodChildSafe(1);
+							}
+							else if (pStnodMember->m_park == PARK_ArrayElement)
+							{
+								pStnodMember = pStnodMember->PStnodChildSafe(0);
+							}
+							else if (pStnodMember->m_park == PARK_Cast)
+							{
+								auto pStdecl = PStnodDerivedCast<STDecl*>(pStnodMember);
+								pStnodMember = pStdecl->m_pStnodInit;
+							}
+							else
+								break;
+						}
+
+						if (pStnodMember)
+						{
+							auto pSymMember = pStnodMember->PSym();
+							if (pSymMember && pSymMember->m_pStnodDefinition)
+							{
+								PARK parkDefinition = pSymMember->m_pStnodDefinition->m_park;
+								fCanTakeReference = (parkDefinition != PARK_ProcedureDefinition) | 
+													(parkDefinition != PARK_EnumConstant);
+							}
+						}
+
+						if (!fCanTakeReference)
+						{
+							auto istrOp = IstrFromTypeInfo(pTinOperand);
+							EmitError(pTcctx, pStnod->m_lexsp, ERRID_CannotTakeReference, 
+								"Cannot take reference of constant %s", istrOp.PChz());
+							return TCRET_StoppingError;
+						}
+
+						SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
+						pStnod->m_pTin = pSymtab->PTinptrAllocate(pTinOperand);
+					}break;
+
+				case TOK('!'):
+					{
+						TypeInfo * pTinBool = pTcsentTop->m_pSymtab->PTinBuiltin(BuiltIn::g_istrBool);
+						if (!MOE_FVERIFY(pTinBool, "missing bool type"))
+							return TCRET_StoppingError;
+						if (!FCanImplicitCast(pTinOperand, pTinBool))
+						{
+							auto istrOp = IstrFromTypeInfo(pTinOperand);
+							EmitError(pTcctx, pStnod->m_lexsp, ERRID_CannotConvertToBool, "Cannot convert type %s to bool", istrOp.PChz());
+						}
+
+						pStop->m_pTin = pTinBool;
+						pStop->m_optype.m_pTinResult = pTinBool;
+					}break;
+
+				case TOK('~'):
+				case TOK_PlusPlus:
+				case TOK_MinusMinus:
+				case TOK('+'):
+				case TOK('-'):
+					{
+						TINK tinkOperand = pTinOperand->m_tink;
+						auto pTinn = PTinRtiCast<TypeInfoNumeric*>(pTinOperand);
+						bool fIsInteger = (pTinn && pTinn->FIsInteger());
+						bool fIsFloat = (pTinn && pTinn->FIsFloat());
+
+						bool fIsBasicEnum = false;
+						bool fIsFlagEnum = false;
+						auto pTinenum = PTinRtiCast<TypeInfoEnum *>(pTinOperand);
+						if (pTinenum)
+						{
+							fIsBasicEnum = pTinenum->m_enumk == ENUMK_Basic;
+							fIsFlagEnum = pTinenum->m_enumk == ENUMK_FlagEnum;
+						}
+
+						if (tinkOperand == TINK_Literal && pStop->m_pStnodResult)
+						{
+							auto pTinlit = (TypeInfoLiteral *)pTinOperand;
+							LITK litk = ((TypeInfoLiteral *)pTinOperand)->m_litty.m_litk;
+							fIsInteger |= !pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsFloat);
+							fIsFloat |= pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsFloat);
+
+							MOE_ASSERT(litk != LITK_Enum || pTinenum, "literal without enum type?");
+						}
+
+						bool fIsValidPtrOp = ((tok == TOK_PlusPlus) | (tok == TOK_MinusMinus)) &
+							(tinkOperand == TINK_Pointer);
+						bool fIsValidFloatOp = ((tok == TOK('+')) | (tok == TOK('-')) | (tok == TOK_PlusPlus) | (tok == TOK_MinusMinus)) & 
+												fIsFloat;
+						bool fIsValidBasicEnumOp = ((tok == TOK_PlusPlus) | (tok == TOK_MinusMinus)) & fIsBasicEnum;
+						bool fIsValidFlagEnumOp = (tok == TOK('~')) & fIsFlagEnum;
+						bool fIsSupported = fIsInteger | fIsValidPtrOp | fIsValidFloatOp | fIsValidBasicEnumOp | fIsValidFlagEnumOp;
+
+						// BB - we should be checking for negating a signed literal here, but we can't really
+						//  do operations on literals until we know the resolved type
+						//  (Otherwise ~1 will always resolve to a u64)
+
+						pStnod->m_pTin = pTinOperand;
+						if (!fIsSupported)
+						{
+							auto istrOp = IstrFromTypeInfo(pTinOperand);
+							EmitError(pTcctx, pStnod->m_lexsp, ERRID_InvalidUnaryOp, "invalid unary operator for type %s", istrOp.PChz());
+						}
+						else
+						{
+							if (tok == TOK('-') && pTinn->FIsInteger())
+							{
+								TypeInfoNumeric * pTinn = (TypeInfoNumeric*)pTinOperand;
+								if (!pTinn->FIsSigned())
+								{
+									auto istrOp = IstrFromTypeInfo(pTinOperand);
+									EmitError(pTcctx, pStnod->m_lexsp, ERRID_LiteralOutsideBounds,
+										"negate operand not valid for unsigned type %s",
+										istrOp.PChz());
+								}
+							}
+						}
+					}break;
+				}
+			}
+		}
+	}
+
+	pStnod->m_strees = STREES_TypeChecked;
+	PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	return TCRET_Continue;
+}
+
+inline bool FComputeBinaryOpOnLiterals(
+	TypeCheckContext * pTcctx,
+	STOperator * pStop,
+	SymbolTable * pSymtab,
+	STNode * pStnodLhs,
+	STNode * pStnodRhs, 
+	TypeInfoLiteral ** ppTinOperand,
+	TypeInfoLiteral ** ppTinReturn,
+	STValue ** ppStval)
+{
+	TypeInfo * pTinLhs = pStnodLhs->m_pTin;
+	TypeInfo * pTinRhs = pStnodRhs->m_pTin;
+
+	STValue * pStvalLhs = PStnodRtiCast<STValue*>(pStnodLhs);
+	STValue * pStvalRhs = PStnodRtiCast<STValue*>(pStnodRhs);
+	if ((pTinLhs->m_tink != TINK_Literal) | (pTinRhs->m_tink != TINK_Literal) |
+		(pStvalLhs == nullptr) | (pStvalRhs == nullptr))
+		return false;
+
+	TypeInfoLiteral * pTinlitLhs = (TypeInfoLiteral *)pTinLhs;
+	TypeInfoLiteral * pTinlitRhs = (TypeInfoLiteral *)pTinRhs;
+	const LiteralType & littyLhs = pTinlitLhs->m_litty;
+	const LiteralType & littyRhs = pTinlitRhs->m_litty;
+
+	bool fLhsIsNumber = (littyLhs.m_litk == LITK_Numeric) | (littyLhs.m_litk == LITK_Bool) | (littyLhs.m_litk == LITK_Enum);
+	bool fRhsIsNumber = (littyRhs.m_litk == LITK_Numeric) | (littyRhs.m_litk == LITK_Bool) | (littyRhs.m_litk == LITK_Enum);
+	if ((fLhsIsNumber == false) | (fRhsIsNumber == false))
+		return false;
+
+	TOK tokOperator = pStop->m_tok;
+	bool fIsBoolOp = FDoesOperatorReturnBool(pStop->m_park);
+
+	// NOTE: the *RIGHT* thing to do here is to use arbitrary precision floats, otherwise we'll lose some
+	//  precision if the constants are ever turned into float before assignment
+
+	// if lhs or rhs are float, upcast to float
+	if ((littyLhs.m_grfnum.FIsSet(FNUM_IsFloat)) | (littyRhs.m_grfnum.FIsSet(FNUM_IsFloat)))
+	{
+		f64 g;
+		bool f;
+		f64 gLhs = GLiteralCast(pStvalLhs);
+		f64 gRhs = GLiteralCast(pStvalRhs);
+		switch ((u32)tokOperator)
+		{
+		case TOK('+'):			g = gLhs + gRhs; break;
+		case TOK('-'):			g = gLhs - gRhs; break;
+		case TOK('*'):			g = gLhs * gRhs; break;
+		case TOK('/'):			g = gLhs / gRhs; break;
+		case TOK('>'):			f = gLhs > gRhs; break;
+		case TOK('<'):			f = gLhs < gRhs; break;
+		case TOK_EqualEqual:	f = gLhs == gRhs; break;
+		case TOK_NotEqual:		f = gLhs != gRhs; break;
+		case TOK_LessEqual:		f = gLhs <= gRhs; break;
+		case TOK_GreaterEqual:	f = gLhs >= gRhs; break;
+		case TOK_AndAnd:		f = (gLhs != 0.0f) && (gRhs != 0.0f); break;
+		case TOK_OrOr:			f = (gLhs != 0.0f) || (gRhs != 0.0f); break;
+		default: return false;
+		}
+
+		STValue * pStvalResult =  PStvalAllocAfterParse(pSymtab->m_pAlloc, PARK_Literal, pStop->m_lexsp);
+		pStop->m_pStnodResult = pStvalResult;
+
+		if (fIsBoolOp)
+		{
+			pStvalResult->SetBool(f);
+	
+			TypeInfoLiteral * pTinBool = pSymtab->PTinlitFromLitk(LITK_Bool);
+			MOE_ASSERT(!pTinBool || pTinBool->m_tink == TINK_Literal, "expected literal type");
+
+			*ppTinReturn = pTinBool;
+			*ppTinOperand = pTinlitLhs;
+		}
+		else
+		{
+			pStvalResult->SetF64(g);
+
+			auto pTinlitFloat = (pTinlitLhs->m_litty.m_grfnum.FIsSet(FNUM_IsFloat)) ? pTinlitLhs : pTinlitRhs;
+			*ppTinReturn = pTinlitFloat;
+			*ppTinOperand = pTinlitFloat;
+		}
+		return true;
+	} 
+	else // both LITK_Integer
+	{
+		// may not be unsized literal in compound expressions, ie a == b == c
+		// turns into (a == b) == c which ends up being bool == unsized comparison
+
+		BigInt bintLhs(BintFromStval(pStvalLhs));
+		BigInt bintRhs(BintFromStval(pStvalRhs));
+
+		BigInt bintOut;
+		bool f;
+		switch ((u32)tokOperator)
+		{
+		case TOK('+'):			bintOut = BintAdd(bintLhs, bintRhs); break;
+		case TOK('-'):			bintOut = BintSub(bintLhs, bintRhs); break;
+		case TOK('*'):			bintOut = BintMul(bintLhs, bintRhs); break;
+		case TOK('/'):			bintOut = BintDiv(bintLhs, bintRhs); break;
+		case TOK('%'):			bintOut = BintRemainder(bintLhs, bintRhs); break;
+		case TOK('|'):			bintOut = BintBitwiseOr(bintLhs, bintRhs); break;
+		case TOK('&'):			bintOut = BintBitwiseAnd(bintLhs, bintRhs); break;
+		case TOK('^'):			bintOut = BintBitwiseXor(bintLhs, bintRhs); break;
+		case TOK_ShiftRight:	bintOut = BintShiftRight(bintLhs, bintRhs); break;
+		case TOK_ShiftLeft:		bintOut = BintShiftLeft(bintLhs, bintRhs); break;
+		case TOK('>'):			f = bintLhs > bintRhs; break;
+		case TOK('<'):			f = bintLhs < bintRhs; break;
+		case TOK_EqualEqual:	f = bintLhs == bintRhs; break;
+		case TOK_NotEqual:		f = bintLhs != bintRhs; break;
+		case TOK_LessEqual:		f = bintLhs <= bintRhs; break;
+		case TOK_GreaterEqual:	f = bintLhs >= bintRhs; break;
+		case TOK_AndAnd:	
+			{
+				f = bintLhs.m_nAbs && bintRhs.m_nAbs; 
+			}	break;
+		case TOK_OrOr:			f = bintLhs.m_nAbs || bintRhs.m_nAbs; break;
+		default: return false;
+		}
+
+		STValue * pStvalResult =  PStvalAllocAfterParse(pSymtab->m_pAlloc, PARK_Literal, pStop->m_lexsp);
+		pStop->m_pStnodResult = pStvalResult;
+
+		if (fIsBoolOp)
+		{
+			pStvalResult->SetBool(f);
+			TypeInfoLiteral * pTinlitBool = pSymtab->PTinlitFromLitk(LITK_Bool);
+			MOE_ASSERT(!pTinlitBool || pTinlitBool->m_tink == TINK_Literal, "expected literal type");
+
+			*ppTinReturn = pTinlitBool;
+			*ppTinOperand = pTinlitLhs;
+		}
+		else
+		{
+			SetIntegerValue(pTcctx, pStvalResult, bintOut);
+
+			if (pTinlitLhs->m_litty.m_litk == LITK_Enum)
+			{
+#if 1
+				// BB - Is this supposed to end up being the loose type? if so we should find it from the enum rather than 
+				//  making a non-unique integer literal type
+				auto pTinlitInt = PTinRtiCast<TypeInfoLiteral *>(pStop->m_pTin);
+				MOE_ASSERT(pTinlitInt, "expected enum literal");
+#else // pre MOEB
+				// We need to make an unfinalized integer literal
+				auto pTinlitInt = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+				pTinlitInt->m_litty.m_litk = LITK_Integer;
+				pSymtab->AddManagedTin(pTinlitInt);
+#endif
+
+				*ppTinReturn = pTinlitInt;
+				*ppTinOperand = pTinlitLhs;
+			}
+			else
+			{
+				MOE_ASSERT(pTinlitLhs->m_litty.m_litk == LITK_Numeric || pTinlitLhs->m_litty.m_litk == LITK_Bool, "unexpected literal kind");
+				*ppTinReturn = pTinlitLhs;
+				*ppTinOperand = pTinlitLhs;
+			}
+		}
+		return true;
+	}
+}
+
+TcretDebug TcretCheckBinaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+	{
+		(void) PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+		return TCRET_Continue;
+	}
+
+	auto pStop = PStnodRtiCast<STOperator*>(pStnod);
+	if (MOE_FVERIFY(pStop, "expected binary operator"))
+		return TCRET_StoppingError;
+
+	STNode * pStnodLhs = pStop->m_pStnodLhs;
+	STNode * pStnodRhs = pStop->m_pStnodRhs;
+	if (!MOE_FVERIFY(pStnodLhs && pStnodRhs, "expected two operands to binary ops"))
+		return TCRET_StoppingError;
+
+	TypeInfo * pTinLhs = pStnodLhs->m_pTin;
+	TypeInfo * pTinRhs = pStnodRhs->m_pTin;
+
+	if (!FVerifyIvalk(pTcctx, pStnodLhs, IVALK_RValue) || !FVerifyIvalk(pTcctx, pStnodRhs, IVALK_RValue))
+		return TCRET_StoppingError;
+
+	if (!MOE_FVERIFY((pTinLhs != nullptr) & (pTinRhs != nullptr), "unknown type in binary operation"))
+		return TCRET_StoppingError;
+
+	SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
+	if ((pTinLhs->m_tink == TINK_Literal) & (pTinRhs->m_tink == TINK_Literal))
+	{
+		// this needs to be explicitly handled, create a new literal with the result
+		if (MOE_FVERIFY(
+				pStnod->m_pTin == nullptr, 
+				"TypeInfoLiteral should be constructed during type checking"))
+		{
+			// NOTE: this is only finding the type info for the result of our binary op
+			//  it will be used for type inference from a literal, but this doesn't collapse
+			//  the operator into a constant. (yet)
+
+			TypeInfoLiteral * pTinReturn;
+			TypeInfoLiteral * pTinOperand;
+			STValue * pStval;
+			if (FComputeBinaryOpOnLiterals(
+					pTcctx,
+					pStop,
+					pSymtab,
+					pStnodLhs,
+					pStnodRhs,
+					&pTinOperand,
+					&pTinReturn,
+					&pStval))
+			{
+				pStnod->m_pTin = pTinReturn;
+				pStop->m_optype = OpTypes(pTinOperand, pTinOperand, pTinReturn);
+			}
+			else
+			{
+				EmitError(pTcctx, pStnod->m_lexsp, ERRID_OperatorNotDefined,
+					"invalid operation %s for %s literal and %s literal", 
+					PChzFromTok(pStnod->m_tok),
+					PChzFromLitk(((TypeInfoLiteral *)pTinLhs)->m_litty.m_litk),
+					PChzFromLitk(((TypeInfoLiteral *)pTinRhs)->m_litty.m_litk));
+				return TCRET_StoppingError;
+			}
+		}
+	}
+	else
+	{
+		ProcMatchParam pmparam(pTcctx->m_pAlloc, pStnod->m_lexsp);
+		pmparam.m_cpStnodCall = 2; //pStnod->CPStnodChild();
+		pmparam.m_ppStnodCall = (pmparam.m_cpStnodCall) ? pStnod->m_apStnodChild : nullptr;
+
+		OverloadCheck ovcheck = OvcheckTryCheckOverload(pTcctx, pStnod, &pmparam);
+		if (ovcheck.m_pTinproc)
+		{
+			if (ovcheck.m_tcret != TCRET_Complete)
+				return ovcheck.m_tcret;
+
+			//AllocateOptype(pStnod);
+
+			TypeInfoProcedure * pTinproc = ovcheck.m_pTinproc;
+			if (MOE_FVERIFY(pTinproc->m_arypTinParams.C() == 2 && pTinproc->m_arypTinReturns.C() == 1, "bad operator overload signature"))
+			{
+				pStop->m_optype.m_pTinLhs = pTinproc->m_arypTinParams[0];
+				pStop->m_optype.m_pTinRhs = pTinproc->m_arypTinParams[1];
+				pStop->m_optype.m_pTinResult = pTinproc->m_arypTinReturns[0];
+			}
+
+			pStop->m_optype.m_pTinprocOverload = ovcheck.m_pTinproc;
+			pStop->m_pTin = pStop->m_optype.m_pTinResult;
+
+			if (ovcheck.m_argord == ARGORD_Reversed)
+			{
+				OpTypes * pOptype = &pStop->m_optype;
+				auto pTin = pOptype->m_pTinLhs;
+
+				pStop->m_grfstnod.AddFlags(FSTNOD_CommutativeCall);
+				pOptype->m_pTinLhs = pOptype->m_pTinRhs;
+				pOptype->m_pTinRhs = pTin;
+			}
+		}
+
+		if (!pStop->m_optype.FIsValid())
+		{
+			PARK park = pStnod->m_park;
+			TypeInfo * pTinUpcastLhs = PTinPromoteUntypedRvalueTightest(pTcctx, pSymtab, pStnodLhs, pTinRhs);
+			TypeInfo * pTinUpcastRhs = PTinPromoteUntypedRvalueTightest(pTcctx, pSymtab, pStnodRhs, pTinLhs);
+
+			OpTypes optype = OptypeFromPark(pTcctx, pSymtab, pStop->m_tok, park, pTinUpcastLhs, pTinUpcastRhs);
+
+			if (!optype.FIsValid() || !FDoesOperatorExist(pStnod->m_tok, &optype))
+			{
+				InString istrLhs = IstrFromTypeInfo(pTinLhs);
+				InString istrRhs = IstrFromTypeInfo(pTinRhs);
+				EmitError(pTcctx, pStop->m_lexsp, ERRID_OperatorNotDefined,
+					"%s operator not defined for %s and %s",
+					PChzFromTok(pStnod->m_tok),
+					istrLhs.PChz(),
+					istrRhs.PChz());
+				return TCRET_StoppingError;
+			}
+			pStop->m_optype = optype;
+		}
+
+		pStop->m_pTin = pStop->m_optype.m_pTinResult;
+
+		FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pStop->m_optype.m_pTinLhs, pStnodLhs);
+		FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pStop->m_optype.m_pTinRhs, pStnodRhs);
+	}
+
+	pStop->m_strees = STREES_TypeChecked;
+	PopTcsent(pTcctx, &pTcsentTop, pStop);
 	return TCRET_Continue;
 }
 
@@ -7383,6 +8323,19 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 
 		case PARK_Literal:
 			tcret = TcretCheckLiteral(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_PostfixUnaryOp:
+		case PARK_UnaryOp:
+			tcret = TcretCheckUnaryOp(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_AdditiveOp:
+		case PARK_MultiplicativeOp:
+		case PARK_ShiftOp:
+		case PARK_RelationalOp:
+		case PARK_LogicalAndOrOp:
+			tcret = TcretCheckBinaryOp(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_ArrayDecl:

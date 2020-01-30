@@ -528,10 +528,11 @@ struct STOperator : public STNode // tag = stop
 							,m_optype()
 							,m_pStnodLhs(nullptr)
 							,m_pStnodRhs(nullptr)
+							,m_pStnodResult(nullptr)
 								{ ; }
 
 	OpTypes 				m_optype;
-	MOE_STNOD_CHILD2(m_pStnodLhs, m_pStnodRhs);
+	MOE_STNOD_CHILD3(m_pStnodLhs, m_pStnodRhs, m_pStnodResult);
 
 	bool					FCheckIsValid(ErrorManager * pErrman);
 };
@@ -616,6 +617,7 @@ STValue * PStvalAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & 
 Moe::InString IstrSExpression(STNode * pTin, SEWK sewk, GRFSEW grfsew = GRFSEW_Default);
 Moe::InString IstrSExpression(TypeInfo * pTin, GRFSEW grfsew = GRFSEW_Default);
 
+void WriteAstName(Moe::StringBuffer * pStrbuf, STNode * pStnod);
 void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFSEW grfsew = GRFSEW_Default);
 void WriteSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, GRFSEW grfsew = GRFSEW_Default);
 void WriteSExpressionForEntries(Workspace * pWork, char * pCo, char * pCoMax, SEWK sewk, GRFSEW grfsew);

@@ -143,6 +143,8 @@ enum ERRID
 	ERRID_TypeExpected				= 2051,
 	ERRID_LhsHasNoEffect			= 2052,
 	ERRID_SymbolLookupFailed		= 2053,
+	ERRID_CannotConvertToBool		= 2054,
+	ERRID_CannotDereference			= 2055,
 	ERRID_TypeCheckMax				= 3000,
 
 	ERRID_CodeGenMin				= ERRID_TypeCheckMax,
@@ -249,26 +251,26 @@ struct Error
 	ERRS				m_errs;
 };
 
-void EmitWarning(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
-void EmitWarning(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
-void EmitWarning(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
-void EmitWarning(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
-void EmitWarning(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
-void EmitWarning(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
-void EmitWarning(TypeCheckContext * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
-void EmitWarning(TypeCheckContext * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
+void EmitWarning(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
+void EmitWarning(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);
+void EmitWarning(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
+void EmitWarning(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);
+void EmitWarning(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
+void EmitWarning(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);
+void EmitWarning(TypeCheckContext * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
+void EmitWarning(TypeCheckContext * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);
 
-void EmitError(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
-void EmitError(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
-void EmitError(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
-void EmitError(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
-void EmitError(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
-void EmitError(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
-void EmitError(TypeCheckContext * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pCoz, va_list ap);
-void EmitError(TypeCheckContext * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pCoz, ...);
+void EmitError(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
+void EmitError(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);
+void EmitError(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
+void EmitError(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);
+void EmitError(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
+void EmitError(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);
+void EmitError(TypeCheckContext * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
+void EmitError(TypeCheckContext * pTcwork, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);
 
-void PrintErrorLine(Error * pError, const char * pChzPrefix, const LexSpan & lexsp, const char * pCoz, va_list ap);
-void PrintErrorLine(Error * pError, const char * pChzPrefix, const LexSpan & lexsp, const char * pCoz, ...);
+void PrintErrorLine(Error * pError, const char * pChzPrefix, const LexSpan & lexsp, const char * pChz, va_list ap);
+void PrintErrorLine(Error * pError, const char * pChzPrefix, const LexSpan & lexsp, const char * pChz, ...);
 
 enum ERREP // ERror REPorting
 {

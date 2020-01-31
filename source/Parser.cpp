@@ -529,13 +529,12 @@ void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK
 			// print out the size resolved type (rather than any type aliases - ie. int)
 			auto pTinn = (TypeInfoNumeric *)pTin;
 			char chSigned;
-			if (pTinn->m_grfnum.FIsSet(FNUM_IsFloat))
+			switch (pTinn->m_numk)
 			{
-				chSigned = 'f';
-			}
-			else
-			{
-				chSigned = (pTinn->m_grfnum.FIsAnySet(FNUM_IsSigned)) ? 's' : 'u';
+				case NUMK_Float:		chSigned = 'f';			break;
+				case NUMK_UnsignedInt:	chSigned = 'u';			break;
+				case NUMK_SignedInt:	chSigned = 's';			break;
+				default: MOE_ASSERT(false, "unexpected numk");	break;
 			}
 
 			switch(pTinn->m_cBit)
@@ -604,13 +603,13 @@ void WriteAstValue(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 			case LITK_Enum:		// fallthrough
 			case LITK_Numeric:	
 			{
-				if (pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsFloat))
+				if (pTinlit->m_litty.m_numk == NUMK_Float)
 				{
 					stvalk = STVALK_Float;
 				}
 				else
 				{
-					stvalk = (pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsSigned)) ? STVALK_SignedInt : STVALK_UnsignedInt;
+					stvalk = (FIsSigned(pTinlit->m_litty.m_numk)) ? STVALK_SignedInt : STVALK_UnsignedInt;
 				}
 			} break;
 			case LITK_String:	stvalk = STVALK_String;																break;
@@ -667,13 +666,12 @@ bool FTryWriteValueSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 			case LITK_Enum:		// fallthrough
 			case LITK_Numeric:	
 			{
-				if (pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsFloat))
+				switch (pTinlit->m_litty.m_numk)
 				{
-					stvalk = STVALK_Float;
-				}
-				else
-				{
-					stvalk = (pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsSigned)) ? STVALK_SignedInt : STVALK_UnsignedInt;
+					case NUMK_Float:		stvalk = STVALK_Float;			break;
+					case NUMK_UnsignedInt:	stvalk = STVALK_UnsignedInt;	break;
+					case NUMK_SignedInt:	stvalk = STVALK_SignedInt;		break;
+					default: MOE_ASSERT(false, "unexpected numk");			break;
 				}
 			} break;
 			case LITK_String:	
@@ -1548,7 +1546,7 @@ TypeInfoLiteral * SymbolTable::PTinlitFromLitk(LITK litk)
 	return mpLitkPTinlit[0];
 }
 
-TypeInfoLiteral * SymbolTable::PTinlitFromLitk(LITK litk, int cBit, GRFNUM grfnum)
+TypeInfoLiteral * SymbolTable::PTinlitFromLitk(LITK litk, int cBit, NUMK numk)
 {
 	if (FIsValid(litk))
 	{
@@ -1562,7 +1560,7 @@ TypeInfoLiteral * SymbolTable::PTinlitFromLitk(LITK litk, int cBit, GRFNUM grfnu
 		for (TypeInfoLiteral ** ppTinlit = mpLitkPTinlit.A(); ppTinlit != ppTinlitMax; ++ppTinlit)
 		{
 			TypeInfoLiteral * pTinlit = *ppTinlit;
-			if ((pTinlit->m_litty.m_cBit == cBit) & (pTinlit->m_litty.m_grfnum == grfnum))
+			if ((pTinlit->m_litty.m_cBit == cBit) & (pTinlit->m_litty.m_numk == numk))
 				return pTinlit;
 		}
 	}
@@ -1576,19 +1574,19 @@ TypeInfoLiteral * SymbolTable::PTinlitAllocUnfinal(STVALK stvalk)
 
 	static const LiteralType s_mpStvalkLitty[] =
 	{
-		{ LITK_Numeric, -1, FNUM_IsFloat | FNUM_IsSigned }, //STVALK_Float,
-		{ LITK_Numeric, -1, FNUM_IsSigned},					//STVALK_SignedInt,
-		{ LITK_Numeric, -1, FNUM_None} ,					//STVALK_UnsignedInt,
-		{ LITK_Null, -1, FNUM_None} ,						//STVALK_Null,
-		{ LITK_Bool, -1, FNUM_None} ,						//STVALK_Bool,
-		{ LITK_String, -1, FNUM_None} ,						//STVALK_String,
+		{ LITK_Numeric, -1, NUMK_Float },					//STVALK_Float,
+		{ LITK_Numeric, -1, NUMK_SignedInt},				//STVALK_SignedInt,
+		{ LITK_Numeric, -1, NUMK_UnsignedInt},				//STVALK_UnsignedInt,
+		{ LITK_Null, -1, NUMK_Nil} ,						//STVALK_Null,
+		{ LITK_Bool, -1, NUMK_Nil} ,						//STVALK_Bool,
+		{ LITK_String, -1, NUMK_Nil} ,						//STVALK_String,
 	};
 	MOE_CASSERT(MOE_DIM(s_mpStvalkLitty) == STVALK_Max, "missing STVALK literal type");
 
 	if (FIsValid(stvalk))
 	{
 		const LiteralType * pLitty = &s_mpStvalkLitty[stvalk];	
-		return PTinlitFromLitk(pLitty->m_litk, pLitty->m_cBit, pLitty->m_grfnum);
+		return PTinlitFromLitk(pLitty->m_litk, pLitty->m_cBit, pLitty->m_numk);
 	}
 
 	return nullptr;
@@ -2058,13 +2056,11 @@ void AddSimpleBuiltInType(Workspace * pWork, SymbolTable * pSymtab, InString ist
 	pSymtab->AddBuiltInType(pWork->m_pErrman, nullptr, pTin, grfsym);
 }
 
-void AddBuiltInNumeric(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, u32 cBit, GRFNUM grfnum)
+void AddBuiltInNumeric(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, u32 cBit, NUMK numk)
 {
 	InString istrName = IstrIntern(pChzName);
-	TypeInfoNumeric * pTinn = MOE_NEW(pSymtab->m_pAlloc, TypeInfoNumeric) TypeInfoNumeric(
-																				istrName,
-																				cBit,
-																				grfnum);
+	TypeInfoNumeric * pTinn = MOE_NEW(pSymtab->m_pAlloc, TypeInfoNumeric) TypeInfoNumeric(istrName, cBit, numk);
+
 	pSymtab->AddBuiltInType(pWork->m_pErrman, nullptr, pTinn);
 }
 
@@ -2079,14 +2075,14 @@ void AddBuiltInAlias(Workspace * pWork, SymbolTable * pSymtab, const char * pChz
 	{
 		auto pTinnOld = PTinDerivedCast<TypeInfoNumeric *>(pTinOld);
 		auto pTinnNew = MOE_NEW(pSymtab->m_pAlloc, TypeInfoNumeric) 
-							TypeInfoNumeric( istrNameNew, pTinnOld->m_cBit, pTinnOld->m_grfnum);
+							TypeInfoNumeric( istrNameNew, pTinnOld->m_cBit, pTinnOld->m_numk);
 
 		pTinnNew->m_pTinUnaliased = (pTinOld->m_pTinUnaliased) ? pTinOld->m_pTinUnaliased : pTinOld;
 		pSymtab->AddBuiltInType(pWork->m_pErrman, nullptr, pTinnNew);
 	}
 }
 
-void AddBuiltInLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, LITK litk, s8 cBit, GRFNUM grfnum)
+void AddBuiltInLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, LITK litk, s8 cBit, NUMK numk)
 {
 	InString istrName = IstrIntern(pChzName);
 	TypeInfoLiteral * pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
@@ -2095,7 +2091,7 @@ void AddBuiltInLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pC
 
 	pTinlit->m_litty.m_litk = litk;
 	pTinlit->m_litty.m_cBit = cBit;
-	pTinlit->m_litty.m_grfnum = grfnum;
+	pTinlit->m_litty.m_numk = numk;
 	pTinlit->m_fIsFinalized = true;
 
 	Moe::CDynAry<TypeInfoLiteral *> * paryPTinlit = &pSymtab->m_mpLitkArypTinlit[litk];
@@ -2107,7 +2103,7 @@ void AddBuiltInLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pC
 }
 
 
-void AddBuiltInUnfinalLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, LITK litk, GRFNUM grfnum)
+void AddBuiltInUnfinalLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, LITK litk, NUMK numk)
 {
 	InString istrName = IstrIntern(pChzName);
 	TypeInfoLiteral * pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
@@ -2116,7 +2112,7 @@ void AddBuiltInUnfinalLiteral(Workspace * pWork, SymbolTable * pSymtab, const ch
 
 	pTinlit->m_litty.m_litk = litk;
 	pTinlit->m_litty.m_cBit = -1;
-	pTinlit->m_litty.m_grfnum = grfnum;
+	pTinlit->m_litty.m_numk = numk;
 	pTinlit->m_fIsFinalized = false;
 
 	Moe::CDynAry<TypeInfoLiteral *> * paryPTinlit = &pSymtab->m_mpLitkArypTinlit[litk];
@@ -2135,16 +2131,16 @@ void SymbolTable::AddBuiltInSymbols(Workspace * pWork)
 	AddSimpleBuiltInType(pWork, this, BuiltIn::g_istrVoid, TINK_Void);
 	AddSimpleBuiltInType(pWork, this, BuiltIn::g_istrString, TINK_Type);
 
-	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU8, 8, FNUM_None);
-	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU16, 16, FNUM_None);
-	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU32, 32, FNUM_None);
-	//AddBuiltInNumeric(pWork, this, "char", 32, FNUM_None);
-	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU64, 64, FNUM_None);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU8, 8, NUMK_UnsignedInt);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU16, 16, NUMK_UnsignedInt);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU32, 32, NUMK_UnsignedInt);
+	//AddBuiltInNumeric(pWork, this, "char", 32, NUMK_SignedInt);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzU64, 64, NUMK_UnsignedInt);
 
-	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS8, 8, FNUM_IsSigned);
-	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS16, 16, FNUM_IsSigned);
-	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS32, 32, FNUM_IsSigned);
-	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS64, 64, FNUM_IsSigned);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS8, 8, NUMK_SignedInt);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS16, 16, NUMK_SignedInt);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS32, 32, NUMK_SignedInt);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzS64, 64, NUMK_SignedInt);
 
 	// BB - This is wrong, it should be based on a runtime parameter for the TARGET's word size, not the compiler's word size
 #if MOE_X64
@@ -2159,32 +2155,32 @@ void SymbolTable::AddBuiltInSymbols(Workspace * pWork)
 	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzUSize, "u32");
 #endif
 
-	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzF32, 32, FNUM_IsSigned | FNUM_IsFloat);
-	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzF64, 64, FNUM_IsSigned | FNUM_IsFloat);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzF32, 32, NUMK_Float);
+	AddBuiltInNumeric(pWork, this, BuiltIn::g_pChzF64, 64, NUMK_Float);
 	AddBuiltInAlias(pWork, this, BuiltIn::g_pChzFloat, "f32");
 	//AddBuiltInAlias(pWork, this, BuiltIn::g_pChzDouble, "f64");
 
-	AddBuiltInLiteral(pWork, this, "__bool_Literal", LITK_Bool, 8, FNUM_None);
-	AddBuiltInLiteral(pWork, this, "__u8_Literal", LITK_Numeric, 8, FNUM_None);
-	AddBuiltInLiteral(pWork, this, "__u16_Literal", LITK_Numeric, 16, FNUM_None);
-	AddBuiltInLiteral(pWork, this, "__u32_Literal", LITK_Numeric, 32, FNUM_None);
-	AddBuiltInLiteral(pWork, this, "__u64_Literal", LITK_Numeric, 64, FNUM_None);
-	AddBuiltInLiteral(pWork, this, "__s8_Literal", LITK_Numeric, 8, FNUM_IsSigned);
-	AddBuiltInLiteral(pWork, this, "__s16_Literal", LITK_Numeric, 16, FNUM_IsSigned);
-	AddBuiltInLiteral(pWork, this, "__s32_Literal", LITK_Numeric, 32, FNUM_IsSigned);
-	AddBuiltInLiteral(pWork, this, "__s64_Literal", LITK_Numeric, 64, FNUM_IsSigned);
-	AddBuiltInLiteral(pWork, this, "__f32_Literal", LITK_Numeric, 32, FNUM_IsSigned | FNUM_IsFloat);
-	AddBuiltInLiteral(pWork, this, "__f64_Literal", LITK_Numeric, 64, FNUM_IsSigned | FNUM_IsFloat);
-	AddBuiltInLiteral(pWork, this, "__string_Literal", LITK_String, -1, FNUM_IsSigned);
-	AddBuiltInLiteral(pWork, this, "__char_Literal", LITK_Char, 32, FNUM_IsSigned);
-	AddBuiltInLiteral(pWork, this, "__void_Literal", LITK_Null, -1, FNUM_None);
+	AddBuiltInLiteral(pWork, this, "__bool_Literal", LITK_Bool, 8, NUMK_Nil);
+	AddBuiltInLiteral(pWork, this, "__u8_Literal", LITK_Numeric, 8, NUMK_UnsignedInt);
+	AddBuiltInLiteral(pWork, this, "__u16_Literal", LITK_Numeric, 16, NUMK_UnsignedInt);
+	AddBuiltInLiteral(pWork, this, "__u32_Literal", LITK_Numeric, 32, NUMK_UnsignedInt);
+	AddBuiltInLiteral(pWork, this, "__u64_Literal", LITK_Numeric, 64, NUMK_UnsignedInt);
+	AddBuiltInLiteral(pWork, this, "__s8_Literal", LITK_Numeric, 8, NUMK_SignedInt);
+	AddBuiltInLiteral(pWork, this, "__s16_Literal", LITK_Numeric, 16, NUMK_SignedInt);
+	AddBuiltInLiteral(pWork, this, "__s32_Literal", LITK_Numeric, 32, NUMK_SignedInt);
+	AddBuiltInLiteral(pWork, this, "__s64_Literal", LITK_Numeric, 64, NUMK_SignedInt);
+	AddBuiltInLiteral(pWork, this, "__f32_Literal", LITK_Numeric, 32, NUMK_Float);
+	AddBuiltInLiteral(pWork, this, "__f64_Literal", LITK_Numeric, 64, NUMK_Float);
+	AddBuiltInLiteral(pWork, this, "__string_Literal", LITK_String, -1, NUMK_SignedInt);
+	AddBuiltInLiteral(pWork, this, "__char_Literal", LITK_Char, 32, NUMK_SignedInt);
+	AddBuiltInLiteral(pWork, this, "__void_Literal", LITK_Null, -1, NUMK_Nil);
 
-	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_float", LITK_Numeric, FNUM_IsFloat | FNUM_IsSigned);
-	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_SignedInt", LITK_Numeric, FNUM_IsSigned);
-	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_UnsignedInt", LITK_Numeric, FNUM_None);
-	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_Null", LITK_Null, FNUM_None);
-	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_Bool", LITK_Bool, FNUM_None);
-	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_String", LITK_String, FNUM_None);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_float", LITK_Numeric, NUMK_Float);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_UnsignedInt", LITK_Numeric, NUMK_UnsignedInt);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_SignedInt", LITK_Numeric, NUMK_SignedInt);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_Null", LITK_Null, NUMK_Nil);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_Bool", LITK_Bool, NUMK_Nil);
+	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_String", LITK_String, NUMK_Nil);
 }
 
 void DeleteTypeInfo(Alloc * pAlloc, TypeInfo * pTin)
@@ -3009,7 +3005,7 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 				{
 					MOE_ASSERT(pLex->m_litk == LITK_Numeric, "unknown literal kind");
 
-					if (pLex->m_grfnum.FIsSet(FNUM_IsFloat))
+					if (pLex->m_numk == NUMK_Float)
 					{
 						pStval->SetF64(pLex->m_g);
 					}

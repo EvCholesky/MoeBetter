@@ -62,18 +62,17 @@ static void GenerateOperatorInfo(TOK tok, const OpTypes * pOptype, OperatorInfo 
 {
 	TypeInfo * apTin[2] = {PTinStripQualifiers(pOptype->m_pTinLhs), PTinStripQualifiers(pOptype->m_pTinRhs)};
 	TINK aTink[2];
-	GRFNUM aGrfnum[2];
+	NUMK aNumk[2];
 
 	for (int iOperand = 0; iOperand < 2; ++iOperand)
 	{
-		//bool fIsSigned = true;
-		GRFNUM grfnum;
+		NUMK numk;
 		TINK tink = apTin[iOperand]->m_tink;
 
 		if (tink == TINK_Literal)
 		{
 			TypeInfoLiteral * pTinlit = (TypeInfoLiteral*)apTin[iOperand];
-			bool fIsSigned = pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsSigned);
+			numk = pTinlit->m_litty.m_numk;
 
 			switch (pTinlit->m_litty.m_litk)
 			{
@@ -96,19 +95,17 @@ static void GenerateOperatorInfo(TOK tok, const OpTypes * pOptype, OperatorInfo 
 		{
 			auto pTinenum = (TypeInfoEnum*)apTin[iOperand];
 			auto pTinnLoose = PTinRtiCast<TypeInfoNumeric*>(pTinenum->m_pTinLoose);
-			if (MOE_FVERIFY(pTinnLoose && pTinnLoose->FIsInteger(), "expected integer loose type"))
+			if (MOE_FVERIFY(pTinnLoose && FIsInteger(pTinnLoose->m_numk), "expected integer loose type"))
 			{
-				//fIsSigned = pTinnLoose->FIsSigned();
-				grfnum = pTinnLoose->m_grfnum;
+				numk = pTinnLoose->m_numk;
 			}
 		}
 		else if (tink == TINK_Numeric)
 		{
-			//fIsSigned = ((TypeInfoNumeric*)apTin[iOperand])->FIsSigned();
-			grfnum = ((TypeInfoNumeric*)apTin[iOperand])->m_grfnum;
+			numk = ((TypeInfoNumeric*)apTin[iOperand])->m_numk;
 		}
 		
-		aGrfnum[iOperand] = grfnum;
+		aNumk[iOperand] = numk;
 		aTink[iOperand] = tink;
 	}
 
@@ -118,7 +115,7 @@ static void GenerateOperatorInfo(TOK tok, const OpTypes * pOptype, OperatorInfo 
 
 		TINK tinkMin = aTink[nMin];
 		TINK tinkMax = aTink[!nMin];
-		bool fIsIntegerMin = tinkMin == TINK_Numeric && !aGrfnum[nMin].FIsSet(FNUM_IsFloat);
+		bool fIsIntegerMin = tinkMin == TINK_Numeric && FIsInteger(aNumk[nMin]);
 
 		if (tinkMin == TINK_Pointer && tinkMax == TINK_Array)
 		{
@@ -182,7 +179,7 @@ static void GenerateOperatorInfo(TOK tok, const OpTypes * pOptype, OperatorInfo 
 		else if (fIsIntegerMin && tinkMax == TINK_Enum)
 		{
 			//bool fIsSigned = (aTink[0] == tinkMax) ? aFIsSigned[0] : aFIsSigned[1];
-			bool fIsSigned = aGrfnum[nMin].FIsSet(FNUM_IsSigned);
+			bool fIsSigned = FIsSigned(aNumk[nMin]);
 			switch (tok)
 			{
 				case TOK_ShiftRight:	// NOTE: AShr = arithmetic shift right (sign fill), LShr == zero fill
@@ -205,7 +202,7 @@ static void GenerateOperatorInfo(TOK tok, const OpTypes * pOptype, OperatorInfo 
 
 	TINK tink = aTink[0];
 	//bool fIsSigned = aFIsSigned[0];
-	bool fIsSigned = aGrfnum[0].FIsSet(FNUM_IsSigned);
+	bool fIsSigned = FIsSigned(aNumk[0]);
 
 	switch (tink)
 	{
@@ -233,7 +230,7 @@ static void GenerateOperatorInfo(TOK tok, const OpTypes * pOptype, OperatorInfo 
 		} break;
 	case TINK_Numeric:
 		{
-			if (aGrfnum[0].FIsSet(FNUM_IsFloat))
+			if (aNumk[0] == NUMK_Float)
 			{
 				switch ((u32)tok)
 				{

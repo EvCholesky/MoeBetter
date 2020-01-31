@@ -681,7 +681,7 @@ void NameMangler::AppendType(TypeInfo * pTin)
 			// BB - doesn't respect typedefs, including int - will mangle just based on integer size
 			auto pTinn = (TypeInfoNumeric *)pTin;
 
-			if (pTinn->m_grfnum.FIsSet(FNUM_IsFloat))
+			if (pTinn->m_numk == NUMK_Float)
 			{
 				char aChz[4] = "Bx";
 				switch (pTinn->m_cBit)
@@ -693,7 +693,7 @@ void NameMangler::AppendType(TypeInfo * pTin)
 			else
 			{
 				char aChz[4] = "Bxx";
-				aChz[1] = (pTinn->m_grfnum.FIsSet(FNUM_IsSigned)) ? 'i' : 'u';
+				aChz[1] = (pTinn->m_numk == NUMK_SignedInt) ? 'i' : 'u';
 				switch (pTinn->m_cBit)
 				{
 				case 8:		aChz[2] = 'c';	break;	// char
@@ -1213,7 +1213,7 @@ bool FLiteralsAreSame(STNode * pStnodA, STNode * pStnodB)
 	case LITK_Numeric:
 		{
 			if ((pTinlitA->m_litty.m_cBit != pTinlitB->m_litty.m_cBit) | 
-				(pTinlitA->m_litty.m_grfnum != pTinlitB->m_litty.m_grfnum))
+				(pTinlitA->m_litty.m_numk != pTinlitB->m_litty.m_numk))
 				return false;
 		
 			return pStvalA->m_nUnsigned == pStvalB->m_nUnsigned;
@@ -1287,7 +1287,7 @@ bool FTypesAreSame(TypeInfo * pTinLhs, TypeInfo * pTinRhs)
 		{
 			auto pTinnLhs = (TypeInfoNumeric *)pTinLhs;
 			auto pTinnRhs = (TypeInfoNumeric *)pTinRhs;
-			return (pTinnLhs->m_cBit == pTinnRhs->m_cBit) & (pTinnLhs->m_grfnum == pTinnRhs->m_grfnum);
+			return (pTinnLhs->m_cBit == pTinnRhs->m_cBit) & (pTinnLhs->m_numk == pTinnRhs->m_numk);
 		}
 	case TINK_Qualifier:
 		{
@@ -2338,7 +2338,7 @@ OpTypes OptypeFromPark(
 
 		if (parkOperatorAdj == PARK_AdditiveOp)
 		{
-			if (pTinOther->m_tink == TINK_Numeric && ((TypeInfoNumeric*)pTinOther)->FIsFloat() == false)
+			if (pTinOther->m_tink == TINK_Numeric && FIsInteger(((TypeInfoNumeric*)pTinOther)->m_numk))
 			{
 				return OpTypes(pTinLhs, pTinRhs, pTinRef);
 			}
@@ -2358,7 +2358,7 @@ OpTypes OptypeFromPark(
 				TypeInfoNumeric * pTinnLhs = (TypeInfoNumeric*)pTinLhs;
 				TypeInfoNumeric * pTinnRhs = (TypeInfoNumeric*)pTinRhs;
 
-				if (pTinnRhs->m_grfnum != pTinnRhs->m_grfnum)
+				if (pTinnRhs->m_numk != pTinnRhs->m_numk)
 					return OpTypes();
 
 				auto pTinOp = pTinLhs;
@@ -2395,7 +2395,7 @@ OpTypes OptypeFromPark(
 			pTinOther = pTinLhs;
 		}
 
-		bool fIsInteger = (pTinOther->m_tink == TINK_Numeric && ((TypeInfoNumeric*)pTinOther)->FIsInteger());
+		bool fIsInteger = (pTinOther->m_tink == TINK_Numeric && FIsInteger(((TypeInfoNumeric*)pTinOther)->m_numk));
 		if (parkOperator == PARK_AdditiveOp && fIsInteger)
 		{
 			return OpTypes(pTinEnum, pTinEnum, pTinEnum);
@@ -2407,7 +2407,7 @@ OpTypes OptypeFromPark(
 		}
 	}
 
-	bool fIsRhsInteger = (pTinRhs->m_tink == TINK_Numeric && ((TypeInfoNumeric*)pTinRhs)->FIsInteger());
+	bool fIsRhsInteger = (pTinRhs->m_tink == TINK_Numeric && FIsInteger(((TypeInfoNumeric*)pTinRhs)->m_numk));
 	if (pTinLhs->m_tink == TINK_Bool || fIsRhsInteger)
 	{
 		if (parkOperator == PARK_AssignmentOp)
@@ -5095,33 +5095,39 @@ inline TypeInfo * PTinFromLiteralFinalized(
 	{
 	case LITK_Numeric:
 		{
-			if (litty.m_grfnum.FIsSet(FNUM_IsFloat))
+			switch(litty.m_numk)
 			{
-				switch (litty.m_cBit)
+			case NUMK_Float:
 				{
-				case 32:	return pSymtab->PTinBuiltin(BuiltIn::g_istrF32);
-				case 64:	return pSymtab->PTinBuiltin(BuiltIn::g_istrF64);
-				}
-			}
-			else if (litty.m_grfnum.FIsSet(FNUM_IsSigned))
-			{
-				switch (litty.m_cBit)
+					switch (litty.m_cBit)
+					{
+					case 32:	return pSymtab->PTinBuiltin(BuiltIn::g_istrF32);
+					case 64:	return pSymtab->PTinBuiltin(BuiltIn::g_istrF64);
+					}
+				} break;
+			case NUMK_UnsignedInt:
 				{
-				case 8:		return pSymtab->PTinBuiltin(BuiltIn::g_istrS8);
-				case 16:	return pSymtab->PTinBuiltin(BuiltIn::g_istrS16);
-				case 32:	return pSymtab->PTinBuiltin(BuiltIn::g_istrS32);
-				case 64:	return pSymtab->PTinBuiltin(BuiltIn::g_istrS64);
-				}
-			}
-			else
-			{
-				switch (litty.m_cBit)
+					switch (litty.m_cBit)
+					{
+					case 8:		return pSymtab->PTinBuiltin(BuiltIn::g_istrU8);
+					case 16:	return pSymtab->PTinBuiltin(BuiltIn::g_istrU16);
+					case 32:	return pSymtab->PTinBuiltin(BuiltIn::g_istrU32);
+					case 64:	return pSymtab->PTinBuiltin(BuiltIn::g_istrU64);
+					}
+				} break;
+			case NUMK_SignedInt:
 				{
-				case 8:		return pSymtab->PTinBuiltin(BuiltIn::g_istrU8);
-				case 16:	return pSymtab->PTinBuiltin(BuiltIn::g_istrU16);
-				case 32:	return pSymtab->PTinBuiltin(BuiltIn::g_istrU32);
-				case 64:	return pSymtab->PTinBuiltin(BuiltIn::g_istrU64);
-				}
+					switch (litty.m_cBit)
+					{
+					case 8:		return pSymtab->PTinBuiltin(BuiltIn::g_istrS8);
+					case 16:	return pSymtab->PTinBuiltin(BuiltIn::g_istrS16);
+					case 32:	return pSymtab->PTinBuiltin(BuiltIn::g_istrS32);
+					case 64:	return pSymtab->PTinBuiltin(BuiltIn::g_istrS64);
+					}
+				} break;
+			default:
+				MOE_ASSERT(false, "unknown numk");
+				break;
 			}
 		}break;
 	case LITK_Char:		return pSymtab->PTinBuiltin(BuiltIn::g_istrChar);
@@ -5361,12 +5367,12 @@ TypeInfo * PTinPromoteUntypedDefault(
 	{
 	case LITK_Numeric:
 		{
-			if (litty.m_grfnum.FIsSet(FNUM_IsFloat))
+			if (litty.m_numk == NUMK_Float)
 			{
 				return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrFloat);
 			}
 
-			bool fIsSigned = litty.m_grfnum.FIsSet(FNUM_IsSigned);
+			bool fIsSigned = FIsSigned(litty.m_numk);
 			if (fIsSigned == false)
 			{
 				const STValue * pStval = PStnodRtiCast<STValue *>(pStnodLit);
@@ -5468,14 +5474,14 @@ inline TypeInfo * PTinPromoteUntypedTightest(
 			// NOTE: We're casting the value to fit the type info here, not letting the value determine the type.
 
 			auto pTinnDst = PTinRtiCast<TypeInfoNumeric *>(pTinDst);
-			if (pTinnDst && pTinnDst->m_grfnum.FIsSet(FNUM_IsFloat))
+			if (pTinnDst && pTinnDst->m_numk == NUMK_Float)
 			{
 				// integer literals can be used to initialize floating point numbers
 				return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrF32);
 			}
 
 			const STValue * pStval = PStnodRtiCast<STValue *>(pStnodLit);
-			bool fDestIsSigned = pTinnDst && pTinnDst->m_grfnum.FIsSet(FNUM_IsSigned);
+			bool fDestIsSigned = pTinnDst && pTinnDst->m_numk == NUMK_SignedInt;
 			bool fIsValNegative = pStval->m_stvalk == STVALK_SignedInt && pStval->m_nSigned < 0;
 
 			if (fDestIsSigned == false && fIsValNegative == false)
@@ -5507,7 +5513,7 @@ inline TypeInfo * PTinPromoteUntypedTightest(
 	case LITK_Char:
 		{
 			const STValue * pStval = PStnodRtiCast<STValue *>(pStnodLit);
-			bool fDestIsSigned = pTinDst->m_tink == TINK_Numeric && ((TypeInfoNumeric*)pTinDst)->m_grfnum.FIsSet(FNUM_IsSigned);
+			bool fDestIsSigned = pTinDst->m_tink == TINK_Numeric && FIsSigned(((TypeInfoNumeric*)pTinDst)->m_numk);
 			if (fDestIsSigned)
 			{
 				s64 nSigned = NSignedLiteralCast(pTcctx, pStval);
@@ -5740,8 +5746,8 @@ static bool FCanImplicitCast(TypeInfo * pTinSrc, TypeInfo * pTinDst)
 				auto pTinnSrc = (TypeInfoNumeric *)pTinSrc;
 				auto pTinnDst = (TypeInfoNumeric *)pTinDst;
 
-				bool fIsSrcFloat = pTinnSrc->m_grfnum.FIsSet(FNUM_IsFloat);
-				bool fIsDstFloat = pTinnDst->m_grfnum.FIsSet(FNUM_IsFloat);
+				bool fIsSrcFloat = pTinnSrc->m_numk == NUMK_Float;
+				bool fIsDstFloat = pTinnDst->m_numk == NUMK_Float;
 				if (fIsSrcFloat != fIsDstFloat)
 					return false;
 
@@ -5750,8 +5756,8 @@ static bool FCanImplicitCast(TypeInfo * pTinSrc, TypeInfo * pTinDst)
 					return pTinnDst->m_cBit >= pTinnSrc->m_cBit;
 				}
 
-				bool fIsSrcSigned = pTinnSrc->m_grfnum.FIsSet(FNUM_IsSigned);
-				bool fIsDstSigned = pTinnDst->m_grfnum.FIsSet(FNUM_IsSigned);
+				bool fIsSrcSigned = FIsSigned(pTinnSrc->m_numk);
+				bool fIsDstSigned = FIsSigned(pTinnDst->m_numk);
 				if ((pTinnDst->m_cBit >= pTinnSrc->m_cBit) & (fIsSrcSigned == fIsDstSigned))
 					return true;
 
@@ -5852,7 +5858,7 @@ static bool FCanImplicitCast(TypeInfo * pTinSrc, TypeInfo * pTinDst)
 
 	if (pTinSrc->m_tink == TINK_Bool && pTinDst->m_tink == TINK_Numeric)
 	{
-		return ((TypeInfoNumeric*)pTinDst)->m_grfnum.FIsSet(FNUM_IsFloat) == false;
+		return FIsInteger(((TypeInfoNumeric*)pTinDst)->m_numk);
 	}
 
 	if (pTinDst->m_tink == TINK_Bool || pTinDst->m_tink == TINK_Flag)
@@ -6191,7 +6197,7 @@ void FinalizeLiteralType(TypeCheckContext * pTcctx, SymbolTable * pSymtab, TypeI
 	case TINK_Numeric:
 		{
 			auto pTinint = (TypeInfoNumeric *)pTinDst;
-			pStnodLit->m_pTin = pSymtab->PTinlitFromLitk(LITK_Numeric, pTinint->m_cBit, pTinint->m_grfnum);
+			pStnodLit->m_pTin = pSymtab->PTinlitFromLitk(LITK_Numeric, pTinint->m_cBit, pTinint->m_numk);
 		}break;
 	case TINK_Flag:		// fallthrough
 	case TINK_Bool:		pStnodLit->m_pTin = pSymtab->PTinlitFromLitk(LITK_Bool);	break;
@@ -6207,7 +6213,7 @@ void FinalizeLiteralType(TypeCheckContext * pTcctx, SymbolTable * pSymtab, TypeI
 					pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
 					pTinlit->m_litty.m_litk = LITK_Null;
 					pTinlit->m_litty.m_cBit = -1;
-					pTinlit->m_litty.m_grfnum = FNUM_None;
+					pTinlit->m_litty.m_numk = NUMK_Nil;
 					pTinlit->m_fIsFinalized = true;
 					pTinlit->m_pTinSource = (TypeInfoPointer*)pTinDst;
 					pSymtab->AddManagedTin(pTinlit);
@@ -6235,15 +6241,15 @@ void FinalizeLiteralType(TypeCheckContext * pTcctx, SymbolTable * pSymtab, TypeI
 					pSymtab->AddManagedTin(pTinlit);
 					pTinlit->m_litty.m_litk = LITK_Null;
 					pTinlit->m_litty.m_cBit = -1;
-					pTinlit->m_litty.m_grfnum = FNUM_None;
+					pTinlit->m_litty.m_numk = NUMK_Nil;
 					pTinlit->m_fIsFinalized = true;
 					pTinlit->m_pTinSource = (TypeInfoPointer*)pTinDst;
 				} break;
 			case LITK_Numeric:	
 				{
 					const STValue * pStval = PStnodRtiCast<STValue *>(pStnodLit);
-					GRFNUM grfnum = (pStval->m_stvalk == STVALK_SignedInt) ? FNUM_IsSigned : FNUM_None;
-					pTinlit = pSymtab->PTinlitFromLitk(LITK_Numeric, 64, grfnum);
+					NUMK numk = (pStval->m_stvalk == STVALK_SignedInt) ? NUMK_SignedInt : NUMK_UnsignedInt;
+					pTinlit = pSymtab->PTinlitFromLitk(LITK_Numeric, 64, numk);
 				} break;
 			case LITK_Compound:
 				{
@@ -6269,7 +6275,7 @@ void FinalizeLiteralType(TypeCheckContext * pTcctx, SymbolTable * pSymtab, TypeI
 			auto pTinn = PTinRtiCast<TypeInfoNumeric *>(pTinenum->m_pTinLoose);
 			if (MOE_FVERIFY(pTinn, "Expected integer 'loose' type for enum"))
 			{
-				pStnodLit->m_pTin = pSymtab->PTinlitFromLitk(LITK_Numeric, pTinn->m_cBit, pTinn->m_grfnum);
+				pStnodLit->m_pTin = pSymtab->PTinlitFromLitk(LITK_Numeric, pTinn->m_cBit, pTinn->m_numk);
 			}
 		} break;
 	case TINK_Array:
@@ -6311,7 +6317,7 @@ TypeInfo * PTinPromoteVarArg(TypeCheckContext * pTcctx, SymbolTable * pSymtab, T
 	case TINK_Numeric:
 		{
 			TypeInfoNumeric * pTinn = (TypeInfoNumeric*)pTinIn;
-			if (pTinn->m_grfnum.FIsSet(FNUM_IsFloat))
+			if (pTinn->m_numk == NUMK_Float)
 			{
 				if (pTinn->m_cBit < 64)
 				{
@@ -6320,7 +6326,7 @@ TypeInfo * PTinPromoteVarArg(TypeCheckContext * pTcctx, SymbolTable * pSymtab, T
 			}
 			else if (pTinn->m_cBit < 32)
 			{
-				return pSymtab->PTinBuiltin((pTinn->m_grfnum.FIsSet(FNUM_IsSigned)) ? BuiltIn::g_istrS32 : BuiltIn::g_istrU32);
+				return pSymtab->PTinBuiltin((FIsSigned(pTinn->m_numk)) ? BuiltIn::g_istrS32 : BuiltIn::g_istrU32);
 			}
 			return pTinIn;
 		}
@@ -6484,7 +6490,7 @@ TypeInfo * PTinFromTypeSpecification(
 						else
 						{
 							auto pTinnBaked = PTinRtiCast<TypeInfoNumeric*>(PTinBakedConstantType(pStnodDim));
-							if (pTinnBaked && !pTinnBaked->m_grfnum.FIsSet(FNUM_IsFloat))
+							if (pTinnBaked && FIsInteger(pTinnBaked->m_numk))
 							{
 								pTinary->m_pStnodBakedDim = pStnodDim;
 							}
@@ -7570,7 +7576,7 @@ inline bool FComputeUnaryOpOnLiteral(
 	TOK tokOperator = pStop->m_tok;
 	bool fIsBoolOp = FDoesOperatorReturnBool(pStop->m_park);
 
-	if (littyOperand.m_grfnum.FIsSet(FNUM_IsFloat))
+	if (littyOperand.m_numk == NUMK_Float)
 	{
 		bool f;
 		f64 g = GLiteralCast(pStvalOperand);
@@ -7875,8 +7881,8 @@ TcretDebug TcretCheckUnaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeChe
 					{
 						TINK tinkOperand = pTinOperand->m_tink;
 						auto pTinn = PTinRtiCast<TypeInfoNumeric*>(pTinOperand);
-						bool fIsInteger = (pTinn && pTinn->FIsInteger());
-						bool fIsFloat = (pTinn && pTinn->FIsFloat());
+						bool fIsInteger = (pTinn && FIsInteger(pTinn->m_numk));
+						bool fIsFloat = (pTinn && pTinn->m_numk == NUMK_Float);
 
 						bool fIsBasicEnum = false;
 						bool fIsFlagEnum = false;
@@ -7891,8 +7897,8 @@ TcretDebug TcretCheckUnaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeChe
 						{
 							auto pTinlit = (TypeInfoLiteral *)pTinOperand;
 							LITK litk = ((TypeInfoLiteral *)pTinOperand)->m_litty.m_litk;
-							fIsInteger |= !pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsFloat);
-							fIsFloat |= pTinlit->m_litty.m_grfnum.FIsSet(FNUM_IsFloat);
+							fIsInteger |= FIsInteger(pTinlit->m_litty.m_numk);
+							fIsFloat |= pTinlit->m_litty.m_numk == NUMK_Float;
 
 							MOE_ASSERT(litk != LITK_Enum || pTinenum, "literal without enum type?");
 						}
@@ -7917,10 +7923,10 @@ TcretDebug TcretCheckUnaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeChe
 						}
 						else
 						{
-							if (tok == TOK('-') && pTinn->FIsInteger())
+							if (tok == TOK('-') && FIsInteger(pTinn->m_numk))
 							{
 								TypeInfoNumeric * pTinn = (TypeInfoNumeric*)pTinOperand;
-								if (!pTinn->FIsSigned())
+								if (pTinn->m_numk != NUMK_SignedInt)
 								{
 									auto istrOp = IstrFromTypeInfo(pTinOperand);
 									EmitError(pTcctx, pStnod->m_lexsp, ERRID_LiteralOutsideBounds,
@@ -7976,7 +7982,7 @@ inline bool FComputeBinaryOpOnLiterals(
 	//  precision if the constants are ever turned into float before assignment
 
 	// if lhs or rhs are float, upcast to float
-	if ((littyLhs.m_grfnum.FIsSet(FNUM_IsFloat)) | (littyRhs.m_grfnum.FIsSet(FNUM_IsFloat)))
+	if ((littyLhs.m_numk == NUMK_Float) | (littyRhs.m_numk == NUMK_Float))
 	{
 		f64 g;
 		bool f;
@@ -8016,7 +8022,7 @@ inline bool FComputeBinaryOpOnLiterals(
 		{
 			pStvalResult->SetF64(g);
 
-			auto pTinlitFloat = (pTinlitLhs->m_litty.m_grfnum.FIsSet(FNUM_IsFloat)) ? pTinlitLhs : pTinlitRhs;
+			auto pTinlitFloat = (pTinlitLhs->m_litty.m_numk == NUMK_Float) ? pTinlitLhs : pTinlitRhs;
 			*ppTinReturn = pTinlitFloat;
 			*ppTinOperand = pTinlitFloat;
 		}

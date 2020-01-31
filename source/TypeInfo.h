@@ -190,36 +190,32 @@ T PTinDerivedCast(TypeInfo * pTin)
 	return (T)pTin;
 }
 
-enum FNUM
+enum NUMK
 {
-	FNUM_IsSigned	= 0x1,
-	FNUM_IsFloat	= 0x2,			// canonical type is unique, derived from the generic root type and is only parameterized by canonical types
+	NUMK_Float,
+	NUMK_UnsignedInt,
+	NUMK_SignedInt,
 
-	FNUM_None		= 0x0,
-	FNUM_All		= 0x3
+	MOE_MAX_MIN_NIL(NUMK)
 };
 
-MOE_DEFINE_GRF(GRFNUM, FNUM, u8);
+inline bool FIsSigned(NUMK numk)
+	{ return numk == NUMK_Float || numk == NUMK_SignedInt; }
+inline bool FIsInteger(NUMK numk)
+	{ return numk != NUMK_Float; }
 
 struct TypeInfoNumeric : public TypeInfo // tag = tinn
 {
 	static const TINK s_tink = TINK_Numeric;
 
-			TypeInfoNumeric(const Moe::InString & istrName, u32 cBit, GRFNUM grfnum)
+			TypeInfoNumeric(const Moe::InString & istrName, u32 cBit, NUMK numk)
 			:TypeInfo(istrName, s_tink)
 			,m_cBit(cBit)
-			,m_grfnum(grfnum)
+			,m_numk(numk)
 				{ ; }
 
-	bool	FIsFloat() const
-				{ return m_grfnum.FIsSet(FNUM_IsFloat); }
-	bool	FIsInteger() const
-				{ return m_grfnum.FIsSet(FNUM_IsFloat) == false; }
-	bool	FIsSigned() const
-				{ return m_grfnum.FIsSet(FNUM_IsSigned); }
-
 	u32		m_cBit;
-	GRFNUM	m_grfnum;
+	NUMK	m_numk;
 };
 
 struct TypeInfoPointer : public TypeInfo	// tag = tinptr
@@ -425,18 +421,18 @@ struct LiteralType	// litty
 			LiteralType()
 			:m_litk(LITK_Nil)
 			,m_cBit(-1)
-			,m_grfnum(FNUM_IsSigned)
+			,m_numk(NUMK_SignedInt)
 				{ ; }
 
-			LiteralType(LITK litk, s8 cBit = -1, GRFNUM grfnum = FNUM_IsSigned)
+			LiteralType(LITK litk, s8 cBit = -1, NUMK numk = NUMK_SignedInt)
 			:m_litk(litk)
 			,m_cBit(cBit)
-			,m_grfnum(grfnum)
+			,m_numk(numk)
 				{ ; }
 
 	LITK	m_litk;
 	s8		m_cBit;
-	GRFNUM	m_grfnum;
+	NUMK	m_numk;
 };
 
 // NOTE: just documenting a subtle relationship: The AST stores a literal value and is enough to determine 

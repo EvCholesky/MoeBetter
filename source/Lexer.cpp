@@ -38,7 +38,7 @@ static int TokSetTokinf(Lexer * pLex, TOK tok, const char * pChStart, const char
 	pLex->m_pChParse = pChEnd;
 
 	pLex->m_litk = LITK_Nil;
-	pLex->m_grfnum = FNUM_None;
+	pLex->m_numk = NUMK_Nil;
 	return 1;
 }
 
@@ -111,13 +111,13 @@ static int FIsWhitespace(int ch)
 }
 
 // copy suffixes at the end of a number into the working string
-static int TokParseSuffixes(Lexer * pLex, TOK tok, LITK litk, GRFNUM grfnum, const char * pChzStart, const char * pChzCur)
+static int TokParseSuffixes(Lexer * pLex, TOK tok, LITK litk, NUMK numk, const char * pChzStart, const char * pChzCur)
 {
 	pLex->m_istr = Moe::InString();
 
 	int tokReturn = TokSetTokinf(pLex, tok, pChzStart, pChzCur);
 	pLex->m_litk = litk;
-	pLex->m_grfnum = grfnum;
+	pLex->m_numk = numk;
 	return tokReturn;
 }
 
@@ -599,7 +599,7 @@ int TokNext(Lexer * pLex)
 					#endif
 					if (pChzNext == pChz+2)
 						return TokSetTokinf(pLex, TOK_ParseError, pChz-2, pChz);
-					return TokParseSuffixes(pLex, TOK_Literal, LITK_Numeric, FNUM_None, pChz, pChzNext);
+					return TokParseSuffixes(pLex, TOK_Literal, LITK_Numeric, NUMK_UnsignedInt, pChz, pChzNext);
 				}
 			}
 
@@ -620,7 +620,7 @@ int TokNext(Lexer * pLex)
 					pLex->m_g = GParse(pChz, &pChzNext);
 					#endif
 
-					int tok = TokParseSuffixes(pLex, TOK_Literal, LITK_Numeric, FNUM_IsFloat, pChz, pChzNext);
+					int tok = TokParseSuffixes(pLex, TOK_Literal, LITK_Numeric, NUMK_Float, pChz, pChzNext);
 					return tok;
 				}
 			}
@@ -643,7 +643,7 @@ int TokNext(Lexer * pLex)
 		    pLex->m_n = n;
 		    #endif
 
-		    return TokParseSuffixes(pLex, TOK_Literal, LITK_Numeric, FNUM_None, pChz, pChzNext);
+		    return TokParseSuffixes(pLex, TOK_Literal, LITK_Numeric, NUMK_UnsignedInt, pChz, pChzNext);
 		 }
 		 goto single_char;
 	}
@@ -663,7 +663,7 @@ void InitLexer(Lexer * pLex, const char * pCoInput, const char * pCoInputEnd, ch
 	pLex->m_n = 0;
 	pLex->m_g = 0;
 	pLex->m_litk = LITK_Nil;
-	pLex->m_grfnum = FNUM_None;
+	pLex->m_numk = NUMK_Nil;
 }
 
 /*
@@ -882,13 +882,13 @@ void AssertMatches(
 				"lexed string doesn't match expected value");
 		}
 
-		bool fIsIntLiteral = lex.m_tok == TOK_Literal && lex.m_litk == LITK_Numeric && !lex.m_grfnum.FIsSet(FNUM_IsFloat);
+		bool fIsIntLiteral = lex.m_tok == TOK_Literal && lex.m_litk == LITK_Numeric && lex.m_numk != NUMK_Float;
 		if (aN && fIsIntLiteral)
 		{
 			MOE_ASSERT(lex.m_n == aN[iTok], "integer literal value doesn't match expected"); 
 		}
 
-		bool fIsFloatLiteral = lex.m_tok == TOK_Literal && lex.m_litk == LITK_Numeric && lex.m_grfnum.FIsSet(FNUM_IsFloat);;
+		bool fIsFloatLiteral = lex.m_tok == TOK_Literal && lex.m_litk == LITK_Numeric && lex.m_numk == NUMK_Float;
 		if (aG && fIsFloatLiteral)
 		{
 			MOE_ASSERT(lex.m_g == aG[iTok], "float literal value doesn't match expected"); 

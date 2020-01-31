@@ -231,7 +231,7 @@ struct Lexer // tag = lex
 	f64					m_g;
 	u64					m_n;
 	LITK				m_litk;
-	GRFNUM				m_grfnum;
+	NUMK				m_numk;
 	Moe::InString		m_istr;
 };
 

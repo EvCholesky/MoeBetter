@@ -285,50 +285,53 @@ int main(int cpChzArg, const char * apChzArg[])
 	{
 		InitInternStrings(&allocString);
 
-		Compilation comp(&allocHeap);
-
-		if (pCmdlineman->m_pChzFilename)
-		{
-			AddSourceFile(&comp, pCmdlineman->m_pChzFilename);
-		}
-		else if (CommandLineManager::Command * pCom = pCmdlineman->PComLookup(s_optSrc))
-		{
-			AddSourceText(&comp, pCom->m_pChzValue);
-		}
-
-		if (CommandLineManager::Command * pCom = pCmdlineman->PComLookup(s_optAst))
-		{
-			Request rq;
-			AddRequestSymbol(&rq, RQK_FindAst, IstrIntern(pCom->m_pChzValue));
-			AddRequest(&comp, &rq);
-		}
-
-		ErrorManager errman(&allocError);
-		Workspace work(&allocHeap, &errman);
-
-		if (pCmdlineman->FHasCommand(s_optRelease))
-		{
-			work.m_optlevel = OPTLEVEL_Release;
-		}
-
-		BeginWorkspace(&work, &comp);
-
-#ifdef MOE_TRACK_ALLOCATION
+	#ifdef MOE_TRACK_ALLOCATION
 		u8 aBAltrac[1024 * 100];
 		Alloc allocAltrac(aBAltrac, sizeof(aBAltrac));
 
 		AllocTracker * pAltrac = PAltracCreate(&allocAltrac);
-		work.m_pAlloc->SetAltrac(pAltrac);
-#endif
+		allocHeap.SetAltrac(pAltrac);
+	#endif
 
-		int cRqres = CRqresServiceRequest(&comp, &work);
-		if (cRqres)
+		ErrorManager errman(&allocError);
+		Workspace work(&allocHeap, &errman);
+
 		{
-			char aCh[1024];
-			for (int iRqres = 0; iRqres < cRqres; ++iRqres)
+			Compilation comp(&allocHeap);
+
+			BeginWorkspace(&work, &comp);
+
+			if (pCmdlineman->m_pChzFilename)
 			{
-				PrintResult(&comp, iRqres, aCh, sizeof(aCh));	
-				printf("%d) %s", iRqres, aCh);
+				AddSourceFile(&comp, pCmdlineman->m_pChzFilename);
+			}
+			else if (CommandLineManager::Command * pCom = pCmdlineman->PComLookup(s_optSrc))
+			{
+				AddSourceText(&comp, pCom->m_pChzValue);
+			}
+
+			if (CommandLineManager::Command * pCom = pCmdlineman->PComLookup(s_optAst))
+			{
+				Request rq;
+				AddRequestSymbol(&rq, RQK_FindAst, IstrIntern(pCom->m_pChzValue));
+				AddRequest(&comp, &rq);
+			}
+
+
+			if (pCmdlineman->FHasCommand(s_optRelease))
+			{
+				work.m_optlevel = OPTLEVEL_Release;
+			}
+
+			int cRqres = CRqresServiceRequest(&comp, &work);
+			if (cRqres)
+			{
+				char aCh[1024];
+				for (int iRqres = 0; iRqres < cRqres; ++iRqres)
+				{
+					PrintResult(&comp, iRqres, aCh, sizeof(aCh));	
+					printf("%d) %s", iRqres, aCh);
+				}
 			}
 		}
 

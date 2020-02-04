@@ -706,7 +706,7 @@ Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 :m_pAlloc(pAlloc)
 ,m_pComp(nullptr)
 ,m_blistEntry(pAlloc, Moe::BK_Workspace)
-,m_arypEntryChecked(pAlloc, Moe::BK_Workspace) 
+,m_arypEntryChecked(pAlloc, Moe::BK_Workspace, 0) 
 //,m_arypValManaged(pAlloc, Moe::BK_WorkspaceVal, 0)
 ,m_arypGenmapManaged(pAlloc, Moe::BK_Workspace, 0)
 ,m_arypFile(pAlloc, Moe::BK_WorkspaceFile, 200)
@@ -715,7 +715,7 @@ Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 ,m_pTyper(nullptr)
 ,m_unset(pAlloc, Moe::BK_Workspace, 0)
 ,m_unsetTin(pAlloc, Moe::BK_Workspace, 0)
-,m_hashPSymJps(pAlloc, BK_Workspace)
+,m_hashPSymJps(pAlloc, BK_Workspace, 0)
 ,m_pGenreg(nullptr)
 ,m_pErrman(pErrman)
 ,m_cbFreePrev(-1)
@@ -725,11 +725,11 @@ Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 {
 	m_pErrman->SetWorkspace(this);
 
-	m_pGenreg = MOE_NEW(m_pAlloc, GenericRegistry) GenericRegistry(m_pAlloc);
+	m_pGenreg = MOE_NEW_BK_SUB(m_pAlloc, BK_Workspace, 0, GenericRegistry) GenericRegistry(m_pAlloc);
 
 	for (int filek = FILEK_Min; filek < FILEK_Max; ++filek)
 	{
-		m_mpFilekPHashHvIPFile[filek] = MOE_NEW(m_pAlloc, HashHvIPFile) HashHvIPFile(pAlloc, Moe::BK_Workspace);
+		m_mpFilekPHashHvIPFile[filek] = MOE_NEW_BK_SUB(m_pAlloc, BK_Workspace, 1, HashHvIPFile) HashHvIPFile(pAlloc, Moe::BK_Workspace);
 	}
 }
 
@@ -850,7 +850,14 @@ void BeginWorkspace(Workspace * pWork, Compilation * pComp)
 	{
 		pWork->m_mpFilekPHashHvIPFile[filek]->Clear(0);
 	}
+
 	pWork->m_cbFreePrev = pAlloc->CB();
+
+#if 0
+	printf("Allocations before BeginWorkspace() %zu bytes\n",pWork->m_cbFreePrev);
+	printf("----------------------------------------------------------------------\n");
+	pAlloc->PrintAllocations();
+#endif
 
 	pWork->m_unset.Clear(0);
 	pWork->m_unsetTin.Clear(0);
@@ -989,7 +996,8 @@ void EndWorkspace(Workspace * pWork)
 	size_t cbFreePost = pAlloc->CB();
 	if (pWork->m_cbFreePrev != cbFreePost)
 	{
-		printf("\nWARNING: failed to free all bytes during compilation. (%zu -> %zu)\n", pWork->m_cbFreePrev, cbFreePost);
+		const char * pChzWarn = (pWork->m_cbFreePrev > cbFreePost) ?  "failed to free all bytes during compilation" : "extra bytes free after compilation";
+		printf("\nWARNING: %s. (%zu -> %zu)\n", pChzWarn, pWork->m_cbFreePrev, cbFreePost);
 		printf("----------------------------------------------------------------------\n");
 		pAlloc->PrintAllocations();
 	}

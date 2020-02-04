@@ -166,8 +166,6 @@ void AssertHandler( const char* pChzFile, u32 line, const char* pChzCondition, c
 #define MOE_FVERIFY(PREDICATE, ...) \
 	MOE_FVERIFY_PROC (PREDICATE, Moe::AssertHandler, __FILE__, __LINE__, __VA_ARGS__ )
 
-#define MOE_FASSERT( PREDICATE, ... ) MOE_FVERIFY(PREDICATE, __VA_ARGS__)
-
 #define MOE_TRACE(PREDICATE, ...) \
 do { if (PREDICATE) \
 	{ printf(__VA_ARGS__); } \

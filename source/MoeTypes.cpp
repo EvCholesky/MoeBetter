@@ -113,7 +113,7 @@ public:
 				{
 					int * piEntry = m_hashHvIentry.Lookup(*pHv);
 
-					if (MOE_FASSERT(piEntry, "Failed to find allocation record during free"))
+					if (MOE_FVERIFY(piEntry, "Failed to find allocation record during free"))
 					{
 						SEntry * pEntry = &m_aryEntry[*piEntry];
 						pEntry->m_cB -= cB;

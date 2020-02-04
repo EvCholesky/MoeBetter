@@ -58,7 +58,9 @@ struct TypeInfoProcedure;
 		BLTIN(EnumAll) STR(nil)	\
 		BLTIN(EnumNames) STR(nil) \
 		BLTIN(EnumValues) STR(nil) \
-		BLTIN(EnumFlag) STR(_flag)	
+		BLTIN(EnumFlag) STR(_flag)	\
+		BLTIN(TypeInfo) STR(TypeInfo) \
+		BLTIN(GlobalTinTable) STR(_tinTable)	
 
 #define BLTIN(x) \
 	extern const char * g_pChz##x; \
@@ -169,8 +171,6 @@ struct TypeInfo	// tag = tin
 												// const TypeInfo entry in the reflection type table
 
 	TypeInfo *			m_pTinUnaliased;		// native non-aliased source type (ie sSize->s64)
-
-	static const char * s_pChzGlobalTinTable;
 };
 
 Moe::InString IstrFromTypeInfo(TypeInfo * pTin);

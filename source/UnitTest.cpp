@@ -806,7 +806,7 @@ void PrintTestError(const char * pChzIn, const char * pChzOut, const char * pChz
 	GRFCCOL grfccolWhite = GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0);
 
 	printf("in : %s\n", pChzIn);
-	printf("out: ");
+	printf("exp: ");
 	PrintHighlightMatch(pChzOut, pChzExpected, ccolamb.m_grfccol, grfccolWhite);
 	printf("\nout: ");
 	PrintHighlightMatch(pChzExpected, pChzOut, ccolamb.m_grfccol, grfccolWhite);
@@ -936,40 +936,37 @@ TESTRES TestresRunUnitTest(
 	work.m_pAlloc->SetAltrac(pAltrac);
 #endif
 
-	Compilation comp(work.m_pAlloc);
-
-	BeginWorkspace(&work, &comp);
-
 	StringEditBuffer sebFilename(work.m_pAlloc);
 	StringEditBuffer sebInput(work.m_pAlloc);
 	Workspace::File * pFile = nullptr;
-
-	sebFilename.AppendChz(pUtest->m_istrName.m_pChz);
-	pFile = work.PFileEnsure(IstrInternCopy(sebFilename.PChz()), Workspace::FILEK_Source);
-
 	size_t cbPrereq = 0;
-	if (pChzPrereq)
+
 	{
-		sebInput.AppendChz(pChzPrereq);
-		sebInput.AppendChz("\n");
-		cbPrereq = sebInput.CB() - 1; // don't count the null terminator
+		Compilation comp(work.m_pAlloc);
+		BeginWorkspace(&work, &comp);
+
+		sebFilename.AppendChz(pUtest->m_istrName.m_pChz);
+		pFile = work.PFileEnsure(IstrInternCopy(sebFilename.PChz()), Workspace::FILEK_Source);
+
+		if (pChzPrereq)
+		{
+			sebInput.AppendChz(pChzPrereq);
+			sebInput.AppendChz("\n");
+			cbPrereq = sebInput.CB() - 1; // don't count the null terminator
+		}
+
+		if (pChzIn)
+		{
+			sebInput.AppendChz(pChzIn);
+		}
+
+		pFile->m_pChzFileBody = sebInput.PChz();
+
+		// Parse
+		JobRef pJobParse = PJobCreateParse(&comp, &work, pFile->m_pChzFileBody, pFile->m_istrFilename, COMPHASE_TypeCheck);
+		WaitForJob(&comp, &work, pJobParse.m_pJob);
+		pJobParse = nullptr;
 	}
-
-	if (pChzIn)
-	{
-		sebInput.AppendChz(pChzIn);
-	}
-
-	pFile->m_pChzFileBody = sebInput.PChz();
-
-
-	//Lexer lex;
-	//BeginParse(&work, &lex, sebInput.PChz(), sebFilename.PChz());
-	//work.m_pErrman->Clear();
-
-	// Parse
-	JobRef pJobParse = PJobCreateParse(&comp, &work, pFile->m_pChzFileBody, pFile->m_istrFilename, COMPHASE_TypeCheck);
-	WaitForJob(&comp, &work, pJobParse.m_pJob);
 
 	HideDebugStringForEntries(&work, cbPrereq);
 

@@ -20,7 +20,24 @@ namespace Moe
 Alloc	g_allocCManaged;
 bool	Alloc::s_fProgramIsShutdown = false;
 
+const char * PChzFromBK(BK bk)
+{
+	static const char * s_mpBkPChz[] =
+	{
+#define BKDEF(x) #x,
+		BK_DEF_LIST
+#undef BKDEF
+	};
 
+	MOE_CASSERT(MOE_DIM(s_mpBkPChz) == BK_Max, "missing BK string");
+	if (bk == BK_Nil)
+		return "Nil";
+
+	if ((bk < BK_Nil) | (bk >= BK_Max))
+		return "Unknown BK";
+
+	return s_mpBkPChz[bk];
+}
 
 struct AllocTracker //tag=altrac
 {
@@ -57,7 +74,7 @@ public:
 #endif
 			}
 
-	void	TrackAlloc(size_t cB, const char * pChzFile, int cLine, BK bk, HV * pHv)
+	void	TrackAlloc(size_t cB, const char * pChzFile, int cLine, BK bk, int subKind, HV * pHv)
 			{
 #ifdef MOE_TRACK_ALLOCATION
 
@@ -78,12 +95,13 @@ public:
 				{
 					*piEntry = (int)m_aryEntry.C();
 					SEntry * pEntry = m_aryEntry.AppendNew();
-					pEntry->m_cB 	   	   = cB;
-					pEntry->m_cBHighwater  = cB;
-					pEntry->m_cAllocations = 1;
-					pEntry->m_pChzFile 	   = pChzFile;
-					pEntry->m_cLine    	   = cLine;
+					pEntry->m_cB 	   	    = cB;
+					pEntry->m_cBHighwater   = cB;
+					pEntry->m_cAllocations  = 1;
+					pEntry->m_pChzFile 	    = pChzFile;
+					pEntry->m_cLine    	    = cLine;
 					pEntry->m_bk			= bk;
+					pEntry->m_subKind		= subKind;
 				}
 #endif // MOE_TRACK_ALLOCATION
 			}
@@ -113,7 +131,16 @@ public:
 		{
 			if (pEntry->m_cB == 0)
 				continue;
-			printf("%zd / %zd\t\t %s BK(%d) : %d\n", pEntry->m_cB, pEntry->m_cBHighwater, pEntry->m_pChzFile, pEntry->m_bk, pEntry->m_cLine);
+			if (pEntry->m_subKind >= 0)
+			{
+				printf("%zd / %zd\t\t %s BK(%s,%d) : %d\n", 
+					pEntry->m_cB, pEntry->m_cBHighwater, pEntry->m_pChzFile, PChzFromBK(pEntry->m_bk), pEntry->m_subKind, pEntry->m_cLine);
+			}
+			else
+			{
+				printf("%zd / %zd\t\t %s BK(%s) : %d\n", 
+					pEntry->m_cB, pEntry->m_cBHighwater, pEntry->m_pChzFile, PChzFromBK(pEntry->m_bk), pEntry->m_cLine);
+			}
 			cBTotal += pEntry->m_cB;
 		}
 		printf("%zd tracked\n", cBTotal);
@@ -124,10 +151,11 @@ public:
 	{
 		size_t			m_cB;
 		size_t			m_cBHighwater;
-		int				m_cAllocations;
 		const char *	m_pChzFile;
+		int				m_cAllocations;
 		int				m_cLine;
 		BK				m_bk;
+		int				m_subKind;
 	};
 
 #ifdef MOE_TRACK_ALLOCATION
@@ -173,9 +201,9 @@ void Alloc::VerifyHeap()
 	STBM__CHECK_LOCKED(m_pStbheap);
 }
 
-void Alloc::TrackAlloc(size_t cB, const char * pChzFile, int cLine, BK bk, HV * pHv)
+void Alloc::TrackAlloc(size_t cB, const char * pChzFile, int cLine, BK bk, int subKind, HV * pHv)
 {
-	m_pAltrac->TrackAlloc(cB, pChzFile, cLine, bk, pHv);
+	m_pAltrac->TrackAlloc(cB, pChzFile, cLine, bk, subKind, pHv);
 }
 
 void Alloc::TrackFree(size_t cB, HV * pHv)

@@ -269,7 +269,6 @@ struct Compilation // tag = comp
 	Moe::CDynAry<Request>				m_aryRq;
 	Moe::CDynAry<RequestResult *>		m_arypRqres;
 
-	Moe::CDynAry<Job>					m_aryJob;
 	Moe::CDynAry<JobRef>				m_arypJobQueued;	// jobs ready to be executed
 };
 

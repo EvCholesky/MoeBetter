@@ -540,46 +540,55 @@ typedef u32 TID;
 extern TID TID_Nil;
 
 // Allocator
+#define BK_DEF_LIST \
+	BKDEF(LexRecover) \
+	BKDEF(Core) \
+	BKDEF(Workspace) \
+	BKDEF(WorkspaceVal) \
+	BKDEF(WorkspaceFile) \
+	BKDEF(TypeRegistry) \
+	BKDEF(Parse) \
+	BKDEF(TypeCheck) \
+	BKDEF(TypeCheckProcmatch) \
+	BKDEF(TypeCheckStack) \
+	BKDEF(TypeCheckGenerics) \
+	BKDEF(Dependency) \
+	BKDEF(CodeGen) \
+	BKDEF(CodeGenReflect) \
+	BKDEF(SyntaxTree) \
+	BKDEF(IR) \
+	BKDEF(Symbol) \
+	BKDEF(Stack) \
+	BKDEF(StringTable) \
+	BKDEF(ReflectTable) \
+	BKDEF(UnitTest) \
+	BKDEF(Linker) \
+	BKDEF(FileSearch) \
+	BKDEF(ByteCode) \
+	BKDEF(ByteCodeCreator) \
+	BKDEF(ByteCodeTest) \
+	BKDEF(ForeignFunctions) \
+	BKDEF(Request) \
+	BKDEF(Compilation) \
+	BKDEF(Job) 
+
+#define BKDEF(x) BK_##x,
 enum BK // block kind
 {
-	BK_Nil			= -1,
-	BK_LexRecover	= 0,
-	BK_Core,
-	BK_Workspace,
-	BK_WorkspaceVal,
-	BK_WorkspaceFile,
-	BK_TypeRegistry,
-	BK_Parse,
-	BK_TypeCheck,
-	BK_TypeCheckProcmatch,
-	BK_TypeCheckStack,
-	BK_TypeCheckGenerics,
-	BK_Dependency,
-	BK_CodeGen,
-	BK_CodeGenReflect,
-	BK_SyntaxTree,
-	BK_IR,
-	BK_Symbol,
-	BK_Stack,	// should be stack array allocated
-	BK_StringTable,
-	BK_ReflectTable,
-	BK_UnitTest,
-	BK_Linker,
-	BK_FileSearch,
-	BK_ByteCode,
-	BK_ByteCodeCreator,
-	BK_ByteCodeTest,
-	BK_ForeignFunctions,
-	BK_Request,
-	BK_Job,
+	BK_DEF_LIST	
+	MOE_MAX_MIN_NIL(BK)
 };
+#undef BKDEF
+
+const char * PChzFromBK(BK bk);
 
 #define MOE_ALLOC(numBytes, alignment) 			AllocImpl(numBytes, alignment, __FILE__, __LINE__)
 #define MOE_ALLOC_BK(numBytes, alignment, bk) 	AllocImpl(numBytes, alignment, __FILE__, __LINE__, bk)
 #define MOE_ALLOC_TYPE(TYPE_NAME) 				AllocImpl(sizeof(TYPE_NAME), MOE_ALIGN_OF(TYPE_NAME), __FILE__, __LINE__)
 #define MOE_ALLOC_TYPE_ARRAY(TYPE_NAME, C_MAX) 	AllocImpl(sizeof(TYPE_NAME) * C_MAX, MOE_ALIGN_OF(TYPE_NAME), __FILE__, __LINE__)
 #define MOE_NEW(PALLOC, TYPE_NAME)				new ( (PALLOC)->AllocImpl(sizeof(TYPE_NAME), MOE_ALIGN_OF(TYPE_NAME), __FILE__, __LINE__))
-#define MOE_NEW_BK(PALLOC, BK, TYPE_NAME)		new ( (PALLOC)->AllocImpl(sizeof(TYPE_NAME), MOE_ALIGN_OF(TYPE_NAME), __FILE__, __LINE__, BK))
+#define MOE_NEW_BK(PALLOC, BK, TYPE_NAME)			new ( (PALLOC)->AllocImpl(sizeof(TYPE_NAME), MOE_ALIGN_OF(TYPE_NAME), __FILE__, __LINE__, BK))
+#define MOE_NEW_BK_SUB(PALLOC, BK, SUB, TYPE_NAME)	new ( (PALLOC)->AllocImpl(sizeof(TYPE_NAME), MOE_ALIGN_OF(TYPE_NAME), __FILE__, __LINE__, BK, SUB))
 #define MOE_FREE(P) 							FreeImpl(P, __FILE__, __LINE__)
 #define MOE_DELETE(P) 							DeleteImpl(P, __FILE__, __LINE__)
 
@@ -657,7 +666,7 @@ struct Alloc // tag=alloc
 	AllocTracker *		PAltrac()
 							{ return m_pAltrac; }
 
-	void *				AllocImpl(size_t cB, size_t cBAlign, const char* pChzFile, int cLine, BK bk = BK_Nil)
+	void *				AllocImpl(size_t cB, size_t cBAlign, const char* pChzFile, int cLine, BK bk = BK_Nil, int subKind = -1)
 							{
 								size_t cBPrefix = CBAllocationPrefix();
 								size_t alignOffset = ((cBAlign > cBPrefix) & (cBPrefix > 0)) ? cBAlign - cBPrefix : 0;
@@ -699,7 +708,7 @@ struct Alloc // tag=alloc
 								*pHv = 0;
 
 								if (m_pAltrac)
-									TrackAlloc(cBActual, pChzFile, cLine, bk, pHv);
+									TrackAlloc(cBActual, pChzFile, cLine, bk, subKind, pHv);
 #endif
 
 								return pVAdjust;
@@ -738,7 +747,7 @@ struct Alloc // tag=alloc
 								FreeImpl(p, pChzFile, cLine);
 							}
 
-	void				TrackAlloc(size_t cB, const char * pChzFile, int cLine, BK bk, HV * pHv);
+	void				TrackAlloc(size_t cB, const char * pChzFile, int cLine, BK bk, int subKind, HV * pHv);
 	void				TrackFree(size_t cBt, HV * pHv);
 	void				PrintAllocations();
 

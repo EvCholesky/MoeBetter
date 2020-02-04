@@ -318,7 +318,10 @@ void EmitError(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const
 	Error error(pErrman, errid);
 	PrintErrorLine(&error, "Error:", lexsp, pChz, ap);
 
-	PrintErrorTextSpan(pErrman->m_pWork, lexsp);
+	if (error.m_errs != ERRS_Hidden)
+	{
+		PrintErrorTextSpan(pErrman->m_pWork, lexsp);
+	}
 
 	if (error.m_errs != ERRS_Hidden)
 	{
@@ -986,7 +989,7 @@ void EndWorkspace(Workspace * pWork)
 	size_t cbFreePost = pAlloc->CB();
 	if (pWork->m_cbFreePrev != cbFreePost)
 	{
-		printf("\nWARNING: failed to free all bytes during compilation. (%zd -> %zd)\n", pWork->m_cbFreePrev, cbFreePost);
+		printf("\nWARNING: failed to free all bytes during compilation. (%zu -> %zu)\n", pWork->m_cbFreePrev, cbFreePost);
 		printf("----------------------------------------------------------------------\n");
 		pAlloc->PrintAllocations();
 	}

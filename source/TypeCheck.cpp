@@ -5474,7 +5474,8 @@ inline TypeInfo * PTinPromoteUntypedTightest(
 			// NOTE: We're casting the value to fit the type info here, not letting the value determine the type.
 
 			auto pTinnDst = PTinRtiCast<TypeInfoNumeric *>(pTinDst);
-			if (pTinnDst && pTinnDst->m_numk == NUMK_Float)
+			if ((litty.m_numk == NUMK_Float) ||
+				(pTinnDst && pTinnDst->m_numk == NUMK_Float))
 			{
 				// integer literals can be used to initialize floating point numbers
 				return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrF32);
@@ -6196,8 +6197,8 @@ void FinalizeLiteralType(TypeCheckContext * pTcctx, SymbolTable * pSymtab, TypeI
 	{
 	case TINK_Numeric:
 		{
-			auto pTinint = (TypeInfoNumeric *)pTinDst;
-			pStnodLit->m_pTin = pSymtab->PTinlitFromLitk(LITK_Numeric, pTinint->m_cBit, pTinint->m_numk);
+			auto pTinn = (TypeInfoNumeric *)pTinDst;
+			pStnodLit->m_pTin = pSymtab->PTinlitFromLitk(LITK_Numeric, pTinn->m_cBit, pTinn->m_numk);
 		}break;
 	case TINK_Flag:		// fallthrough
 	case TINK_Bool:		pStnodLit->m_pTin = pSymtab->PTinlitFromLitk(LITK_Bool);	break;
@@ -7552,6 +7553,428 @@ TcretDebug TcretCheckLiteral(STNode * pStnod, TypeCheckContext * pTcctx, TypeChe
 	return TCRET_Continue;
 }
 
+inline TypeInfo * PTinReturnFromStnodProcedure(STNode * pStnod)
+{
+	auto pStproc = PStnodRtiCast<STProc*>(pStnod);
+	if (!MOE_FVERIFY(pStnod->m_park == PARK_ProcedureDefinition && pStproc, "Bad procedure node"))
+		return nullptr;
+	if (pStproc->m_pStnodReturnType)
+		return pStproc->m_pStnodReturnType->m_pTin;
+	return nullptr;
+}
+
+TcretDebug TcretCheckReservedWord(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	auto pStval = PStnodRtiCast<STValue*>(pStnod);
+	if (!MOE_FVERIFY(pStval, "reserved word without value"))
+		return TCRET_StoppingError;
+
+	auto istrRword = pStval->m_istrRword;
+	if (istrRword == RWord::g_istrSizeof || istrRword == RWord::g_istrAlignof || istrRword == RWord::g_istrTypeinfo)
+	{
+		if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+		{
+			(void) PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+			return TCRET_Continue;
+		}
+
+		auto pStnodChild = pStnod->PStnodChild(0);
+		if (!MOE_FVERIFY(pStnodChild, "%s missing child", istrRword.PChz()))
+			return TCRET_Continue;
+
+		if (!pStnodChild->m_pTin)
+		{
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_CannotInferType, "%s unable to determine target type", istrRword.PChz());
+		}
+
+		auto pSymtab = pTcsentTop->m_pSymtab;
+
+		auto pTinDefault = PTinPromoteUntypedDefault(pTcctx, pSymtab, pStnodChild);
+		if (pStnodChild->m_pTin->m_tink == TINK_Literal)
+		{
+			pStnodChild->m_pTin = pTinDefault;
+		}
+
+		pStnodChild->m_pTin = pSymtab->PTinMakeUnique(pStnodChild->m_pTin);
+
+		if (istrRword == RWord::g_istrTypeinfo)
+		{
+			// Make sure the type table is already resoved, this ensures that it will codegen before
+			//  this typeInfo statement is generated
+			auto pSymTinTable = pSymtab->PSymLookup(BuiltIn::g_istrGlobalTinTable, LexSpan());
+			if (!pSymTinTable )
+			{
+				return TcretWaitForTypeSymbol(pTcctx, pSymTinTable, pStnod);
+			}
+
+			// lookup STypeInfo, or return waiting for type
+			auto pSymTypeinfo = pSymtab->PSymLookup(BuiltIn::g_istrTypeInfo, LexSpan());
+
+			if (!pSymTypeinfo)
+			{
+				return TcretWaitForTypeSymbol(pTcctx, pSymTypeinfo, pStnod);
+			}
+			pStnod->m_pTin = pSymtab->PTinptrAllocate(PTinFromSymbol(pSymTypeinfo));
+		}
+		else
+		{
+			pStnod->m_pTin = pSymtab->PTinBuiltin(BuiltIn::g_istrUSize);
+		}
+
+		pStnod->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	}
+	else if (istrRword == RWord::g_istrFor)
+	{
+		if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+		{
+			auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+			if (pTcsentPushed)
+			{
+				pTcsentPushed->m_pSymtab = pStnod->m_pSymtab;
+				MOE_ASSERT(pTcsentPushed->m_pSymtab, "null symbol table");
+			}
+
+			return TCRET_Continue;
+		}
+
+		auto pStfor = PStnodRtiCast<STFor *>(pStnod);
+		if (pStfor == nullptr)
+		{
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_MalformedAstInTypeCheck, "for loop was improperly parsed.");
+			return TCRET_StoppingError;
+		}
+
+		auto pStnodPredicate = pStfor->m_pStnodPredicate;
+		if (pStnodPredicate)
+		{
+			auto pSymtab = pTcsentTop->m_pSymtab;
+			TypeInfo * pTinBool = pSymtab->PTinBuiltin(BuiltIn::g_istrBool);
+			TypeInfo * pTinPredPromoted = PTinPromoteUntypedRvalueTightest(pTcctx, pTcsentTop->m_pSymtab, pStnodPredicate, pTinBool);
+
+			if (!FCanImplicitCast(pTinPredPromoted, pTinBool))
+			{
+				auto istrTin = IstrFromTypeInfo(pTinPredPromoted);
+				EmitError(pTcctx, pStnod->m_lexsp, ERRID_CannotConvertToBool, 
+					"Cannot convert predicate from %s to bool", istrTin.PChz());
+			}
+
+			FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pTinBool, pStnodPredicate);
+		}
+
+		pStnod->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	}
+	else if (istrRword == RWord::g_istrFallthrough)
+	{
+		MOE_ASSERT(pTcctx->m_aryTcsent.PLast()->m_pStnod == pStnod, "expected this node");
+		STNode * pStnodChild = pStnod;
+		for (int iTcsent = (int)pTcctx->m_aryTcsent.C()-2; iTcsent >= 0; --iTcsent)
+		{
+			auto pStnodIt = pTcctx->m_aryTcsent[iTcsent].m_pStnod;
+			bool fIsValidPosition = false;
+			switch (pStnodIt->m_park)
+			{
+				case PARK_List:
+				{
+					if (pStnodIt->PStnodChildSafe(pStnodIt->CPStnodChild()-1) == pStnodChild)
+					{
+						fIsValidPosition = true;
+					}
+				} break;
+				case PARK_ReservedWord:
+				{
+					auto pStvalIt = PStnodRtiCast<STValue *>(pStnodIt);
+					if (!MOE_FVERIFY(pStvalIt, "bad reserved word."))
+						break;
+
+					if (pStvalIt->m_istrRword == RWord::g_istrCase || pStvalIt->m_istrRword == RWord::g_istrElse)
+					{
+						pStnodIt->m_grfstnod.AddFlags(FSTNOD_Fallthrough);
+						fIsValidPosition = true;
+						iTcsent = -1;
+					}
+				} break;
+				default:
+					MOE_ASSERT(false, "unexpected parse kind");
+					break;
+			}
+
+			if (!fIsValidPosition)
+			{
+				EmitError(pTcctx, pStnod->m_lexsp, ERRID_StatementAfterFallthrough,
+					"fallthrough keyword should always be the last statement in a switch case");
+			}
+			pStnodChild = pStnodIt;
+		}
+
+		MOE_ASSERT(pStnod->CPStnodChild() == 0, "did not expect child nodes");
+		pStnod->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
+
+	}
+	else if (istrRword == RWord::g_istrContinue || istrRword == RWord::g_istrBreak)
+	{
+		MOE_ASSERT(pStnod->CPStnodChild() == 0, "did not expect child nodes");
+		pStnod->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	}
+	else if (istrRword == RWord::g_istrSwitch)
+	{
+		if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+		{
+			(void) PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+			return TCRET_Continue;
+		}
+
+		auto pStnodExp = pStnod->PStnodChildSafe(0);
+		if (!pStnod)
+		{
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_SwitchExpressionExpected, "switch missing expression");
+			return TCRET_StoppingError;
+		}
+
+		TypeInfo * pTinExpPromoted = PTinPromoteUntypedDefault(pTcctx, pTcsentTop->m_pSymtab, pStnodExp);
+		FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pTinExpPromoted, pStnodExp);
+
+		// BB - should make pTinExpPromoted const?
+		pTinExpPromoted = PTinStripQualifiers(pTinExpPromoted);
+		if ((pTinExpPromoted->m_tink != TINK_Numeric && FIsInteger(((TypeInfoNumeric*)pTinExpPromoted)->m_numk)) && 
+			pTinExpPromoted->m_tink != TINK_Bool && 
+			pTinExpPromoted->m_tink != TINK_Enum)
+		{
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_SwitchCaseMustBeInteger, "switch expression must evaluate to an integer type");
+			return TCRET_StoppingError;
+		}
+
+		Moe::CDynAry<STNode *> aryPStnod(pTcctx->m_pAlloc, BK_TypeCheck, pStnod->CPStnodChild());
+		Moe::CDynAry<BigInt> aryBint(pTcctx->m_pAlloc, BK_TypeCheck, pStnod->CPStnodChild());
+
+		int iStnodDefault = -1;
+		for (int iStnodIt = 1; iStnodIt < pStnod->CPStnodChild(); ++iStnodIt)
+		{
+			auto pStnodIt = pStnod->PStnodChild(iStnodIt);
+
+			auto pStvalIt = PStnodRtiCast<STValue *>(pStnodIt);
+			if (!MOE_FVERIFY(pStnodIt->m_park == PARK_ReservedWord || !pStvalIt, "expected switch case"))
+				continue;
+
+			if (pStvalIt->m_istrRword == RWord::g_istrElse)
+			{
+				if (iStnodDefault >= 0)
+				{
+					auto pStnodPrev = pStnod->PStnodChild(iStnodDefault);
+					LexLookup lexlook(pTcctx->m_pWork, pStnodPrev);
+
+					EmitError(pTcctx, pStnodIt->m_lexsp, ERRID_SwitchElseAlreadyDefined,
+						"switch statement else case already defined. %s (%d,%d). ",
+						lexlook.m_istrFilename.PChz(),
+						lexlook.m_iLine,
+						lexlook.m_iCodepoint);
+					continue;
+				}
+
+				iStnodDefault = iStnodIt;
+			}
+			else // "case"
+			{
+				int cStnodLit = pStnodIt->CPStnodChild()-1;
+				for (int iStnodLit = 0; iStnodLit < cStnodLit; ++iStnodLit)
+				{
+					auto pStnodLit = pStnodIt->PStnodChildSafe(iStnodLit);
+					if (!MOE_FVERIFY(pStnodLit, "missing case literal"))
+						continue;
+
+					TypeInfo * pTinCase = PTinPromoteUntypedTightest(
+												pTcctx,
+												pTcsentTop->m_pSymtab,
+												pStnodLit,
+												pTinExpPromoted);
+					pTinCase = PTinAfterRValueAssignment(pTcctx, pStnodLit->m_lexsp, pTinCase, pTcsentTop->m_pSymtab, pTinExpPromoted);
+
+					if (!FCanImplicitCast(pTinCase, pTinExpPromoted))
+					{
+						auto istrTinCase = IstrFromTypeInfo(pTinCase);
+						auto istrTinExp = IstrFromTypeInfo(pTinExpPromoted);
+						EmitError(pTcctx, pStnod->m_lexsp, ERRID_BadImplicitConversion,
+							"No conversion between %s and %s", istrTinCase.PChz(), istrTinExp.PChz());
+					}
+
+					FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pTinExpPromoted, pStnodLit);
+
+					auto pTinLit = pStnodLit->m_pTin;
+					if (!pTinLit || pTinLit->m_tink != TINK_Literal)
+					{
+						EmitError(pTcctx, pStnod->m_lexsp, ERRID_NonConstantInLiteral, "case literal does not evaluate to a constant");
+						continue;
+					}
+
+					auto pStvalLit = PStnodRtiCast<STValue*>(pStnodLit); 
+					if (!MOE_FVERIFY(pStvalLit, "case literal missing value"))
+						continue;
+
+					BigInt bint = BintFromStval(pStvalLit);
+					aryPStnod.Append(pStnodLit);
+					aryBint.Append(bint);
+				}
+			}
+		}
+
+		for (int iBintLhs = 0; iBintLhs < aryBint.C(); ++iBintLhs)
+		{
+			BigInt bintLhs = aryBint[iBintLhs];
+			for (int iBintRhs = iBintLhs+1; iBintRhs < aryBint.C(); ++iBintRhs)
+			{
+				if (FAreEqual(bintLhs, aryBint[iBintRhs]))
+				{
+					auto pStnodLhs = aryPStnod[iBintLhs];
+					auto pStnodRhs = aryPStnod[iBintLhs];
+
+					LexLookup lexlook(pTcctx->m_pWork, pStnodLhs);
+
+					EmitError(
+						pTcctx, pStnodRhs->m_lexsp, ERRID_CaseAlreadyUsed,
+						"case value %s%lld already used. %s(%d, %d):",
+						(bintLhs.m_fIsNegative) ? "-" : "",
+						bintLhs.m_nAbs,
+						lexlook.m_istrFilename.PChz(),
+						lexlook.m_iLine,
+						lexlook.m_iCodepoint);
+				}
+			}
+		}
+
+		pStnod->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	}
+	else if (istrRword == RWord::g_istrElse || istrRword == RWord::g_istrCase)
+	{
+		if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+		{
+			(void) PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+			return TCRET_Continue;
+		}
+
+		pStnod->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	} 
+	else if (istrRword == RWord::g_istrWhile || istrRword == RWord::g_istrIf)
+	{
+		if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+		{
+			(void) PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+			return TCRET_Continue;
+		}
+
+		if (pStnod->CPStnodChild() < 2)
+		{
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_MissingPredicate,
+				"encountered %s statement without expected predicate,child",
+				istrRword.PChz());
+			return TCRET_StoppingError;
+		}
+
+		// (if (predicate) (ifCase) (else (elseCase)))
+		// (while (predicate) (body))
+		STNode * pStnodPred = pStnod->PStnodChild(0);
+
+		auto pSymtab = pTcsentTop->m_pSymtab;
+		TypeInfo * pTinBool = pSymtab->PTinBuiltin(BuiltIn::g_istrBool);
+		TypeInfo * pTinPredPromoted = PTinPromoteUntypedRvalueTightest(
+										pTcctx,
+										pTcsentTop->m_pSymtab,
+										pStnodPred,
+										pTinBool);
+
+		if (!FCanImplicitCast(pTinPredPromoted, pTinBool))
+		{
+			auto istrTinPred = IstrFromTypeInfo(pTinPredPromoted);
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_CannotConvertToBool, "No conversion between %s and bool", istrTinPred.PChz());
+		}
+
+		pStnod->m_pTin = pTinBool;
+		FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pTinBool, pStnodPred);
+
+		pStnod->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	}
+	else if (istrRword == RWord::g_istrReturn)
+	{
+		if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+		{
+			(void) PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+			return TCRET_Continue;
+		}
+
+		STNode * pStnodProc = pTcsentTop->m_pStnodProcedure;
+		if (!pStnodProc)
+		{
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_ReturnOutsideProcedure,
+				"Return statement encountered outside of a procedure");
+			return TCRET_StoppingError;
+		}
+
+		TypeInfo * pTinReturn = PTinReturnFromStnodProcedure(pStnodProc);
+		if (!MOE_FVERIFY(pTinReturn, "expected return type (implicit void should be added by now"))
+			return TCRET_StoppingError;
+
+		if (pStnod->CPStnodChild() == 0)
+		{
+			if (pTinReturn->m_tink != TINK_Void)
+			{
+				EmitError(pTcctx, pStnod->m_lexsp, ERRID_NonVoidReturnExpected, "non void return type expected.");
+				return TCRET_StoppingError;
+			}
+			pStnod->m_pTin = pTinReturn;
+		}
+		else if (pStnod->CPStnodChild() == 1)
+		{
+			STNode * pStnodRhs = pStnod->PStnodChild(0);
+			if (!FVerifyIvalk(pTcctx, pStnodRhs, IVALK_RValue))
+				return TCRET_StoppingError;
+
+			TypeInfo * pTinRhs = pStnodRhs->m_pTin;
+			TypeInfo * pTinRhsPromoted = PTinPromoteUntypedRvalueTightest(
+											pTcctx,
+											pTcsentTop->m_pSymtab,
+											pStnodRhs,
+											pTinReturn);
+
+			// Strip the top level const, as we're declaring a new instance
+			auto pTinInstance = PTinAfterRValueAssignment(pTcctx, pStnodRhs->m_lexsp, pTinReturn, pTcsentTop->m_pSymtab, pTinReturn);
+			if (FCanImplicitCast(pTinRhsPromoted, pTinInstance))
+			{
+				pStnod->m_pTin = pTinReturn;
+				FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pTinReturn, pStnodRhs);
+			}
+			else
+			{
+				auto istrLhs = IstrFromTypeInfo(pTinReturn);
+				auto istrRhs = IstrFromTypeInfo(pTinRhs);
+				EmitError(pTcctx, pStnod->m_lexsp, ERRID_BadImplicitConversion,
+					"implicit cast from %s to %s is not allowed by return statement",
+					istrRhs.PChz(),
+					istrLhs.PChz());
+			}
+		}
+		else
+		{
+			MOE_ASSERT(false, "multiple return types not supported (yet).");
+		}
+
+		pStnod->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	}
+	else
+	{
+		EmitError(pTcctx, pStnod->m_lexsp, ERRID_UnhandledRWord, 
+			"unhandled reserved word '%s' in type checker", istrRword.PChz());
+		return TCRET_StoppingError;
+	}
+
+	return TCRET_Continue;
+}
+
 inline bool FComputeUnaryOpOnLiteral(
 	TypeCheckContext * pTcctx,
 	STOperator * pStop,
@@ -8329,6 +8752,10 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 
 		case PARK_Literal:
 			tcret = TcretCheckLiteral(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_ReservedWord:
+			tcret = TcretCheckReservedWord(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_PostfixUnaryOp:

@@ -23,11 +23,10 @@ using namespace Moe;
 
 Compilation::Compilation(Moe::Alloc * pAlloc)
 :m_pAlloc(pAlloc)
-,m_aryRqsrc(pAlloc, BK_Request)
-,m_aryRq(pAlloc, BK_Request)
-,m_arypRqres(pAlloc, BK_Request)
-,m_aryJob(pAlloc, BK_Job, 128)
-,m_arypJobQueued(pAlloc, BK_Request, 128)
+,m_aryRqsrc(pAlloc, BK_Compilation, 0)
+,m_aryRq(pAlloc, BK_Compilation, 0)
+,m_arypRqres(pAlloc, BK_Compilation, 0)
+,m_arypJobQueued(pAlloc, BK_Compilation, 0)
 {
 }
 

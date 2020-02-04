@@ -773,12 +773,6 @@ void WriteParseSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, GRFSEW 
 		return;
 	}
 
-	if (pStnod->m_pTin)
-	{
-		WriteTypeInfoSExpression(pStrbuf, pStnod->m_pTin, pStnod->m_park, grfsew);
-		return;
-	}
-
 	WriteParseKindSExpression(pStrbuf, pStnod, grfsew);
 }
 
@@ -1166,7 +1160,7 @@ template <typename T> struct StexAlloc
 { 
 	static T * PStnodAlloc(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp)
 	{
-		T * pStnod = MOE_NEW(pAlloc, T) T(park, lexsp);
+		T * pStnod = MOE_NEW_BK_SUB(pAlloc, BK_Parse, park, T) T(park, lexsp);
 		pStnod->SetDefaultChildArray();
 		return pStnod;
 	}
@@ -2761,6 +2755,17 @@ STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InS
 	return pStval;
 }
 
+STValue * PStvalParseReservedWordLiteral(ParseContext * pParctx, Lexer * pLex)
+{
+	STValue * pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, LexSpan(pLex));
+	pStval->SetReservedWord(pLex->m_istr);
+	(void)pStval->FCheckIsValid(pParctx->PErrman());
+	pStval->m_tok = TOK(pLex->m_tok);
+
+	TokNext(pLex);
+	return pStval;
+}
+
 Moe::InString IstrIdentifierFromDecl(STNode * pStnodDecl)
 {
 	if (!pStnodDecl)
@@ -2853,27 +2858,27 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 				{
 					if (pLex->m_istr == RWord::g_istrTrue)
 					{
-						pStval = PStvalParseReservedWord(pParctx, pLex);
+						pStval = PStvalParseReservedWordLiteral(pParctx, pLex);
 						pStval->SetBool(true);
 					}
 					else if (pLex->m_istr == RWord::g_istrFalse)
 					{
-						pStval = PStvalParseReservedWord(pParctx, pLex);
+						pStval = PStvalParseReservedWordLiteral(pParctx, pLex);
 						pStval->SetBool(false);
 					}
 					else if (pLex->m_istr == RWord::g_istrNull)
 					{
-						pStval = PStvalParseReservedWord(pParctx, pLex);
+						pStval = PStvalParseReservedWordLiteral(pParctx, pLex);
 						pStval->SetNull();
 					}
 					else if (pLex->m_istr == RWord::g_istrFileDirective)
 					{
-						pStval = PStvalParseReservedWord(pParctx, pLex);
+						pStval = PStvalParseReservedWordLiteral(pParctx, pLex);
 						pStval->SetIdentifier(pStval->m_lexsp.m_istrFilename);
 					}
 					else if (pLex->m_istr == RWord::g_istrLineDirective)
 					{
-						pStval = PStvalParseReservedWord(pParctx, pLex);
+						pStval = PStvalParseReservedWordLiteral(pParctx, pLex);
 
 						LexLookup lexlook(pParctx->m_pWork, pStval);
 

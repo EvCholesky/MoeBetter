@@ -36,6 +36,7 @@ enum ERRID
 	ERRID_FailedOpeningFile 		= 1,
 	ERRID_MissingEntryPoint			= 2,
 	ERRID_FailedLoadingDLL			= 3,
+	ERRID_UnhandledRWord			= 4,
 
 	ERRID_ParserMin					= 1000,
 	ERRID_EnumRepeat				= 1001,
@@ -145,6 +146,14 @@ enum ERRID
 	ERRID_SymbolLookupFailed		= 2053,
 	ERRID_CannotConvertToBool		= 2054,
 	ERRID_CannotDereference			= 2055,
+	ERRID_MalformedAstInTypeCheck	= 2056,
+	ERRID_StatementAfterFallthrough = 2057,
+	ERRID_SwitchCaseMustBeInteger	= 2058,
+	ERRID_SwitchElseAlreadyDefined  = 2059,
+	ERRID_MissingPredicate			= 2060,
+	ERRID_ReturnOutsideProcedure	= 2061,
+	ERRID_NonVoidReturnExpected		= 2062,
+	ERRID_CaseAlreadyUsed			= 2063,
 	ERRID_TypeCheckMax				= 3000,
 
 	ERRID_CodeGenMin				= ERRID_TypeCheckMax,

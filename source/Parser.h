@@ -340,6 +340,11 @@ public:
 };
 
 
+inline TypeInfo * TypeStructMember::PTin()
+{ 
+	return (m_pStdecl) ? m_pStdecl->m_pTin : nullptr; 
+}
+
 
 enum ENUMIMP	// implicit enum members (added as STNodes during parse)
 {

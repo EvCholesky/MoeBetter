@@ -818,7 +818,7 @@ InString NameMangler::IstrMangleMethodName(TypeInfoProcedure * pTinproc)
 		auto pTin = pTinproc->m_arypTinReturns[ipTin];
 		AppendType(pTin);
 	}
-	return IstrInternCopy(m_strbuf.m_pChzBegin, m_strbuf.m_pChzAppend - m_strbuf.m_pChzBegin);
+	return IstrInternCopy(m_strbuf.m_pChzBegin, m_strbuf.m_pChzAppend - m_strbuf.m_pChzBegin + 1);
 }
 
 TypeInfoProcedure * NameMangler::PTinprocDemangle(const InString & istrName, SymbolTable * pSymtab)
@@ -3587,7 +3587,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 		TypeStructMember * pTypemembUnsub = &pTinstructSrc->m_aryTypemembField[iTypememb];
 		pTinstructNew->m_aryTypemembField.Append(*pTypemembUnsub);
 
-		MOE_ASSERT(pTypemembUnsub->m_pTin == nullptr, "expected pTin to be unresolved");
+		MOE_ASSERT(pTypemembUnsub->PTin() == nullptr, "expected pTin to be unresolved");
 	}
 
 	for (int iTypememb = 0; iTypememb < pTinstructNew->m_aryTypemembField.C(); ++iTypememb)
@@ -5323,7 +5323,7 @@ static inline TypeInfo * PTinPromoteUntypedCommon(
 
 						auto pTypememb  = &pTinstruct->m_aryTypemembField[iTypememb];
 
-						auto pTinIt = PTinPromoteUntypedCommon(pTcctx, pSymtab, &fWasHandled, pStnodValue, pTypememb->m_pTin, errep);
+						auto pTinIt = PTinPromoteUntypedCommon(pTcctx, pSymtab, &fWasHandled, pStnodValue, pTypememb->PTin(), errep);
 					}
 				} break;
 			default:
@@ -6152,14 +6152,14 @@ void FinalizeCompoundLiteralType(
 						continue;
 					}
 
-					pTinInit = PTinPromoteUntypedTightest(pTcctx, pSymtab, pStnodIt, pTypememb->m_pTin);
+					pTinInit = PTinPromoteUntypedTightest(pTcctx, pSymtab, pStnodIt, pTypememb->PTin());
 
 					// the top level literal is implicitly const so it's members are too
 
-					auto pTinqualMember = pSymtab->PTinqualWrap(pTypememb->m_pTin, FQUALK_Const);
+					auto pTinqualMember = pSymtab->PTinqualWrap(pTypememb->PTin(), FQUALK_Const);
 					if (FCanCastForInit(pTcctx, pStnodIt->m_lexsp, pSymtab, pTinInit, pTinqualMember))
 					{
-						FinalizeLiteralType(pTcctx, pSymtab, pTypememb->m_pTin, pStnodIt);
+						FinalizeLiteralType(pTcctx, pSymtab, pTypememb->PTin(), pStnodIt);
 					}
 					else
 					{
@@ -6975,6 +6975,71 @@ TCRET TcretCheckProcedureDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeChe
 	}
 	return TCRET_Continue;
 } 
+
+TCRET TcretCheckStructDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	auto pTinstruct = PTinDerivedCast<TypeInfoStruct *>(pStnod->m_pTin);
+	if (!MOE_FVERIFY(pTinstruct, "missing struct type info"))
+		return TCRET_StoppingError;
+
+	auto pStstruct = PStnodRtiCast<STStruct *>(pStnod);
+	if (!MOE_FVERIFY(pStstruct, "expected STStruct"))
+		return TCRET_StoppingError;
+
+	if (pStnod->PStnodChild(pTcsentTop->m_nState) == pStstruct->m_pStnodIdentifier)
+		++pTcsentTop->m_nState;
+
+	// Don't try to typecheck the structure members if we haven't replaced our generic params yet.
+	// NOTE: we type check the structure parameter decls, but we can't typecheck the members because we 
+	//   haven't substituted all of our generic constants yet.
+	if (pTinstruct->FHasGenericParams() && pStnod->PStnodChild(pTcsentTop->m_nState) == pStstruct->m_pStnodDeclList)
+	{
+		++pTcsentTop->m_nState;
+	}
+
+	if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+	{
+		pStnod->m_strees = STREES_SignatureTypeChecked;
+
+		auto pSym = pStnod->PSym();
+		MOE_ASSERT(pSym, "expected structure symbol");
+		pTcsentTop->m_pSymContext = pSym;
+
+		auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState));
+		if (pTcsentPushed)
+		{
+			pTcsentPushed->m_pSymtab = pStnod->m_pSymtab;
+		}
+
+		++pTcsentTop->m_nState;
+		return TCRET_Continue;
+	}
+
+	if (pStstruct->m_pStnodParameterList)
+	{
+		pStnod->m_grfstnod.AddFlags(FSTNOD_NoCodeGeneration);
+		auto pStnodParamList = pStstruct->m_pStnodParameterList;
+	}
+
+	auto pTypemembMax = pTinstruct->m_aryTypemembField.PMac();
+	for (auto pTypememb = pTinstruct->m_aryTypemembField.A(); pTypememb != pTypemembMax; ++pTypememb)
+	{
+		// BB - why is this cached here? shouldn't we just dig into the STNode's type?
+		//pTypememb->m_pTin = pTypememb->m_pStdecl->m_pTin;
+	}
+
+	Symbol * pSymStruct = pStnod->PSym();
+	if (!MOE_FVERIFY(pSymStruct, "struct symbol should be created during parse"))
+		return TCRET_StoppingError;
+	if (!MOE_FVERIFY(PTinFromSymbol(pSymStruct), "expected structure type info to be created during parse"))
+		return TCRET_StoppingError;
+
+	pStnod->m_strees = STREES_TypeChecked;
+
+	PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	OnTypeResolve(pTcctx, pSymStruct);
+	return TCRET_Continue;
+}
 
 TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
@@ -8774,6 +8839,10 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 		{
 		case PARK_ProcedureDefinition:
 			tcret = TcretCheckProcedureDef(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_StructDefinition:
+			tcret = TcretCheckStructDef(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_Decl:

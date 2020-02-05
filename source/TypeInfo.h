@@ -463,13 +463,13 @@ struct TypeStructMember	// tag = typememb
 {
 					TypeStructMember()
 					:m_istrName()
-					,m_pTin(nullptr)
 					,m_pStdecl(nullptr)
 					,m_dBOffset(-1)
 						{ ;}
 
+	TypeInfo *		PTin();
+
 	Moe::InString	m_istrName;
-	TypeInfo *		m_pTin;
 	STDecl *		m_pStdecl;		// syntax tree node for this member
 	s32				m_dBOffset;		// for bytecode GEP
 };

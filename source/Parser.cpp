@@ -333,6 +333,8 @@ void AppendFlagNames(Moe::StringBuffer * pStrbuf, GRFQUALK grfqualk, const char 
 inline bool FIsIdentifier(STNode * pStnod, InString istr)
 {
 	auto pStval = PStnodRtiCast<STValue *>(pStnod);
+	if (!pStval)
+		return false;
 
 	if (pStval->m_park != PARK_Identifier || pStval->m_stvalk != STVALK_String)
 		return false;

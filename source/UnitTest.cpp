@@ -806,9 +806,9 @@ void PrintTestError(const char * pChzIn, const char * pChzOut, const char * pChz
 	GRFCCOL grfccolWhite = GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0);
 
 	printf("in : %s\n", pChzIn);
-	printf("exp: ");
+	printf("out: ");
 	PrintHighlightMatch(pChzOut, pChzExpected, ccolamb.m_grfccol, grfccolWhite);
-	printf("\nout: ");
+	printf("\nexp: ");
 	PrintHighlightMatch(pChzExpected, pChzOut, ccolamb.m_grfccol, grfccolWhite);
 	printf("\n");
 

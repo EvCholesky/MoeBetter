@@ -485,6 +485,7 @@ size_t	CBCopyChz(const char * pChzSource, char * aCoDest, size_t cBDest);
 void	AppendChz(StringBuffer * pStrbuf, const char * pChzSource);
 void	AppendToCch(StringBuffer * pStrbuf, char ch, size_t cCh);
 void	FormatChz(StringBuffer * pStrbuf, const char * pChzFormat, ...);
+void	AppendFloat(StringBuffer * pStrbuf, const char * pChzFormat, f64 g);
 void	EnsureTerminated(StringBuffer * pStrbuf, char ch);
 
 size_t	CBChz(const char * pChz);

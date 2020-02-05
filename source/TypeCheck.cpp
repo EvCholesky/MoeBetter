@@ -307,7 +307,7 @@ Moe::InString IstrFromTypeInfo(TypeInfo * pTin)
 	Moe::StringBuffer strbuf(aCh, MOE_DIM(aCh));
 
 	WriteTypeInfoSExpression(&strbuf, pTin, PARK_Nil);
-	return IstrIntern(aCh);
+	return IstrInternCopy(aCh);
 }
 
 static inline void SetupSymbolWait(TypeCheckContext * pTcctx, Symbol * pSym)
@@ -6548,14 +6548,12 @@ TypeInfo * PTinFromTypeSpecification(
 				}
 				else
 				{
-					QUALK qualk = QUALK_Nil;
-
+					GRFQUALK grfqualk;
 					if (auto pStval = PStnodDerivedCast<STValue *>(pStnod))
 					{
-						QualkFromRword(pStval->m_istrRword);
+						QUALK qualk = QualkFromRword(pStval->m_istrRword);
+						grfqualk = 0x1 << qualk;
 					}
-
-					GRFQUALK grfqualk = 0x1 << qualk;
 					
 					if (auto pTinqualPrev = PTinRtiCast<TypeInfoQualifier *>(pTinse->m_pTin))
 					{
@@ -7070,7 +7068,11 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckS
 		{
 			if (!FVerifyIvalk(pTcctx, pStnodInit, IVALK_RValue))
 			{
-				pStnodInit->m_park = PARK_Uninitializer;
+				// it's unclear that this is the right thing to do, the AST should be immutable here, but we want to
+				//  recover from this error, maybe mark this node as errored and handle it downstream?
+				//pStnodInit->m_park = PARK_Uninitializer;
+				pStnodInit->m_grfstnod.AddFlags(FSTNOD_HasTypeCheckError);
+				pStnodInit->m_pTin = pStnod->m_pTin;
 			}
 
 			TypeInfo * pTinInitDefault = pStnod->m_pTin;
@@ -8720,6 +8722,42 @@ TcretDebug TcretCheckList(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckS
 	return TCRET_Continue;
 }
 
+TcretDebug TcretCheckTypeArgument(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+	{
+		(void) PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+		return TCRET_Continue;
+	}
+
+	auto pStnodType = pStnod->PStnodChildSafe(0);
+	if (pStnodType)
+	{
+		// BB - should this change to a STypeIntoType struct with the child type?
+		auto pSymtab = pTcsentTop->m_pSymtab;
+		bool fIsValidTypeSpec;
+		TypeInfo * pTinType = PTinFromTypeSpecification(
+								pTcctx,
+								pSymtab,
+								pStnodType,
+								pTcsentTop->m_grfsymlook,
+								nullptr,
+								&fIsValidTypeSpec);
+		if (fIsValidTypeSpec)
+		{
+			MOE_ASSERT(!pStnodType->m_pTin || FTypesAreSame(pStnodType->m_pTin, pTinType), "expected same types");
+			if (!pStnodType->m_pTin)
+			{
+				pStnodType->m_pTin = pTinType;
+			}
+		}
+	}
+
+	pStnod->m_strees = STREES_TypeChecked;
+	PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	return TCRET_Continue;
+}
+
 TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 {
 	#define CONTINUE_OR_BREAK(tcret) if (tcret != TCRET_Continue) return tcret; break;
@@ -8778,6 +8816,10 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 		case PARK_List:
 		case PARK_ExpressionList:
 			tcret = TcretCheckList(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_TypeArgument:
+			tcret = TcretCheckTypeArgument(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_Uninitializer:

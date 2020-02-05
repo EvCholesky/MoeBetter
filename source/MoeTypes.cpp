@@ -404,6 +404,35 @@ void FormatChz(StringBuffer * pStrbuf, const char * pChzFormat, ...)
 	EnsureTerminated(pStrbuf, '\0');
 }
 
+void AppendFloat(StringBuffer * pStrbuf, const char * pChzFormat, f64 g)
+{
+	// append a float to the string buffer but trim the excess trailing zeros
+
+	char aCh[64];
+	sprintf_s(aCh, MOE_DIM(aCh), pChzFormat, g);
+
+	char * pChzDecimal = nullptr;
+	char * pChzDest = pStrbuf->m_pChzAppend;
+	char * pChzDestEnd = &pStrbuf->m_pChzBegin[pStrbuf->m_cBMax-1];
+	char * pChzSrc = aCh;
+	for ( ; (*pChzSrc != '\0') & (pChzDest != pChzDestEnd); ++pChzSrc, ++pChzDest)
+	{
+		char chSrc = *pChzSrc;
+		if (chSrc == '.')
+		{
+			pChzDecimal = pChzSrc;
+		}
+
+		if (pChzDecimal && chSrc == '0' && (pChzSrc - pChzDecimal) > 1)
+			break;
+
+		*pChzDest = *pChzSrc;
+	}
+
+	pStrbuf->m_pChzAppend = pChzDest;
+	EnsureTerminated(pStrbuf, '\0');
+}
+
 size_t CBChz(const char * pChz)
 {
 	// bytes needed for this string (including the null terminator)

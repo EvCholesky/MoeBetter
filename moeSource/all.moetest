@@ -35,7 +35,6 @@
 
 
 // Built in tests
-
 test builtin lexer
 test builtin signed65
 test builtin unicode
@@ -43,7 +42,6 @@ test builtin uniqueNames
 //test builtin blockList
 
 // Operator precedence:
-
 test OperatorPrecedence
 	input "n: = false || true && 0 ?rel 123 ?add 456 ?mul 789 ?shift 2"
 	parse "(decl, n, null, (op||, false, (op&&, true, (op?rel, 0, (op?add, 123, (op?mul, 456, (op?shift, 789, 2)))))))"
@@ -57,15 +55,14 @@ test OperatorPrecedence2
 	{
 		?shift("<<"|">>") + ?mul("*"|"/"|"%"|"&") + ?add("+"|"-"|"|"|"^") + ?rel("<"|">"|"<="|">="|"=="|"!=")
 	}
-
+	
 // Declaration Tests:
-
 test DeclareAssign
 	input "v : ?type = ?init"
 	parse "(decl, v, ?type, ?initp)"
 //	typecheck "(?type v ?type Literal:?littype)"
 	{
-		?init(2.200000?errid(2001)) + ?initp("?init")
+		?init(2.2?errid(2001)) + ?initp("?init")
 		{
 			?type(int) + ?littype(Int##),
 			?type(s32|u32) + ?littype(Int32),

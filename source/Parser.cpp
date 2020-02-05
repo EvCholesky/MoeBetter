@@ -56,6 +56,7 @@ STNode * PStnodParseLogicalOrExpression(ParseContext * pParctx, Lexer * pLex);
 STNode * PStnodParseStatement(ParseContext * pParctx, Lexer * pLex);
 STValue * PStvalParseIdentifier(ParseContext * pParctx, Lexer * pLex);
 STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InString istrRwordExpected = Moe::InString());
+STValue * PStvalParseReservedWordWithPark(ParseContext * pParctx, Lexer * pLex, PARK park);
 
 void OnParseEntryPoint(ParseContext * pParctx, STNode * pStnod);
 
@@ -113,7 +114,7 @@ static ParkInfo s_mpParkParkinfo[] =
 	{ STEXK_Operator,	"relOp", "Relational Operator" },
 	{ STEXK_Operator,	"logicOp", "LogicalAndOr Operator" },
 	{ STEXK_Operator,	"assignOp", "Assignment Operator" },
-	{ STEXK_Operator,	"prefixOp", "Unary Operator" },
+	{ STEXK_Operator,	"unaryOp", "Unary Operator" },
 	{ STEXK_Operator,	"postfixOp", "Postfix Unary Operator" },
 	{ STEXK_Node,		"uninit", "Uninitializer" },
 	{ STEXK_Node,		"cast", "Cast" },
@@ -573,7 +574,7 @@ void PrintLiteral(Moe::StringBuffer * pStrbuf, STNode * pStnodLit)
 	case STVALK_String:			FormatChz(pStrbuf, "\"%s\"", pStvalLit->m_istrValue.m_pChz);			return;
 	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStvalLit->m_nUnsigned);						return;
 	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStvalLit->m_nSigned);						return;
-	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStvalLit->m_g);								return;
+	case STVALK_Float:			AppendFloat(pStrbuf, "%f", pStvalLit->m_g);								return;
 	case STVALK_Bool:			FormatChz(pStrbuf, "%s", (pStvalLit->m_nUnsigned) ? "true" : false);	return;
 	case STVALK_Null:			AppendChz(pStrbuf, "null");												return;
 
@@ -720,7 +721,7 @@ bool FTryWriteValueSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 
 	switch (stvalk)
 	{
-	case STVALK_Float:			FormatChz(pStrbuf, "%f", pStval->m_g);								break;
+	case STVALK_Float:			AppendFloat(pStrbuf, "%f", pStval->m_g);							break;
 	case STVALK_SignedInt:		FormatChz(pStrbuf, "%lld", pStval->m_nSigned);						break;
 	case STVALK_UnsignedInt:	FormatChz(pStrbuf, "%llu", pStval->m_nUnsigned);					break;
 	case STVALK_Bool:			FormatChz(pStrbuf, "%s", (pStval->m_nUnsigned) ? "true" : "false");	break;
@@ -732,7 +733,7 @@ bool FTryWriteValueSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 			FormatChz(pStrbuf, pChzFormat, pStval->m_istrValue.m_pChz);
 		} break;
 	default: 
-		if (pStval->m_park == PARK_ReservedWord)
+		if (pStval->m_park == PARK_ReservedWord || pStval->m_park == PARK_QualifierDecl)
 		{
 			// value is a named reserved word, but isn't bound to a value
 			FormatChz(pStrbuf, "%s", pStval->m_istrRword.m_pChz);
@@ -2553,7 +2554,7 @@ STNode * PStnodParseQualifierDecl(ParseContext * pParctx, Lexer * pLex)
 {
 	if (pLex->m_tok == TOK_Identifier && (pLex->m_istr == RWord::g_istrConst || pLex->m_istr == RWord::g_istrInArg))
 	{
-		auto pStval = PStvalParseReservedWord(pParctx, pLex);
+		auto pStval = PStvalParseReservedWordWithPark(pParctx, pLex, PARK_QualifierDecl);
 		return pStval;
 	}
 
@@ -2755,10 +2756,11 @@ STValue * PStvalParseReservedWord(ParseContext * pParctx, Lexer * pLex, Moe::InS
 	return pStval;
 }
 
-STValue * PStvalParseReservedWordLiteral(ParseContext * pParctx, Lexer * pLex)
+STValue * PStvalParseReservedWordWithPark(ParseContext * pParctx, Lexer * pLex, PARK park)
 {
-	STValue * pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, PARK_Literal, pLex, LexSpan(pLex));
+	STValue * pStval = PStnodAlloc<STValue>(pParctx->m_pAlloc, park, pLex, LexSpan(pLex));
 	pStval->SetReservedWord(pLex->m_istr);
+
 	(void)pStval->FCheckIsValid(pParctx->PErrman());
 	pStval->m_tok = TOK(pLex->m_tok);
 
@@ -2858,27 +2860,27 @@ STNode * PStnodParsePrimaryExpression(ParseContext * pParctx, Lexer * pLex)
 				{
 					if (pLex->m_istr == RWord::g_istrTrue)
 					{
-						pStval = PStvalParseReservedWordLiteral(pParctx, pLex);
+						pStval = PStvalParseReservedWordWithPark(pParctx, pLex, PARK_Literal);
 						pStval->SetBool(true);
 					}
 					else if (pLex->m_istr == RWord::g_istrFalse)
 					{
-						pStval = PStvalParseReservedWordLiteral(pParctx, pLex);
+						pStval = PStvalParseReservedWordWithPark(pParctx, pLex, PARK_Literal);
 						pStval->SetBool(false);
 					}
 					else if (pLex->m_istr == RWord::g_istrNull)
 					{
-						pStval = PStvalParseReservedWordLiteral(pParctx, pLex);
+						pStval = PStvalParseReservedWordWithPark(pParctx, pLex, PARK_Literal);
 						pStval->SetNull();
 					}
 					else if (pLex->m_istr == RWord::g_istrFileDirective)
 					{
-						pStval = PStvalParseReservedWordLiteral(pParctx, pLex);
+						pStval = PStvalParseReservedWordWithPark(pParctx, pLex, PARK_Literal);
 						pStval->SetIdentifier(pStval->m_lexsp.m_istrFilename);
 					}
 					else if (pLex->m_istr == RWord::g_istrLineDirective)
 					{
-						pStval = PStvalParseReservedWordLiteral(pParctx, pLex);
+						pStval = PStvalParseReservedWordWithPark(pParctx, pLex, PARK_Literal);
 
 						LexLookup lexlook(pParctx->m_pWork, pStval);
 

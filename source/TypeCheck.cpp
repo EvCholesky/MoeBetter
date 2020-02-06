@@ -2041,6 +2041,7 @@ bool FIsCompileTimeConstant(STNode * pStnod)
 
 TypeCheckStackEntry * PTcsentPush(TypeCheckContext * pTcctx, TypeCheckStackEntry ** ppTcsentTop, STNode * pStnod)
 {
+	//MOE_ASSERT(pStnod, "expected non-null stnod");
 	if (!pStnod)
 		return nullptr;
 
@@ -6997,6 +6998,11 @@ TCRET TcretCheckStructDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckS
 		++pTcsentTop->m_nState;
 	}
 
+	while (pTcsentTop->m_nState < pStnod->CPStnodChild() && !pStnod->PStnodChild(pTcsentTop->m_nState))
+	{
+		++pTcsentTop->m_nState;
+	}
+
 	if (pTcsentTop->m_nState < pStnod->CPStnodChild())
 	{
 		pStnod->m_strees = STREES_SignatureTypeChecked;
@@ -7674,7 +7680,7 @@ TcretDebug TcretCheckReservedWord(STNode * pStnod, TypeCheckContext * pTcctx, Ty
 				return TcretWaitForTypeSymbol(pTcctx, pSymTinTable, pStnod);
 			}
 
-			// lookup STypeInfo, or return waiting for type
+			// lookup TypeInfo, or return waiting for type
 			auto pSymTypeinfo = pSymtab->PSymLookup(BuiltIn::g_istrTypeInfo, LexSpan());
 
 			if (!pSymTypeinfo)
@@ -8629,7 +8635,7 @@ TcretDebug TcretCheckBinaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeCh
 	{
 		// this needs to be explicitly handled, create a new literal with the result
 		if (MOE_FVERIFY(
-				pStnod->m_pTin == nullptr, 
+				pStop->m_pTin == nullptr, 
 				"TypeInfoLiteral should be constructed during type checking"))
 		{
 			// NOTE: this is only finding the type info for the result of our binary op
@@ -8649,14 +8655,14 @@ TcretDebug TcretCheckBinaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeCh
 					&pTinReturn,
 					&pStval))
 			{
-				pStnod->m_pTin = pTinReturn;
+				pStop->m_pTin = pTinReturn;
 				pStop->m_optype = OpTypes(pTinOperand, pTinOperand, pTinReturn);
 			}
 			else
 			{
-				EmitError(pTcctx, pStnod->m_lexsp, ERRID_OperatorNotDefined,
+				EmitError(pTcctx, pStop->m_lexsp, ERRID_OperatorNotDefined,
 					"invalid operation %s for %s literal and %s literal", 
-					PChzFromTok(pStnod->m_tok),
+					PChzFromTok(pStop->m_tok),
 					PChzFromLitk(((TypeInfoLiteral *)pTinLhs)->m_litty.m_litk),
 					PChzFromLitk(((TypeInfoLiteral *)pTinRhs)->m_litty.m_litk));
 				return TCRET_StoppingError;
@@ -8665,17 +8671,15 @@ TcretDebug TcretCheckBinaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeCh
 	}
 	else
 	{
-		ProcMatchParam pmparam(pTcctx->m_pAlloc, pStnod->m_lexsp);
-		pmparam.m_cpStnodCall = 2; //pStnod->CPStnodChild();
-		pmparam.m_ppStnodCall = (pmparam.m_cpStnodCall) ? pStnod->m_apStnodChild : nullptr;
+		ProcMatchParam pmparam(pTcctx->m_pAlloc, pStop->m_lexsp);
+		pmparam.m_cpStnodCall = 2; //pStop->CPStnodChild();
+		pmparam.m_ppStnodCall = (pmparam.m_cpStnodCall) ? pStop->m_apStnodChild : nullptr;
 
-		OverloadCheck ovcheck = OvcheckTryCheckOverload(pTcctx, pStnod, &pmparam);
+		OverloadCheck ovcheck = OvcheckTryCheckOverload(pTcctx, pStop, &pmparam);
 		if (ovcheck.m_pTinproc)
 		{
 			if (ovcheck.m_tcret != TCRET_Complete)
 				return ovcheck.m_tcret;
-
-			//AllocateOptype(pStnod);
 
 			TypeInfoProcedure * pTinproc = ovcheck.m_pTinproc;
 			if (MOE_FVERIFY(pTinproc->m_arypTinParams.C() == 2 && pTinproc->m_arypTinReturns.C() == 1, "bad operator overload signature"))
@@ -8701,19 +8705,19 @@ TcretDebug TcretCheckBinaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeCh
 
 		if (!pStop->m_optype.FIsValid())
 		{
-			PARK park = pStnod->m_park;
+			PARK park = pStop->m_park;
 			TypeInfo * pTinUpcastLhs = PTinPromoteUntypedRvalueTightest(pTcctx, pSymtab, pStnodLhs, pTinRhs);
 			TypeInfo * pTinUpcastRhs = PTinPromoteUntypedRvalueTightest(pTcctx, pSymtab, pStnodRhs, pTinLhs);
 
 			OpTypes optype = OptypeFromPark(pTcctx, pSymtab, pStop->m_tok, park, pTinUpcastLhs, pTinUpcastRhs);
 
-			if (!optype.FIsValid() || !FDoesOperatorExist(pStnod->m_tok, &optype))
+			if (!optype.FIsValid() || !FDoesOperatorExist(pStop->m_tok, &optype))
 			{
 				InString istrLhs = IstrFromTypeInfo(pTinLhs);
 				InString istrRhs = IstrFromTypeInfo(pTinRhs);
 				EmitError(pTcctx, pStop->m_lexsp, ERRID_OperatorNotDefined,
 					"%s operator not defined for %s and %s",
-					PChzFromTok(pStnod->m_tok),
+					PChzFromTok(pStop->m_tok),
 					istrLhs.PChz(),
 					istrRhs.PChz());
 				return TCRET_StoppingError;
@@ -8732,8 +8736,117 @@ TcretDebug TcretCheckBinaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeCh
 	return TCRET_Continue;
 }
 
+TcretDebug TcretCheckAssignmentOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+	{
+		(void) PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState++));
+		return TCRET_Continue;
+	}
+
+	auto pStop = PStnodRtiCast<STOperator*>(pStnod);
+	if (MOE_FVERIFY(pStop, "expected binary operator"))
+		return TCRET_StoppingError;
+
+	STNode * pStnodLhs = pStop->m_pStnodLhs;
+	STNode * pStnodRhs = pStop->m_pStnodRhs;
+	TypeInfo * pTinLhs = pStnodLhs->m_pTin;
+
+	SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
+
+	if (!FVerifyIvalk(pTcctx, pStnodLhs, IVALK_LValue) || !FVerifyIvalk(pTcctx, pStnodRhs, IVALK_RValue))
+		return TCRET_StoppingError;
+
+	ProcMatchParam pmparam(pTcctx->m_pAlloc, pStop->m_lexsp);
+	pmparam.m_cpStnodCall = 2; //pStop->CPStnodChild();
+	pmparam.m_ppStnodCall = (pmparam.m_cpStnodCall) ? pStop->m_apStnodChild : nullptr;
+
+	OverloadCheck ovcheck = OvcheckTryCheckOverload(pTcctx, pStop, &pmparam);
+	if (ovcheck.m_pTinproc)
+	{
+		auto pTinproc = ovcheck.m_pTinproc;
+		MOE_ASSERT(pTinproc->m_arypTinParams.C() == 2 && pTinproc->m_arypTinReturns.C() == 1, "bad operator overload signature");
+
+		if (ovcheck.m_tcret != TCRET_Complete)
+			return ovcheck.m_tcret;
+
+		pStop->m_optype.m_pTinLhs = pTinproc->m_arypTinParams[0];
+		pStop->m_optype.m_pTinRhs = pTinproc->m_arypTinParams[1];
+		pStop->m_optype.m_pTinResult = pTinproc->m_arypTinReturns[0];
+		pStop->m_optype.m_pTinprocOverload = pTinproc;
+
+		MOE_ASSERT(ovcheck.m_argord == ARGORD_Normal, "Assignment arguments cannot be commutative");
+		FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pStop->m_optype.m_pTinLhs, pStnodRhs);
+
+		pStop->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcctx, &pTcsentTop, pStop);
+		return TCRET_Continue;
+	}
+
+	{
+		if (MOE_FVERIFY(pTinLhs, "unexpected unknown type in assignment op LHS"))
+		{
+			bool fIsValidLhs = FIsValidLhs(pStnodLhs);
+			if (!fIsValidLhs)
+			{
+				auto istrLhs = IstrFromTypeInfo(pTinLhs);
+				EmitError(pTcctx, pStop->m_lexsp, ERRID_NoAssignmentOp, 
+					"'%s' does not provide an assignment operator", istrLhs.PChz());
+				return TCRET_StoppingError;
+			}
+		}
+
+		MOE_ASSERT(pTinLhs, "unexpected null type in assignment op RHS");
+
+		TypeInfo * pTinRhsPromoted = PTinPromoteUntypedRvalueTightest(pTcctx, pTcsentTop->m_pSymtab, pStnodRhs, pTinLhs);
+
+		OpTypes optype = OptypeFromPark(pTcctx, pSymtab, pStop->m_tok, pStop->m_park, pTinLhs, pTinRhsPromoted);
+
+		if (!optype.FIsValid() || !FDoesOperatorExist(pStop->m_tok, &optype))
+		{
+			(void)OptypeFromPark(pTcctx, pSymtab, pStop->m_tok, pStop->m_park, pTinLhs, pTinRhsPromoted);
+			//FDoesOperatorExist(pStop->m_tok, &optype);
+
+			auto istrLhs = IstrFromTypeInfo(pTinLhs);
+			auto istrRhs = IstrFromTypeInfo(pTinRhsPromoted);
+			EmitError(pTcctx, pStop->m_lexsp, ERRID_OperatorNotDefined,
+				"operator '%s' is not defined for '%s' and '%s'",
+				PChzFromTok(pStop->m_tok),
+				istrLhs.PChz(),
+				istrRhs.PChz());
+			return TCRET_StoppingError;
+		}
+
+		if (!FCanImplicitCast(pTinRhsPromoted, optype.m_pTinRhs))
+		{
+			auto istrLhs = IstrFromTypeInfo(optype.m_pTinRhs);
+			auto istrRhs = IstrFromTypeInfo(pTinRhsPromoted);
+			EmitError(pTcctx, pStop->m_lexsp, ERRID_BadImplicitConversion,
+				"implicit cast from %s to %s is not allowed",
+				istrRhs.PChz(),
+				istrLhs.PChz());
+			return TCRET_StoppingError;
+		}
+
+		pStop->m_optype = optype;
+	}
+
+	FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pStop->m_optype.m_pTinLhs, pStnodRhs);
+
+	MOE_ASSERT(pStop->m_pTin == nullptr, "assignment op has no 'return' value");
+
+	pStop->m_strees = STREES_TypeChecked;
+	PopTcsent(pTcctx, &pTcsentTop, pStop);
+	return TCRET_Continue;
+}
+
 TcretDebug TcretCheckList(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
+	while (pTcsentTop->m_nState < pStnod->CPStnodChild() && !pStnod->PStnodChild(pTcsentTop->m_nState))
+	{
+		++pTcsentTop->m_nState;
+	}
+
 	if (pTcsentTop->m_nState >= pStnod->CPStnodChild())
 	{
 		if (pStnod->m_park == PARK_List)
@@ -8876,6 +8989,10 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 		case PARK_RelationalOp:
 		case PARK_LogicalAndOrOp:
 			tcret = TcretCheckBinaryOp(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_AssignmentOp:
+			tcret = TcretCheckAssignmentOp(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_ArrayDecl:

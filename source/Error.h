@@ -154,6 +154,7 @@ enum ERRID
 	ERRID_ReturnOutsideProcedure	= 2061,
 	ERRID_NonVoidReturnExpected		= 2062,
 	ERRID_CaseAlreadyUsed			= 2063,
+	ERRID_NoAssignmentOp			= 2064,
 	ERRID_TypeCheckMax				= 3000,
 
 	ERRID_CodeGenMin				= ERRID_TypeCheckMax,

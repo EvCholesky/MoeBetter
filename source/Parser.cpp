@@ -1875,7 +1875,13 @@ Symbol * SymbolTable::PSymLookup(InString istr, const LexSpan & lexsp, GRFSYMLOO
 
 TypeInfo * SymbolTable::PTinBuiltin(const Moe::InString & istr)
 {
-	TypeInfo ** ppTin = m_hashIstrPTinBuiltIn.Lookup(istr);
+	SymbolTable * pSymtabBase = this;
+	while (pSymtabBase->m_pSymtabParent)
+	{
+		pSymtabBase = pSymtabBase->m_pSymtabParent;
+	}
+
+	TypeInfo ** ppTin = pSymtabBase->m_hashIstrPTinBuiltIn.Lookup(istr);
 	if (ppTin)
 		return *ppTin;
 
@@ -2314,7 +2320,7 @@ void STNode::AppendChildToArray(Moe::Alloc * pAlloc, STNode * pStnodChild)
 	++m_cpStnodChild;
 	size_t cB = sizeof(STNode *) * m_cpStnodChild;
 	m_apStnodChild = (STNode **)pAlloc->MOE_ALLOC(cB, MOE_ALIGN_OF(STNode *));
-	memcpy(m_apStnodChild, &pStnodChild, sizeof(STNode *) * (m_cpStnodChild - 1));
+	memcpy(m_apStnodChild, apStnodPrev, sizeof(STNode *) * (m_cpStnodChild - 1));
 	m_apStnodChild[m_cpStnodChild - 1] = pStnodChild;
 
 	if (apStnodPrev && m_grfstnod.FIsSet(FSTNOD_ChildArrayOnHeap))

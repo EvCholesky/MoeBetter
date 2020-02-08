@@ -174,12 +174,14 @@ Job * PJobAllocate(Compilation * pComp, void * pVData, Job * pJobParent)
 	pJob->m_pVData = pVData;
 	pJob->m_cJobWaiting = 1;
 	pJob->m_pJobParent = pJobParent;
+	PRINT_REFC("allocateJob %p %d\n", pJob, pJob->m_cRef);
 
 	return pJob;
 }
 
 void DeleteJob(Job * pJob)
 {
+	PRINT_REFC("deleteJob %p\n", pJob);
 	MOE_ASSERT(pJob->m_cRef == 0, "deleting with nonzero ref count");
 	Alloc * pAlloc = pJob->m_pAlloc;
 	pAlloc->MOE_DELETE(pJob);
@@ -203,9 +205,11 @@ void FinishJob(Workspace * pWork, Job * pJob)
 			(*pJobIt->m_pFnCleanup)(pWork, pJobIt);
 		}
 
-		Job * pJobPrev  = pJobIt;
-		pJobIt = pJobIt->m_pJobParent.m_pJob;
-		pJobPrev->m_pJobParent = nullptr;
+		{
+			Job * pJobPrev  = pJobIt;
+			pJobIt = pJobIt->m_pJobParent.m_pJob;
+			pJobPrev->m_pJobParent = nullptr;
+		}
 
 		if (!pJobIt)
 			break;

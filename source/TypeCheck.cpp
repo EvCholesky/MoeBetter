@@ -2458,10 +2458,10 @@ void OnTypeResolve(TypeCheckContext * pTcctx, const Symbol * pSym)
 	if (!pJps)
 		return;
 
-	Job ** ppJobMax = pJps->m_arypJob.PMac();
-	for (Job ** ppJobIt = pJps->m_arypJob.A(); ppJobIt != ppJobMax; ++ppJobIt)
+	JobRef * pJobrefMax = pJps->m_arypJob.PMac();
+	for (JobRef * pJobrefIt = pJps->m_arypJob.A(); pJobrefIt != pJobrefMax; ++pJobrefIt)
 	{
-		EnqueueJob(pWork->m_pComp, *ppJobIt);
+		EnqueueJob(pWork->m_pComp, pJobrefIt->m_pJob);
 	}
 
 	pWork->m_hashPSymJps.Remove(pSym);
@@ -4132,9 +4132,7 @@ ERRID ErridComputeDefinedGenerics(
 								istrTinDock.PChz(),
 								pChzTink,
 								istrTinRef.PChz(),
-								lexlook.m_istrFilename.PChz(),
-								lexlook.m_iLine,
-								lexlook.m_iCodepoint);
+								lexlook.m_istrFilename.PChz(), lexlook.m_iLine, lexlook.m_iCodepoint);
 						}
 
 						return ERRID_CannotInferGeneric;
@@ -7176,9 +7174,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckS
 							"'%s' is already declared at %s (%d, %d). \n"
 							"Type inference is not allowed on overloaded variables. Did you type ':=' but meant '='?",
 							istrIdent.PChz(),
-							lexlook.m_istrFilename.m_pChz,
-							lexlook.m_iLine,
-							lexlook.m_iCodepoint);
+							lexlook.m_istrFilename.m_pChz, lexlook.m_iLine, lexlook.m_iCodepoint);
 					}
 				}
 
@@ -8840,6 +8836,223 @@ TcretDebug TcretCheckAssignmentOp(STNode * pStnod, TypeCheckContext * pTcctx, Ty
 	return TCRET_Continue;
 }
 
+TcretDebug TcretCheckMemberLookup(STNode * _pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	auto pStop = PStnodRtiCast<STOperator*>(_pStnod);
+	if (MOE_FVERIFY(pStop, "expected binary operator"))
+		return TCRET_StoppingError;
+
+	if (pTcsentTop->m_nState == 0)
+	{
+		(void) PTcsentPush(pTcctx, &pTcsentTop, pStop->m_pStnodLhs);
+		++pTcsentTop->m_nState;
+		return TCRET_Continue;
+	}
+
+	auto pStnodRhs = pStop->m_pStnodRhs;
+	if (!pStnodRhs || pStnodRhs->m_park != PARK_Identifier)
+	{
+		const char * pChzRhs = (pStnodRhs) ? PChzAbbrevFromPark(pStnodRhs->m_park) : "(null)";
+		EmitError(pTcctx, pStop->m_lexsp, ERRID_RhsIdentifierExpected,
+			"Expected right hand side to identifier but it is %s", pChzRhs);
+		return TCRET_StoppingError;
+	}
+
+	auto pStnodLhs = pStop->m_pStnodLhs;
+	TypeInfoStruct * pTinstruct = nullptr;
+	auto pTinLhs = pStnodLhs->m_pTin;
+	if (pTinLhs)
+	{
+		while (1)
+		{
+			pTinLhs = PTinStripQualifiersAndPointers(pTinLhs);
+			if (pTinLhs->m_tink != TINK_Literal)
+				break;
+
+			pTinLhs = PTinPromoteUntypedDefault(pTcctx, pTcsentTop->m_pSymtab, pStnodLhs);
+			FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pTinLhs, pStnodLhs);
+		}
+	}
+
+	auto istrMemberName = IstrFromIdentifier(pStnodRhs);
+	TypeInfo * pTinMember = nullptr;
+	STValue * pStvalMember = nullptr;
+	bool fIsFlagEnumInstance = false;
+	if (pTinLhs)
+	{
+		switch (pTinLhs->m_tink)
+		{
+			case TINK_Enum:
+			{
+				auto pTinenum = (TypeInfoEnum *)pTinLhs;
+				auto pSymLhs = pStnodLhs->PSym();
+				if (MOE_FVERIFY(pSymLhs, "expected lhs symbol") && !pSymLhs->m_grfsym.FIsSet(FSYM_IsType))
+				{
+					if (pTinenum->m_enumk != ENUMK_FlagEnum)
+					{
+						EmitError(pTcctx, pStop->m_lexsp, ERRID_BadFlagEnumAccess,
+							"Cannot access enum constant '%s' via instance '%s', use typename '%s' instead",
+							istrMemberName.PChz(),
+							pSymLhs->m_istrName.PChz(),
+							pTinenum->m_istrName.PChz());
+						return TCRET_StoppingError;
+					}
+					else
+					{
+						// BB - need to make sure constant is not implicit constant
+						fIsFlagEnumInstance = true;
+					}
+				}
+
+				if (pTinenum)
+				{
+					pTinLhs = &pTinenum->m_tinstructProduced;
+				}
+			} // fall through
+			case TINK_Struct:
+			{
+				pTinstruct = PTinRtiCast<TypeInfoStruct *>(pTinLhs);
+				if (!pTinstruct)
+					break;
+
+				STNode * pStnodStruct = pTinstruct->m_pStnodStruct;
+				Symbol * pSymStruct = nullptr;
+				if (MOE_FVERIFY(pStnodStruct && (pSymStruct = pStnodStruct->PSym()), "Struct type missing symbol"))
+				{
+					if (pStnodStruct->m_strees != STREES_TypeChecked)
+					{
+						// wait for this type to be resolved.
+						SetupSymbolWait(pTcctx, pSymStruct);
+						return TCRET_WaitingForSymbolDefinition;
+					}
+				}
+
+				auto pSymbase = PSymbaseLookup(
+									pStnodStruct->m_pSymtab,
+									istrMemberName,
+									pStnodRhs->m_lexsp,
+									FSYMLOOK_Local | FSYMLOOK_IgnoreOrder);
+
+				if (!pSymbase)
+				{
+					LexLookup lexlook(pTcctx->m_pWork, pStnodStruct->m_lexsp);
+
+					EmitError(pTcctx, pStop->m_lexsp, ERRID_BadMemberLookup, 
+						"%s is not a member of %s, see %s(%d, %d)", 
+						istrMemberName.PChz(), 
+						pTinstruct->m_istrName.PChz(),
+						lexlook.m_istrFilename.PChz(), lexlook.m_iLine, lexlook.m_iCodepoint);
+
+					return TCRET_StoppingError;
+				}
+				else
+				{
+					pStnodRhs->m_pSymbase = pSymbase;
+					pStop->m_pSymbase = pSymbase;
+				}
+
+				auto pSymMember = pStop->PSym();
+				AddSymbolReference(pTcsentTop->m_pSymContext, pSymMember);
+
+				pTinMember = PTinFromSymbol(pSymMember);
+				MOE_ASSERT(pTinMember, "expected symbol to have type");
+
+				if (pTinMember && pSymMember->m_pStnodDefinition)
+				{
+					if (pTinMember->m_tink == TINK_Literal)
+					{
+						SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
+
+						auto pStvalSrc = PStnodRtiCast<STValue*>(pSymMember->m_pStnodDefinition);
+						if (MOE_FVERIFY(pStvalSrc, "Expected value for literal definition"))
+						{
+							pStvalMember = PStvalAllocAfterParse(pSymtab->m_pAlloc, pStvalSrc->m_park, pStvalSrc->m_lexsp);
+							pStvalMember->CopyValues(pStvalSrc);
+							//pStvalMember = PStvalCopy(pSymtab->m_pAlloc, pSymMember->m_pStnodDefinition->m_pStval);
+						}
+					}
+				}
+			} break;
+			case TINK_Array:
+			{
+				SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
+				auto pTinary = PTinRtiCast<TypeInfoArray *>(pTinLhs);
+
+				ARYMEMB arymemb = ArymembLookup(istrMemberName.PChz());
+
+				switch (arymemb)
+				{
+				case ARYMEMB_Count:
+					{
+						switch (pTinary->m_aryk)
+						{
+						case ARYK_Fixed:
+							{
+								auto pTinlitInt = pSymtab->PTinlitAllocUnfinal(STVALK_SignedInt);
+								pTinMember = pTinlitInt;
+
+								pStvalMember = PStvalAllocAfterParse(pSymtab->m_pAlloc, PARK_Literal, pStop->m_lexsp);
+								pStvalMember->SetS64(pTinary->m_c);
+							} break;
+						case ARYK_Reference:
+						case ARYK_Dynamic:
+							{
+								pTinMember = pSymtab->PTinBuiltin(BuiltIn::g_istrS64);
+							} break;
+						default:
+							MOE_ASSERT(false, "unknown array kind");
+							break;
+						}
+					} break;
+				case ARYMEMB_Data:
+					{
+						// TODO: think about what to do here, aN must be mutable 
+						// because it points at mutable data - inarg maybe?
+
+						//auto pTinptr = pSymtab->PTinptrAllocate(pTinary->m_pTin);
+						//pTinMember = pSymtab->PTinqualEnsure(pTinptr, FQUALK_Const);
+						pTinMember = pSymtab->PTinptrAllocate(pTinary->m_pTin);
+					} break;
+				default: 
+					EmitError(pTcctx, pStop->m_lexsp, ERRID_UnknownArrayMember,
+						"unknown array member '%s'", istrMemberName.PChz());
+					return TCRET_StoppingError;
+				}
+
+			} break;
+			default:
+				MOE_ASSERT(false, "unknown type info kind");
+				break;
+		}
+	}
+
+	if (fIsFlagEnumInstance)
+	{
+		SymbolTable * pSymtab = pTcsentTop->m_pSymtab;
+		auto pTinFlag = pSymtab->PTinBuiltin(BuiltIn::g_istrEnumFlag);
+		pTinMember = pTinFlag;
+	}
+
+	if (!pTinMember)
+	{
+		auto istrTin = IstrFromTypeInfo(pTinLhs);
+		EmitError(pTcctx, pStop->m_lexsp, ERRID_BadMemberLookup,
+			"Left hand type '%s' does not contain member '%s'", istrTin.PChz(), istrMemberName.PChz());
+		return TCRET_StoppingError;
+	}
+
+	pStop->m_pTin = pTinMember;
+	pStop->m_strees = STREES_TypeChecked;
+
+	if (pStvalMember)
+	{
+		pStop->m_pStnodResult = pStvalMember;
+	}
+
+	PopTcsent(pTcctx, &pTcsentTop, pStop);
+	return TCRET_Continue;
+}
+
 TcretDebug TcretCheckList(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
 	while (pTcsentTop->m_nState < pStnod->CPStnodChild() && !pStnod->PStnodChild(pTcsentTop->m_nState))
@@ -8993,6 +9206,10 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 
 		case PARK_AssignmentOp:
 			tcret = TcretCheckAssignmentOp(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_MemberLookup:
+			tcret = TcretCheckMemberLookup(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_ArrayDecl:

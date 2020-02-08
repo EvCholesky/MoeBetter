@@ -155,6 +155,9 @@ enum ERRID
 	ERRID_NonVoidReturnExpected		= 2062,
 	ERRID_CaseAlreadyUsed			= 2063,
 	ERRID_NoAssignmentOp			= 2064,
+	ERRID_UnknownArrayMember		= 2065,
+	ERRID_BadFlagEnumAccess			= 2066,
+	ERRID_RhsIdentifierExpected		= 2067,
 	ERRID_TypeCheckMax				= 3000,
 
 	ERRID_CodeGenMin				= ERRID_TypeCheckMax,

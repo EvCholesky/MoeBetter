@@ -724,13 +724,6 @@ Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 ,m_grfunt(GRFUNT_Default)
 {
 	m_pErrman->SetWorkspace(this);
-
-	m_pGenreg = MOE_NEW_BK_SUB(m_pAlloc, BK_Workspace, 0, GenericRegistry) GenericRegistry(m_pAlloc);
-
-	for (int filek = FILEK_Min; filek < FILEK_Max; ++filek)
-	{
-		m_mpFilekPHashHvIPFile[filek] = MOE_NEW_BK_SUB(m_pAlloc, BK_Workspace, 1, HashHvIPFile) HashHvIPFile(pAlloc, Moe::BK_Workspace);
-	}
 }
 
 WorkspaceEntry * Workspace::PEntryAppend(STNode * pStnod, SymbolTable * pSymtab)
@@ -840,17 +833,14 @@ void BeginWorkspace(Workspace * pWork, Compilation * pComp)
 	pWork->m_arypEntryChecked.Clear();
 	pWork->m_blistEntry.Clear();
 
+
+
 #if MOEB_LATER
 	MOE_ASSERT(pWork->m_arypValManaged.C() == 0, "Unexpected managed values in workspace");
 #endif
 	MOE_ASSERT(pWork->m_arypGenmapManaged.C() == 0, "Unexpected generic maps in workspace");
 
 	pWork->m_arypFile.Clear();
-	for (int filek = Workspace::FILEK_Min; filek < Workspace::FILEK_Max; ++filek)
-	{
-		pWork->m_mpFilekPHashHvIPFile[filek]->Clear(0);
-	}
-
 	pWork->m_cbFreePrev = pAlloc->CB();
 
 #if 0
@@ -861,13 +851,18 @@ void BeginWorkspace(Workspace * pWork, Compilation * pComp)
 
 	pWork->m_unset.Clear(0);
 	pWork->m_unsetTin.Clear(0);
+	pWork->m_pGenreg = MOE_NEW_BK_SUB(pAlloc, BK_Workspace, 0, GenericRegistry) GenericRegistry(pAlloc);
+
+	for (int filek = Workspace::FILEK_Min; filek < Workspace::FILEK_Max; ++filek)
+	{
+		pWork->m_mpFilekPHashHvIPFile[filek] = 
+			MOE_NEW_BK_SUB(pAlloc, BK_Workspace, 1, Workspace::HashHvIPFile) Workspace::HashHvIPFile(pAlloc, Moe::BK_Workspace);
+	}
 	
 	pWork->m_pTyper = MOE_NEW(pAlloc, TypeRegistry) TypeRegistry(pAlloc);
 	pWork->m_pSymtab = PSymtabNew(pAlloc, nullptr, IstrIntern("global"), pWork->m_pTyper, &pWork->m_unsetTin);
 	pWork->m_pSymtab->AddBuiltInSymbols(pWork);
 }
-
-
 
 #ifdef MOEB_LATER
 void BeginParse(Workspace * pWork, Lexer * pLex, const char * pChzIn, const char * pChzFilename)
@@ -959,12 +954,21 @@ void EndWorkspace(Workspace * pWork)
 		pWork->m_pAlloc->MOE_DELETE(*ppGenmap);
 	}
 	pWork->m_arypGenmapManaged.Clear();
+	if (pWork->m_pGenreg)
+	{
+		pWork->m_pAlloc->MOE_DELETE(pWork->m_pGenreg);
+		pWork->m_pGenreg = nullptr;
+	}
 
 	pWork->m_blistEntry.Clear();
 	pWork->m_arypEntryChecked.Clear();
 	for (int filek = Workspace::FILEK_Min; filek < Workspace::FILEK_Max; ++filek)
 	{
-		pWork->m_mpFilekPHashHvIPFile[filek]->Clear(0);
+		if (!pWork->m_mpFilekPHashHvIPFile[filek])
+			continue;
+
+		pWork->m_pAlloc->MOE_DELETE(pWork->m_mpFilekPHashHvIPFile[filek]);
+		pWork->m_mpFilekPHashHvIPFile[filek] = nullptr;
 	}
 
 	pWork->m_pAlloc->MOE_DELETE(pWork->m_pTyper);
@@ -984,6 +988,7 @@ void EndWorkspace(Workspace * pWork)
 	}
 	pWork->m_arypFile.Clear();
 	pWork->m_pErrman->Clear();
+	pWork->m_hashPSymJps.Clear(0);
 
 	if (pWork->m_pChzObjectFilename)
 	{

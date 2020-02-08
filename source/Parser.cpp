@@ -159,6 +159,34 @@ ErrorManager * ParseContext::PErrman() const
 	return m_pWork->m_pErrman; 
 }
 
+const char * PChzFromArymemb(ARYMEMB arymemb)
+{
+	static const char * s_mpArymembPChz[] =
+	{
+		"count",
+		"data",
+	};
+	MOE_CASSERT(MOE_DIM(s_mpArymembPChz) == ARYMEMB_Max, "missing ARYMEMB string");
+	if (arymemb == ARYMEMB_Nil)
+		return "Nil";
+
+	if ((arymemb < ARYMEMB_Nil) | (arymemb >= ARYMEMB_Max))
+		return "Unknown ARYMEMB";
+
+	return s_mpArymembPChz[arymemb];
+}
+
+ARYMEMB ArymembLookup(const char * pChzMember)
+{
+	// BB, this is dumb and slow... replace it when it's a problem
+	for (int arymemb = ARYMEMB_Min; arymemb < ARYMEMB_Max; ++arymemb)
+	{
+		if (FAreChzEqual(PChzFromArymemb((ARYMEMB)arymemb), pChzMember))
+			return (ARYMEMB)arymemb;
+	}
+	return ARYMEMB_Nil;
+}
+
 const char * PChzFromLitk(LITK litk)
 {
 	static const char * s_mpLitkPChz[] =

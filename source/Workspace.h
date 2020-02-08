@@ -58,7 +58,7 @@ extern void GenerateUniqueName(UniqueNameSet * pUnset, const char * pChzIn, char
 
 struct JobPrereqSet // tag = Jps
 {
-	Moe::CDynAry<Job *>			m_arypJob;
+	Moe::CDynAry<JobRef>			m_arypJob;
 };
 
 struct WorkspaceEntry // tag = entry

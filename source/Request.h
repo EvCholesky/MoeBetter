@@ -184,6 +184,14 @@ struct JobRef // tag = jobref
 	Job *						m_pJob;
 };
 
+#define DEBUG_REF_COUNT 0
+#if DEBUG_REF_COUNT
+#include <stdio.h>
+#define PRINT_REFC(FMT, ...)  printf(FMT, ##__VA_ARGS__)
+#else
+#define PRINT_REFC(FMT, ...)
+#endif
+
 
 
 struct Job // tag = job
@@ -222,38 +230,53 @@ Job * PJobAllocate(Compilation * pComp, void * pVData, Job * pJobParent = nullpt
 void DeleteJob(Job * pJob);
 void EnqueueJob(Compilation * pComp, Job * pJob);
 void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJob);
-
 inline JobRef::JobRef(Job * pJob) 
 	:m_pJob(pJob)
 	{ 
 		if (m_pJob)
+		{
+			PRINT_REFC("ctrref %p ++[%d->%d]\n", m_pJob, m_pJob->m_cRef, m_pJob->m_cRef+1);
 			++m_pJob->m_cRef; 
+		}
 	}
 inline JobRef::JobRef(JobRef const & jobref)
 	: m_pJob(jobref.m_pJob) 
 	{
 		if (m_pJob)
+		{
+			PRINT_REFC("addref %p ++[%d->%d]\n", m_pJob, m_pJob->m_cRef, m_pJob->m_cRef+1);
 			++m_pJob->m_cRef; 
+		}
 	}
 inline JobRef::~JobRef()
 	{ 
-		if (m_pJob && (--m_pJob->m_cRef == 0)) 
+		if (m_pJob)
 		{
-			DeleteJob(m_pJob); 
+			PRINT_REFC("defRef %p --[%d->%d]\n", m_pJob, m_pJob->m_cRef, m_pJob->m_cRef-1);
+			if (--m_pJob->m_cRef == 0)
+			{
+				DeleteJob(m_pJob); 
+			}
 		}
 	}
 inline JobRef &	JobRef::operator=(const JobRef & jobref)
 	{ 
+
 		Job * const pJobOld = m_pJob;
 		m_pJob = jobref.m_pJob;
 		if (m_pJob)
 		{
 			++m_pJob->m_cRef;
+			PRINT_REFC("incRef %p ++[%d->%d]\n", m_pJob, m_pJob->m_cRef-1, m_pJob->m_cRef);
 		}
 
-		if (pJobOld && (--pJobOld->m_cRef == 0) )
+		if (pJobOld)
 		{
-			DeleteJob(pJobOld);
+			PRINT_REFC("defRef %p ++[%d->%d]\n", pJobOld, pJobOld->m_cRef, pJobOld->m_cRef-1);
+			if (--pJobOld->m_cRef == 0)
+			{
+				DeleteJob(pJobOld);
+			}
 		}
 		return *this;
 	}

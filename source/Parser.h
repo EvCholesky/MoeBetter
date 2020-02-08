@@ -177,6 +177,7 @@ public:
 							STNode(STEXK stexk, PARK park, const LexSpan & lexsp)
 							:m_tok(TOK_Nil)
 							,m_park(park)
+							,m_stexk(StexkFromPark(park))
 							,m_strees(STREES_Parsed)
 							,m_grfstnod(FSTNOD_None)
 							,m_lexsp(lexsp)
@@ -225,6 +226,7 @@ public:
 								}
 	TOK						m_tok;		
 	PARK					m_park;		
+	STEXK					m_stexk;
 	STREES					m_strees;	
 	GRFSTNOD				m_grfstnod;
 

@@ -178,7 +178,7 @@ const char * PChzFromArymemb(ARYMEMB arymemb)
 
 ARYMEMB ArymembLookup(const char * pChzMember)
 {
-	// BB, this is dumb and slow... replace it when it's a problem
+	// BB, this is dumb and slow.
 	for (int arymemb = ARYMEMB_Min; arymemb < ARYMEMB_Max; ++arymemb)
 	{
 		if (FAreChzEqual(PChzFromArymemb((ARYMEMB)arymemb), pChzMember))
@@ -252,16 +252,16 @@ bool FNeedsImplicitMember(ENUMIMP enumimp, ENUMK enumk)
 
 Moe::InString IstrFromEnumimp(ENUMIMP enumimp)
 {
-	const InString mpEnumimpIstr[] =
+	static const InString * mpEnumimpIstr[] =
 	{
-	BuiltIn::g_istrEnumNil,		// ENUMIMP_NilConstant
-	BuiltIn::g_istrEnumMin,		// ENUMIMP_MinConstant
-	BuiltIn::g_istrEnumLast,	// ENUMIMP_LastConstant
-	BuiltIn::g_istrEnumMax,		// ENUMIMP_MaxConstant
-	BuiltIn::g_istrEnumNone,	// ENUMIMP_None
-	BuiltIn::g_istrEnumAll,		// ENUMIMP_All
-	BuiltIn::g_istrEnumNames,	// ENUMIMP_Names
-	BuiltIn::g_istrEnumValues,	// ENUMIMP_Values
+	&BuiltIn::g_istrEnumNil,		// ENUMIMP_NilConstant
+	&BuiltIn::g_istrEnumMin,		// ENUMIMP_MinConstant
+	&BuiltIn::g_istrEnumLast,		// ENUMIMP_LastConstant
+	&BuiltIn::g_istrEnumMax,		// ENUMIMP_MaxConstant
+	&BuiltIn::g_istrEnumNone,		// ENUMIMP_None
+	&BuiltIn::g_istrEnumAll,		// ENUMIMP_All
+	&BuiltIn::g_istrEnumNames,		// ENUMIMP_Names
+	&BuiltIn::g_istrEnumValues,		// ENUMIMP_Values
 	};
 
 	if (enumimp == ENUMIMP_Nil)
@@ -270,7 +270,7 @@ Moe::InString IstrFromEnumimp(ENUMIMP enumimp)
 	if ((enumimp < ENUMIMP_Nil) | (enumimp >= ENUMIMP_Max))
 		return IstrIntern("Unknown EnumImp");
 
-	return mpEnumimpIstr[enumimp];
+	return *mpEnumimpIstr[enumimp];
 }
 
 const char * PChzAbbrevFromPark(PARK park)

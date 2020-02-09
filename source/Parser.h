@@ -203,6 +203,12 @@ public:
 								{ return m_apStnodChild; }
 	STNode **				PPStnodChildMax()
 								{ return m_apStnodChild + m_cpStnodChild; }
+	bool					FIsChildAtIndex(STNode * pStnod, int i) const 
+								{
+									if (i < 0 || i >= m_cpStnodChild)
+										return false;
+									return m_apStnodChild[i] == pStnod;
+								}
 	void					SetChildArray(STNode ** apStnodChild, int cpStnodChild);
 	void					CopyChildArray(Moe::Alloc * pAlloc, STNode ** apStnodChild, int cpStnodChild);
 	void					CopyChildArray(Moe::Alloc * pAlloc, STNode * pStnodChild);
@@ -211,7 +217,7 @@ public:
 	bool					FHasChildArray() const
 								{ return m_cpStnodChild > 0; }
 	STEXK					Stexk() const
-								{ return StexkFromPark(m_park); }
+								{ return m_stexk; }
 
 	bool					FCheckIsValid(ErrorManager * pErrman);
 

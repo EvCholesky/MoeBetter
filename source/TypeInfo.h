@@ -51,15 +51,17 @@ struct TypeInfoProcedure;
 		BLTIN(Void) STR(void) \
 		BLTIN(String) STR(string) \
 		BLTIN(EnumNil) STR(nil)	\
-		BLTIN(EnumMin) STR(nil)	\
-		BLTIN(EnumLast) STR(nil) \
-		BLTIN(EnumMax) STR(nil)	\
-		BLTIN(EnumNone) STR(nil) \
-		BLTIN(EnumAll) STR(nil)	\
-		BLTIN(EnumNames) STR(nil) \
-		BLTIN(EnumValues) STR(nil) \
+		BLTIN(EnumMin) STR(min)	\
+		BLTIN(EnumLast) STR(last) \
+		BLTIN(EnumMax) STR(max)	\
+		BLTIN(EnumNone) STR(none) \
+		BLTIN(EnumAll) STR(all)	\
+		BLTIN(EnumNames) STR(names) \
+		BLTIN(EnumValues) STR(values) \
 		BLTIN(EnumFlag) STR(_flag)	\
 		BLTIN(TypeInfo) STR(TypeInfo) \
+		BLTIN(Loose) STR(loose) \
+		BLTIN(Strict) STR(strict) \
 		BLTIN(GlobalTinTable) STR(_tinTable)	
 
 #define BLTIN(x) \

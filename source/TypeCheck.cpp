@@ -5957,6 +5957,32 @@ bool FIsValidLhs(const STNode * pStnod)
 	return (tink != TINK_Null) & (tink != TINK_Void) & (tink != TINK_Literal);
 }
 
+TypeInfo * PTinFromRange(
+	TypeCheckContext * pTcctx,
+	SymbolTable * pSymtab,
+	STNode * pStnod,
+	BigInt bintMin,
+	BigInt bintMax)
+{
+	BigInt bint = (bintMin.m_nAbs >= bintMax.m_nAbs) ? bintMin : bintMax;
+
+	if (bintMin.m_fIsNegative)
+	{
+		if (bintMax.m_nAbs > LLONG_MAX)
+		{
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_LitOverflow, "Range too large to wit within 64 bit type [%s%lld .. %s%lld]",
+				(bintMin.m_fIsNegative) ? "-" : "", bintMin.m_nAbs,
+				(bintMax.m_fIsNegative) ? "-" : "", bintMax.m_nAbs);
+		}
+
+		// pass a negative int to PTinFromBint if we need signed values
+		bint.m_fIsNegative = true;
+	}
+
+	auto pTin = PTinFromBint(pTcctx, pSymtab, bint);
+	return pTin;
+}
+
 bool FIsType(STNode * pStnod)
 {
 	if (pStnod->m_pTin && pStnod->m_pTin->m_tink == TINK_Literal)
@@ -6985,13 +7011,13 @@ TCRET TcretCheckStructDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckS
 	if (!MOE_FVERIFY(pStstruct, "expected STStruct"))
 		return TCRET_StoppingError;
 
-	if (pStnod->PStnodChild(pTcsentTop->m_nState) == pStstruct->m_pStnodIdentifier)
+	if (pStnod->FIsChildAtIndex(pStstruct->m_pStnodIdentifier, pTcsentTop->m_nState))
 		++pTcsentTop->m_nState;
 
 	// Don't try to typecheck the structure members if we haven't replaced our generic params yet.
 	// NOTE: we type check the structure parameter decls, but we can't typecheck the members because we 
 	//   haven't substituted all of our generic constants yet.
-	if (pTinstruct->FHasGenericParams() && pStnod->PStnodChild(pTcsentTop->m_nState) == pStstruct->m_pStnodDeclList)
+	if (pTinstruct->FHasGenericParams() && pStnod->FIsChildAtIndex(pStstruct->m_pStnodDeclList, pTcsentTop->m_nState))
 	{
 		++pTcsentTop->m_nState;
 	}
@@ -7045,6 +7071,497 @@ TCRET TcretCheckStructDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckS
 	return TCRET_Continue;
 }
 
+void SetEnumConstantValue(TypeCheckContext * pTcctx, STDecl * pStdeclConstant, const BigInt & bint)
+{
+	if (!MOE_FVERIFY(pStdeclConstant, "expected declaration for enum constant"))
+		return;
+
+	auto pStval = PStvalAllocAfterParse(pTcctx->m_pAlloc, PARK_Literal, pStdeclConstant->m_lexsp);
+	if (bint.m_fIsNegative)
+	{
+		pStval->SetS64(bint.S64Coerce());
+	}
+	else
+	{
+		pStval->SetU64(bint.U64Coerce());
+	}
+
+	pStdeclConstant->m_pStnodInit = pStval;
+
+}
+
+void ResolveSpoofTypedef(
+	TypeCheckContext * pTcctx, 
+	SymbolTable * pSymtab,
+	STNode * pStnod,
+	InString istrIdent,
+	TypeInfo * pTin,
+	GRFSYMLOOK grfsymlook)
+{
+	auto pSym = pSymtab->PSymLookup(istrIdent, pStnod->m_lexsp, grfsymlook);
+
+	if (!MOE_FVERIFY(pSym && pSym->m_pStnodDefinition == pStnod, "symbol lookup failed for '%s'", istrIdent.PChz()))
+		return;
+	
+	//MOE_ASSERT(pSym->m_pTin == nullptr, "spoof typedef already resolved");
+	//pSym->m_pTin = pTin;
+
+	OnTypeResolve(pTcctx, pSym);
+}
+
+void SpoofLiteralArray(TypeCheckContext * pTcctx, SymbolTable * pSymtab, STNode * pStnodArray, int cElement, TypeInfo * pTinElement)
+{
+#if MOEB_LATER
+	auto pStdeclArray = PStnodRtiCast<CSTDecl *>(pStnodArray);
+	auto pSym = pStnodArray->PSym();
+	if (!MOE_FVERIFY(pStdeclArray && pSym, "bad spoofed literal array"))
+		return;
+
+	TypeInfoArray * pTinary = MOE_NEW(pSymtab->m_pAlloc, TypeInfoArray) TypeInfoArray();
+
+	pTinary->m_pTin = pTinElement;
+	pTinary->m_c = cElement;
+	pTinary->m_aryk = ARYK_Fixed;
+	pSymtab->AddManagedTin(pTinary);
+	pTinary = pSymtab->PTinMakeUnique(pTinary);
+
+	TypeInfoLiteral * pTinlit = EWC_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+	pSymtab->AddManagedTin(pTinlit);
+	pTinlit->m_c = cElement;
+	pTinlit->m_litty.m_litk = LITK_Compound;
+	pTinlit->m_pTinSource = pTinary;
+	pTinlit->m_pStnodDefinition = pStnodArray;
+
+	pStnodArray->m_pTin = pTinlit;
+	pSym->m_pTin = pTinlit;
+
+	CSTNode * pStnodList = EWC_NEW(pSymtab->m_pAlloc, CSTNode) CSTNode(pSymtab->m_pAlloc, pStnodArray->m_lexsp);
+	pStnodList->m_park = PARK_ExpressionList;
+	pStnodList->m_pTin = pTinlit;
+
+	MOE_ASSERT(pStdeclArray->m_iStnodInit == -1, "expected empty array");
+	pStdeclArray->m_iStnodInit = pStnodArray->IAppendChild(pStnodList);
+#else
+	MOE_ASSERT(false, "need to support spoofing literal array");
+#endif
+}
+
+void AddEnumNameValuePair(
+	TypeCheckContext * pTcctx,
+	SymbolTable * pSymtab,
+	const LexSpan & lexsp,
+	CDynAry<STNode *> * parypStnodNames,
+	CDynAry<STNode *> * parypStnodValues,
+	STDecl * pStdeclConstant,
+	TypeInfo * pTinValue, 
+	TypeInfo * pTinName)
+{
+	Alloc * pAlloc = pTcctx->m_pAlloc;
+
+	auto pStvalValue = PStvalAllocAfterParse(pAlloc, PARK_Literal, lexsp);
+	pStvalValue->m_pTin = pTinValue; // finalized literal version of enum.loose type
+
+	auto pStvalInit = PStnodRtiCast<STValue *>(pStdeclConstant->m_pStnodInit);
+	if (MOE_FVERIFY(pStvalInit, "expected value"))
+	{
+		pStvalValue->CopyValues(pStvalInit);
+	}
+
+	parypStnodValues->Append(pStvalValue);
+
+	auto pStvalName = PStvalAllocAfterParse(pAlloc, PARK_Literal, lexsp);
+	pStvalName->m_pTin = pTinName;
+
+	STNode * pStnodIdent = (pStdeclConstant) ? pStdeclConstant->m_pStnodIdentifier : nullptr;
+	if (MOE_FVERIFY(pStnodIdent, "Enum constant missing name"))
+	{
+		pStvalName->SetIdentifier(IstrFromIdentifier(pStnodIdent));
+	}
+
+	parypStnodNames->Append(pStvalName);
+}
+
+TCRET TcretCheckEnumDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	auto pTinenum = PTinDerivedCast<TypeInfoEnum *>(pStnod->m_pTin);
+	auto pStenum = PStnodRtiCast<STEnum *>(pStnod);
+	if (!MOE_FVERIFY(pTinenum && pStenum, "missing struct type info"))
+		return TCRET_StoppingError;
+
+	// skip identifier
+	if (pStenum->FIsChildAtIndex(pStenum->m_pStnodIdentifier, pTcsentTop->m_nState))
+		++pTcsentTop->m_nState;
+
+	if (pTcsentTop->m_nState == 1)
+	{
+		++pTcsentTop->m_nState;
+
+		auto pSym = pStnod->PSym();
+		MOE_ASSERT(pSym, "expected enum symbol");
+		pTcsentTop->m_pSymContext = pSym;
+
+		// type spec
+		if (pStenum->m_pStnodType)
+		{
+			auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStenum->m_pStnodType);
+			if (pTcsentPushed)
+			{
+				pTcsentPushed->m_pSymtab = pStnod->m_pSymtab;
+				pTcsentPushed->m_tcctx = TCCTX_TypeSpecification;
+			}
+			return TCRET_Continue;
+		}
+	}
+
+	if (pTcsentTop->m_nState == 2)
+	{
+		if (pStenum->m_pStnodType)
+		{
+			auto pStnodType = pStenum->m_pStnodType;
+			bool fIsValidTypeSpec;
+			auto pTinLoose = PTinFromTypeSpecification(
+								pTcctx,
+								pTcsentTop->m_pSymtab,
+								pStnodType,
+								pTcsentTop->m_grfsymlook,
+								nullptr,
+								&fIsValidTypeSpec);
+
+			if (fIsValidTypeSpec)
+			{
+				pTinenum->m_pTinLoose = pTinLoose;
+			}
+		}
+		++pTcsentTop->m_nState;
+	}
+
+	if (pTcsentTop->m_nState == 3)
+	{
+		if (pStenum->m_pStnodConstantList)
+		{
+			// initial incremented value is 1 (flagEnum) or 0 (basic enums) 
+			int nEnumInitial = (pTinenum->m_enumk == ENUMK_FlagEnum) ? 0 : -1;
+			pTinenum->m_bintLatest = BintFromInt(nEnumInitial);
+
+			auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStenum->m_pStnodConstantList);
+			if (pTcsentPushed)
+			{
+				pTcsentPushed->m_pSymtab = pStnod->m_pSymtab;
+			}
+			++pTcsentTop->m_nState;
+			return TCRET_Continue;
+		}
+	}
+
+	auto pTinstruct = &pTinenum->m_tinstructProduced;
+	MOE_ASSERT(pTinstruct->m_aryTypemembField.C() == 0, "no fields expected in enum struct");
+
+	STDecl * mpEnumimpPStdecl[ENUMIMP_Max];
+	ZeroAB(mpEnumimpPStdecl, sizeof(mpEnumimpPStdecl));
+
+	STNode * pStnodConstantList = pStenum->m_pStnodConstantList;
+
+	int cStnodChildImplicit = 0;
+	int cStnodChild = pStnodConstantList->CPStnodChild();
+	CDynAry<ENUMIMP> mpIStnodChildEnumimp(pTcctx->m_pAlloc, BK_TypeCheck, cStnodChild);
+	mpIStnodChildEnumimp.AppendFill(cStnodChild, ENUMIMP_Nil);
+
+	if (pStenum->m_pStnodConstantList)
+	{
+		// loop over our constants and find the min/max values
+
+		bool fIsFirst = true;
+		BigInt bintMin;
+		BigInt bintLast;
+		BigInt bintAll;
+		for (int ipStnod = 0; ipStnod < pStnodConstantList->CPStnodChild(); ++ipStnod)
+		{
+			int enumimp;
+			for (enumimp = ENUMIMP_Min; enumimp < ENUMIMP_Max; ++enumimp)
+			{
+				if (pStenum->m_mpEnumimpIstnod[enumimp] == ipStnod)
+					break;
+			}
+
+			auto pStnodConstant = pStnodConstantList->PStnodChild(ipStnod);
+			auto pStdeclConstant = PStnodDerivedCast<STDecl *>(pStnodConstant);
+			if (enumimp < ENUMIMP_Max)
+			{
+				mpEnumimpPStdecl[enumimp] = pStdeclConstant;
+				mpIStnodChildEnumimp[ipStnod] = (ENUMIMP)enumimp;
+				++cStnodChildImplicit;
+				continue;
+			}
+
+			auto pStvalConstant = PStnodRtiCast<STValue *>(pStdeclConstant->m_pStnodInit);
+			if (!MOE_FVERIFY(pStvalConstant, "PARK_EnumConstant should be a value"))
+				continue;
+
+			auto bint = BintFromStval(pStvalConstant);
+			bintAll = BintBitwiseOr(bintAll, bint);
+			if (fIsFirst)
+			{
+				fIsFirst = false;
+				bintMin = bint;
+				bintLast = bint;
+			}
+			else
+			{
+				if (bint < bintMin)
+					bintMin = bint;
+				if (bint > bintLast)
+					bintLast = bint;
+			}
+		}
+
+		BigInt bintMax = BintAdd(bintLast, BintFromInt(1));
+		pTinenum->m_bintMin = bintMin;
+		pTinenum->m_bintMax = bintMax;
+
+		auto pTinLoose = pTinenum->m_pTinLoose;
+		if (pTinLoose && pTinLoose->m_tink != TINK_Numeric && FIsInteger(((TypeInfoNumeric*)pTinLoose)->m_numk))
+		{
+			auto istrTin = IstrFromTypeInfo(pTinLoose);
+			EmitError(pTcctx, pStnod->m_lexsp, ERRID_BadLooseType,  
+				"loose type for enum %s should be integer type, but is %s", pTinenum->m_istrName.PChz(), istrTin.PChz());
+			pTinLoose = nullptr;
+		}
+
+		if (!pTinLoose)
+		{
+			pTinenum->m_pTinLoose = PTinFromRange(pTcctx, pTcsentTop->m_pSymtab, pStnod, bintMin, bintLast);
+			pTinLoose = pTinenum->m_pTinLoose;
+		}
+
+		auto pTinn = PTinRtiCast<TypeInfoNumeric *>(pTinLoose);
+		if (MOE_FVERIFY(pTinn && FIsInteger(pTinn->m_numk), "bad enum pTinLoose"))
+		{
+			BigInt bintNil;
+			if (pTinn->m_numk = NUMK_SignedInt)
+			{
+				bintNil = BintFromInt(-1);
+			}
+			else
+			{
+				switch (pTinn->m_cBit)
+				{
+				case 8:		bintNil = BintFromUint(0xFF); break;
+				case 16:	bintNil = BintFromUint(0xFFFF); break;
+				case 32:	bintNil = BintFromUint(0xFFFFFFFF); break;
+				case 64:	bintNil = BintFromUint(0xFFFFFFFFFFFFFFFFULL); break;
+				default: MOE_ASSERT(false, "unexpected cBit");
+				}
+			}
+
+			if (pStenum->m_enumk == ENUMK_Basic)
+			{
+				SetEnumConstantValue(pTcctx, mpEnumimpPStdecl[ENUMIMP_NilConstant], bintNil);
+				SetEnumConstantValue(pTcctx, mpEnumimpPStdecl[ENUMIMP_MinConstant], bintMin);
+				SetEnumConstantValue(pTcctx, mpEnumimpPStdecl[ENUMIMP_LastConstant], bintLast);
+				SetEnumConstantValue(pTcctx, mpEnumimpPStdecl[ENUMIMP_MaxConstant], bintMax);
+			}
+			else
+			{
+				SetEnumConstantValue(pTcctx, mpEnumimpPStdecl[ENUMIMP_None], BintFromInt(0));
+				SetEnumConstantValue(pTcctx, mpEnumimpPStdecl[ENUMIMP_All], bintAll);
+			}
+		}
+	}
+
+	if (!pTinenum->m_pTinLoose)
+	{
+		EmitError(pTcctx, pStnod->m_lexsp, ERRID_BadLooseType, 
+			"Unable to determine loose type for enum %s", pTinenum->m_istrName.PChz());
+		return TCRET_StoppingError;
+	}
+	else
+	{
+		STNode * pStnodNames = mpEnumimpPStdecl[ENUMIMP_Names];
+		STNode * pStnodValues = mpEnumimpPStdecl[ENUMIMP_Values];
+
+		int cBitLoose = 64;
+		NUMK numkLoose = NUMK_SignedInt;
+		auto pTinnLoose = PTinRtiCast<TypeInfoNumeric *>(pTinenum->m_pTinLoose);
+		if (MOE_FVERIFY(pTinnLoose && FIsInteger(pTinnLoose->m_numk), "expected enum type to be integer"))
+		{
+			cBitLoose = pTinnLoose->m_cBit;
+			numkLoose = pTinnLoose->m_numk;
+		}
+
+		auto pSymtab = pTcsentTop->m_pSymtab;
+		TypeInfoLiteral * pTinlitValue = pSymtab->PTinlitFromLitk(LITK_Numeric, cBitLoose, numkLoose);
+		TypeInfoLiteral * pTinlitName = pSymtab->PTinlitFromLitk(LITK_String);
+
+		auto pTinU8 = pSymtab->PTinBuiltin(BuiltIn::g_istrU8);
+		TypeInfo * pTinString = pSymtab->PTinptrAllocate(pSymtab->PTinqualWrap(pTinU8, FQUALK_Const));
+
+		SpoofLiteralArray(pTcctx, pSymtab, pStnodNames, cStnodChild - cStnodChildImplicit, pTinString);
+		auto pStdeclNames = PStnodDerivedCast<STDecl *>(pStnodNames);
+		auto pStnodNameList = pStdeclNames->m_pStnodInit;
+
+		SpoofLiteralArray(pTcctx, pSymtab, pStnodValues, cStnodChild - cStnodChildImplicit, pTinenum->m_pTinLoose);
+		auto pStdeclValues = PStnodDerivedCast<STDecl *>(pStnodValues);
+		auto pStnodValueList = pStdeclValues->m_pStnodInit;
+		CDynAry<STNode *> arypStnodNames(pTcctx->m_pAlloc, BK_TypeCheck, cStnodChild);
+		CDynAry<STNode *> arypStnodValues(pTcctx->m_pAlloc, BK_TypeCheck, cStnodChild);
+
+		// assign pTin and finalize literals
+		for (int iStnodMember = 0; iStnodMember < cStnodChild; ++iStnodMember)
+		{
+			auto pStdeclMember = PStnodRtiCast<STDecl *>(pStnodConstantList->PStnodChild(iStnodMember));
+			if (!MOE_FVERIFY(pStdeclMember, "expected decl"))
+				continue;
+
+			ENUMIMP enumimp = mpIStnodChildEnumimp[iStnodMember];
+			if ((enumimp == ENUMIMP_Names) | (enumimp == ENUMIMP_Values))
+				continue;
+
+			// just make sure the init type fits the specified one
+			auto pStnodInit = pStdeclMember->m_pStnodInit;
+			if (pStnodInit)
+			{
+				TypeInfo * pTinInit = pStdeclMember->m_pTin;
+
+				pTinInit = PTinPromoteUntypedRvalueTightest(pTcctx, pSymtab, pStnodInit, pTinenum->m_pTinLoose);
+				if (!FCanImplicitCast(pTinInit, pTinenum->m_pTinLoose))
+				{
+					EmitError(pTcctx, pStnodInit->m_lexsp, ERRID_InitTypeMismatch, 
+						"Cannot initialize constant of type %s with %s",
+						IstrFromTypeInfo(pTinenum->m_pTinLoose).PChz(),
+						IstrFromTypeInfo(pTinInit).PChz());
+				}
+			}
+
+			auto pTinecon = pTinenum->m_aryTinecon.AppendNew();
+
+			auto pStvalMember = PStnodDerivedCast<STValue *>(pStdeclMember->m_pStnodInit);
+			pTinecon->m_bintValue = BintFromStval(pStvalMember);
+
+			STNode * pStnodIdent = (pStdeclMember) ? pStdeclMember->m_pStnodIdentifier : nullptr;
+			if (MOE_FVERIFY(pStnodIdent, "Enum constant missing name"))
+			{
+				pTinecon->m_istrName = IstrFromIdentifier(pStnodIdent);
+			}
+
+			if (pStdeclMember->m_grfstnod.FIsSet(FSTNOD_ImplicitMember))
+				continue;
+
+			AddEnumNameValuePair(pTcctx, pSymtab, pStnod->m_lexsp, &arypStnodNames, &arypStnodValues, pStdeclMember, pTinlitValue, pTinlitName);
+		}
+		pStnodNameList->SetChildArray(arypStnodNames.A(), int(arypStnodNames.C()));
+		pStnodValueList->SetChildArray(arypStnodValues.A(), int(arypStnodValues.C()));
+	}
+
+	Symbol * pSymEnum = nullptr;
+	if (pStenum->m_pStnodIdentifier)
+	{
+		STNode * pStnodIdent = pStenum->m_pStnodIdentifier;
+		auto strIdent = IstrFromIdentifier(pStnodIdent);
+		pSymEnum = pTcsentTop->m_pSymtab->PSymLookup(strIdent, pStnod->m_lexsp, pTcsentTop->m_grfsymlook);
+	}
+
+	if (!MOE_FVERIFY(pSymEnum, "Failed to find enum name symbol"))
+		return TCRET_StoppingError;
+	if (!MOE_FVERIFY(PTinFromSymbol(pSymEnum), "expected structure type info to be created during parse"))
+		return TCRET_StoppingError;
+
+	auto grfsymlook = pTcsentTop->m_grfsymlook;
+	ResolveSpoofTypedef(pTcctx, pStnod->m_pSymtab, pStnod, BuiltIn::g_istrLoose, pTinenum->m_pTinLoose, grfsymlook);
+	ResolveSpoofTypedef(pTcctx, pStnod->m_pSymtab, pStnod, BuiltIn::g_istrStrict, pTinenum, grfsymlook);
+
+	OnTypeResolve(pTcctx, pSymEnum);
+	pStnod->m_strees = STREES_TypeChecked;
+	PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	return TCRET_Continue;
+}
+
+TCRET TcretCheckEnumConstant(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	auto pStdecl = PStnodRtiCast<STDecl *>(pStnod);
+	if (pStdecl->FIsChildAtIndex(pStdecl->m_pStnodIdentifier, pTcsentTop->m_nState))
+		++pTcsentTop->m_nState;
+
+	if (pTcsentTop->m_nState < pStdecl->CPStnodChild())
+	{
+		(void) PTcsentPush(pTcctx, &pTcsentTop, pStdecl->PStnodChild(pTcsentTop->m_nState));
+		++pTcsentTop->m_nState;
+		return TCRET_Continue;
+	}
+
+	TypeInfoEnum * pTinenum = nullptr;
+	auto pTinlit = PTinRtiCast<TypeInfoLiteral *>(pStdecl->m_pTin);
+	if (pTinlit)
+	{
+		pTinenum = PTinRtiCast<TypeInfoEnum *>(pTinlit->m_pTinSource);
+	}
+		
+	if (!MOE_FVERIFY(pTinenum, "expected enum literal") ||
+		!MOE_FVERIFY(pStdecl, "enum literal without syntax tree decl struct"))
+		return TCRET_StoppingError;
+
+	STNode * pStnodIdent = pStdecl->m_pStnodIdentifier;
+	if (!MOE_FVERIFY(pStnodIdent, "constant Declaration without identifier"))				
+		return TCRET_StoppingError;
+		
+	auto istrIdent = IstrFromIdentifier(pStnodIdent);
+	auto pStnodInit = pStdecl->m_pStnodInit;
+	if (pStnodInit)
+	{
+		TypeInfo * pTinInit = pStnodInit->m_pTin;
+		bool fHasConstInt = pTinInit->m_tink == TINK_Literal; 
+
+		if (!fHasConstInt)
+		{
+			EmitError(pTcctx, pStdecl->m_lexsp, ERRID_NonConstantInLiteral,
+				"initializing enum constant '%s' with non-constant", istrIdent.PChz());
+			return TCRET_StoppingError;
+		}
+
+		auto pStvalInit = PStnodDerivedCast<STValue *>(pStnodInit);
+		//pStnod->m_pStval = PStvalCopy(pTcctx->m_pAlloc, pStnodInit->m_pStval);
+		if (pStvalInit)
+		{
+			pTinenum->m_bintLatest = BintFromStval(pStvalInit);
+		}
+	}
+	else if (!pStdecl->m_grfstnod.FIsSet(FSTNOD_ImplicitMember))
+	{
+		if (pTinenum->m_enumk == ENUMK_FlagEnum)
+		{
+			pTinenum->m_bintLatest = BintNextPowerOfTwo(pTinenum->m_bintLatest);
+		}
+		else
+		{
+			pTinenum->m_bintLatest = BintAdd(pTinenum->m_bintLatest, BintFromUint(1));
+		}
+		SetEnumConstantValue(pTcctx, pStdecl, pTinenum->m_bintLatest);
+	}
+
+	// Find our symbol and resolve any pending unknown types - we don't have a concrete type yet
+	//  but that should be ok.
+	auto pSymtab = pTcsentTop->m_pSymtab;
+
+	// TODO: Using
+	Symbol * pSymIdent = pSymtab->PSymLookup(istrIdent, pStnodIdent->m_lexsp, pTcsentTop->m_grfsymlook);
+
+	if (MOE_FVERIFY(pSymIdent && pSymIdent->m_pStnodDefinition == pStdecl, "symbol lookup failed for '%s'", istrIdent.PChz()))
+	{
+		AddSymbolReference(pTcsentTop->m_pSymContext, pSymIdent);
+
+		pStdecl->m_pSymbase = pSymIdent;
+		/*
+		if (pSymIdent->m_pTin == nullptr)
+		{
+			pSymIdent->m_pTin = pStdecl->m_pTin;
+		}*/
+	}
+	OnTypeResolve(pTcctx, pSymIdent);
+
+	pStdecl->m_strees = STREES_TypeChecked;
+	PopTcsent(pTcctx, &pTcsentTop, pStdecl);
+	return TCRET_Continue;
+}
+
 TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
 	auto pStdecl = PStnodDerivedCast<STDecl *>(pStnod);
@@ -7073,7 +7590,7 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckS
 
 	if (pTcsentTop->m_nState < pStnod->CPStnodChild())
 	{
-		if (pStdecl->PStnodChild(pTcsentTop->m_nState) != pStdecl->m_pStnodIdentifier)
+		if (!pStdecl->FIsChildAtIndex(pStdecl->m_pStnodIdentifier, pTcsentTop->m_nState))
 		{
 			auto pTcsentPushed = PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState));
 			if (pTcsentPushed)
@@ -7360,9 +7877,9 @@ TcretDebug TcretCheckDecl(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckS
 TcretDebug TcretCheckConstantDecl(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
 	auto pStdecl = PStnodDerivedCast<STDecl *>(pStnod);
-	if (pTcsentTop->m_nState < 1)
+	if (pStdecl->FIsChildAtIndex(pStdecl->m_pStnodIdentifier, pTcsentTop->m_nState))
 	{
-		pTcsentTop->m_nState = 1;	// skip the identifier
+		++pTcsentTop->m_nState;	// skip the identifier
 
 		auto pStnodIdent = pStdecl->m_pStnodIdentifier;
 		if (MOE_FVERIFY(pStnodIdent, "constant missing identifier"))
@@ -8836,9 +9353,9 @@ TcretDebug TcretCheckAssignmentOp(STNode * pStnod, TypeCheckContext * pTcctx, Ty
 	return TCRET_Continue;
 }
 
-TcretDebug TcretCheckMemberLookup(STNode * _pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+TcretDebug TcretCheckMemberLookup(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
-	auto pStop = PStnodRtiCast<STOperator*>(_pStnod);
+	auto pStop = PStnodRtiCast<STOperator*>(pStnod);
 	if (MOE_FVERIFY(pStop, "expected binary operator"))
 		return TCRET_StoppingError;
 
@@ -9169,6 +9686,14 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 
 		case PARK_StructDefinition:
 			tcret = TcretCheckStructDef(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_EnumDefinition:
+			tcret = TcretCheckEnumDef(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_EnumConstant:
+			tcret = TcretCheckEnumConstant(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_Decl:

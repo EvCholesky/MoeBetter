@@ -221,9 +221,10 @@ public:
 								}
 
 	TypeInfoLiteral *		PTinlitFromLitk(LITK litk);
-	TypeInfoLiteral *		PTinlitFromLitk(LITK litk, int cBit, NUMK numk);
+	TypeInfoLiteral *		PTinlitFromLitk(LITK litk, int cBit, NUMK grfnumkl);
 	TypeInfoLiteral *		PTinlitAllocUnfinal(STVALK stvalk);
 	TypeInfoLiteral *		PTinlitCopy(TypeInfoLiteral * pTinlitSrc);
+	TypeInfoLiteral *		PTinlitAllocCompound(TypeInfo * pTinSource, STNode * pStnodDefinition, s64 cElement);
 	TypeInfoPointer *		PTinptrAllocate(TypeInfo * pTinPointedTo, bool fIsImplicitRef = false);
 	TypeInfoQualifier *		PTinqualEnsure(TypeInfo * pTinTarget, GRFQUALK grfqualk);
 	TypeInfoQualifier *		PTinqualWrap(TypeInfo * pTinTarget, GRFQUALK grfqualk);

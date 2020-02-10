@@ -1554,6 +1554,7 @@ SYMCOLLIS SymcollisCheck(
 	return symcollis;
 }
 
+
 TypeInfoLiteral * SymbolTable::PTinlitFromLitk(LITK litk)
 {
 	if (!FIsValid(litk))
@@ -1591,6 +1592,20 @@ TypeInfoLiteral * SymbolTable::PTinlitFromLitk(LITK litk, int cBit, NUMK numk)
 	}
 
 	return nullptr;
+}
+
+TypeInfoLiteral * SymbolTable::PTinlitAllocCompound(TypeInfo * pTinSource, STNode * pStnodDefinition, s64 cElement)
+{
+	// BB - this should search for a unique copy first
+	TypeInfoLiteral * pTinlit = MOE_NEW(m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+	pTinlit->m_litty.m_litk = LITK_Compound;
+	pTinlit->m_pTinSource = pTinSource;
+	pTinlit->m_pStnodDefinition = pStnodDefinition;
+	pTinlit->m_c = cElement;
+	AddManagedTin(pTinlit);
+
+	pTinlit = PTinMakeUnique(pTinlit);
+	return pTinlit;
 }
 
 TypeInfoLiteral * SymbolTable::PTinlitAllocUnfinal(STVALK stvalk)
@@ -2729,8 +2744,7 @@ STNode * PStnodParseTypeSpecifier(ParseContext * pParctx, Lexer * pLex, const ch
 	}
 	else
 	{
-		MOE_ASSERT(!pStnod->FHasChildArray(), "child array should be empty");
-		pStnod->CopyChildArray(pParctx->m_pAlloc, pStnodChild);
+		pStnod->AppendChildToArray(pParctx->m_pAlloc, pStnodChild);
 
 #ifdef MOEB_NO_TYPES_IN_PARSE
 		if (auto pTinptr = PTinRtiCast<TypeInfoPointer *>(pStnod->m_pTin))

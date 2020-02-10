@@ -159,6 +159,8 @@ enum ERRID
 	ERRID_BadFlagEnumAccess			= 2066,
 	ERRID_RhsIdentifierExpected		= 2067,
 	ERRID_BadLooseType				= 2068,
+	ERRID_NonConstantArraySize		= 2069,
+	ERRID_EmpyArrayLiteral			= 2070,
 	ERRID_TypeCheckMax				= 3000,
 
 	ERRID_CodeGenMin				= ERRID_TypeCheckMax,

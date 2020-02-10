@@ -585,6 +585,7 @@ TypeInfo * PTinReadType(const char ** ppChz, SymbolTable * pSymtab)
 	else if (chFirst == 'A') // Array
 	{
 		++(*ppChz);
+		// BB - need unique allocation for array types
 		TypeInfoArray * pTinary = MOE_NEW(pSymtab->m_pAlloc, TypeInfoArray) TypeInfoArray();
 
 		if (**ppChz == 'R') // ARYK_Reference
@@ -2033,7 +2034,10 @@ bool FIsCompileTimeConstant(STNode * pStnod)
 	//  compile time code execution comes online.
 
 	TypeInfo * pTin = PTinBakedConstantType(pStnod);
-	if (pTin && pTin->m_tink == TINK_Literal)
+	if (pTin)
+		return true;
+
+	if (pStnod->m_pTin && pStnod->m_pTin->m_tink == TINK_Literal)
 		return true;
 
 	return false;
@@ -5226,6 +5230,7 @@ static inline TypeInfo * PTinPromoteUntypedCommon(
 					pTinElement = PTinPromoteUntypedDefault(pTcctx, pSymtab, pStnodInit->PStnodChild(0));
 				}
 
+				// BB - need unique allocation for array types
 				TypeInfoArray * pTinary = MOE_NEW(pSymtab->m_pAlloc, TypeInfoArray) TypeInfoArray();
 				pTinary->m_pTin = pTinElement;
 				pTinary->m_c = (pTinlit->m_c >= 0) ? pTinlit->m_c : pStnodInit->CPStnodChild();
@@ -6509,7 +6514,7 @@ TypeInfo * PTinFromTypeSpecification(
 						s64 cTinary = 0;
 						if (!FIsCompileTimeConstant(pStnodDim))
 						{
-							EmitError(pTcctx, pStnod->m_lexsp, ERRID_FeatureNotImplemented,
+							EmitError(pTcctx, pStnod->m_lexsp, ERRID_NonConstantArraySize,
 								"Only static sized arrays are currently supported");
 							*pFIsValidTypeSpec = false;
 						}
@@ -7125,7 +7130,7 @@ void SpoofLiteralArray(TypeCheckContext * pTcctx, SymbolTable * pSymtab, STNode 
 	pSymtab->AddManagedTin(pTinary);
 	pTinary = pSymtab->PTinMakeUnique(pTinary);
 
-	TypeInfoLiteral * pTinlit = EWC_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+	TypeInfoLiteral * pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
 	pSymtab->AddManagedTin(pTinlit);
 	pTinlit->m_c = cElement;
 	pTinlit->m_litty.m_litk = LITK_Compound;
@@ -7135,7 +7140,7 @@ void SpoofLiteralArray(TypeCheckContext * pTcctx, SymbolTable * pSymtab, STNode 
 	pStnodArray->m_pTin = pTinlit;
 	pSym->m_pTin = pTinlit;
 
-	CSTNode * pStnodList = EWC_NEW(pSymtab->m_pAlloc, CSTNode) CSTNode(pSymtab->m_pAlloc, pStnodArray->m_lexsp);
+	CSTNode * pStnodList = MOE_NEW(pSymtab->m_pAlloc, CSTNode) CSTNode(pSymtab->m_pAlloc, pStnodArray->m_lexsp);
 	pStnodList->m_park = PARK_ExpressionList;
 	pStnodList->m_pTin = pTinlit;
 
@@ -8136,6 +8141,125 @@ TcretDebug TcretCheckLiteral(STNode * pStnod, TypeCheckContext * pTcctx, TypeChe
 	
 	pStnod->m_strees = STREES_TypeChecked;
 	PopTcsent(pTcctx, &pTcsentTop, pStnod);
+	return TCRET_Continue;
+}
+
+TcretDebug TcretCheckCompoundLiteral(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	if (pStnod->m_grfstnod.FIsSet(FSTNOD_ImplicitMember))
+	{
+		pStnod->m_strees = STREES_TypeChecked;
+		PopTcsent(pTcctx, &pTcsentTop, pStnod);
+		return TCRET_Continue;
+	}
+
+	if (pTcsentTop->m_nState < pStnod->CPStnodChild())
+	{
+		(void) PTcsentPush(pTcctx, &pTcsentTop, pStnod->PStnodChild(pTcsentTop->m_nState));
+		++pTcsentTop->m_nState;
+		return TCRET_Continue;
+	}
+
+	auto pStdecl = PStnodRtiCast<STDecl *>(pStnod);
+	if (!MOE_FVERIFY(pStdecl, "invalid array literal"))
+		return TCRET_StoppingError;
+
+	if (MOE_FVERIFY(pStdecl->m_pTin == nullptr, "STypeInfo should not be constructed before type checking"))
+	{
+		auto pSymtab = pTcsentTop->m_pSymtab;
+		TypeInfo * pTinType = nullptr;
+		if (pStdecl->m_pStnodType)
+		{
+			auto pStnodType = pStdecl->m_pStnodType;
+
+			Symbol * pSymType = nullptr;
+			bool fIsValidTypeSpec;
+			pTinType = PTinFromTypeSpecification(
+							pTcctx,
+							pSymtab,
+							pStnodType,
+							pTcsentTop->m_grfsymlook,
+							&pSymType,
+							&fIsValidTypeSpec);
+
+			if (!fIsValidTypeSpec)
+				return TCRET_StoppingError;
+		}
+
+		bool fHasValues = false;
+		auto pStnodValues = pStdecl->m_pStnodInit;
+		if (pStnodValues && pStnodValues->CPStnodChild())
+		{
+			auto pTinValue = pStnodValues->PStnodChild(0)->m_pTin;
+			if (pTinValue)
+			{
+				if (pTinValue->m_tink != TINK_Literal)
+				{
+					EmitError(pTcctx, pStdecl->m_lexsp, ERRID_NonConstantInLiteral, 
+						"Compound literal is being initialized with non-constant.");
+					return TCRET_StoppingError;
+				}
+				fHasValues = true;
+			}
+		}
+
+		if (!fHasValues)
+		{
+			EmitError(pTcctx, pStdecl->m_lexsp, ERRID_EmpyArrayLiteral,
+				"Compound literal without any element literals");
+			return TCRET_StoppingError;
+		}
+
+		s64 cElement = -1;
+		if (pTinType)
+		{
+			if (pTinType->m_tink == TINK_Array)
+			{
+				if (pStdecl->m_pStnodInit)
+				{
+					auto pStnodInit = pStdecl->m_pStnodInit;
+					MOE_ASSERT(pStnodInit->m_park == PARK_ExpressionList, "invalid Array Literal");
+					cElement = pStnodInit->CPStnodChild();
+				}
+
+				auto pTinary = PTinRtiCast<TypeInfoArray *>(pTinType);
+				if (pTinary)
+				{
+					if (pTinary->m_aryk == ARYK_Fixed)
+					{
+						cElement = pTinary->m_c;
+					}
+					else if (pTinary->m_aryk == ARYK_Reference)
+					{
+						// even if this is being assigned to an array reference, the literal is a fixed array
+
+						// BB - need unique allocation for array types
+						TypeInfoArray * pTinaryCopy = MOE_NEW(pSymtab->m_pAlloc, TypeInfoArray) TypeInfoArray();
+
+						pTinaryCopy->m_pTin = pTinary->m_pTin;
+
+						pTinaryCopy->m_aryk = ARYK_Fixed;
+						pTinaryCopy->m_c = cElement;
+						pSymtab->AddManagedTin(pTinaryCopy);
+						pTinType = pSymtab->PTinMakeUnique(pTinaryCopy);
+					}
+				}
+			}
+			else if (pTinType->m_tink == TINK_Struct)
+			{
+				if (pStdecl->m_pStnodInit)
+				{
+					MOE_ASSERT(pStdecl->m_pStnodInit->m_park == PARK_ExpressionList, "invalid CompoundLiteral");
+				}
+			}
+		}
+
+		auto pTinlit = pSymtab->PTinlitAllocCompound(pTinType, pStdecl, cElement);
+		pStdecl->m_pTin = pTinlit;
+	}
+
+	pStdecl->m_strees = STREES_TypeChecked;
+	PopTcsent(pTcctx, &pTcsentTop, pStdecl);
 	return TCRET_Continue;
 }
 
@@ -9710,6 +9834,10 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 
 		case PARK_Literal:
 			tcret = TcretCheckLiteral(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_CompoundLiteral:
+			tcret = TcretCheckCompoundLiteral(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_ReservedWord:

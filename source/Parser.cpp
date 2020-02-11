@@ -118,7 +118,7 @@ static ParkInfo s_mpParkParkinfo[] =
 	{ STEXK_Operator,	"postfixOp", "Postfix Unary Operator" },
 	{ STEXK_Node,		"uninit", "Uninitializer" },
 	{ STEXK_Node,		"cast", "Cast" },
-	{ STEXK_Node,		"elem", "Array Element" },			// [array, index]
+	{ STEXK_Operator,	"elem", "Array Element" },			// [array, index]
 	{ STEXK_Operator,	"memb", "Member Lookup" },			// [struct, child]
 	{ STEXK_Node,		"call", "Procedure Call"},			// [procedure, arg0, arg1, ...]
 	{ STEXK_Node,		"specStruct", "Specialized Struct" },
@@ -3210,7 +3210,6 @@ void ParseArgumentList(ParseContext * pParctx, Lexer * pLex, CDynAry<STNode *> *
 	}
 }
 
-
 STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 {
 	STNode * pStnod = PStnodParsePrimaryExpression(pParctx, pLex);
@@ -3232,14 +3231,14 @@ STNode * PStnodParsePostfixExpression(ParseContext * pParctx, Lexer * pLex)
 				// BB - Need to push a 'bail out' context... in case of error walk to next ']'
 				TokNext(pLex); // consume '['
 
-				auto pStnodArray = PStnodAlloc<STNode>(pParctx->m_pAlloc, PARK_ArrayElement, pLex, lexsp);
+				auto pStopElement = PStnodAlloc<STOperator>(pParctx->m_pAlloc, PARK_ArrayElement, pLex, lexsp);
 
 				STNode * pStnodElement = PStnodParseExpression(pParctx, pLex);
 
-				STNode * apStnod[] = {pStnod, pStnodElement};
-				pStnodArray->CopyChildArray(pParctx->m_pAlloc, apStnod, MOE_DIM(apStnod));
+				pStopElement->m_pStnodLhs = pStnod;
+				pStopElement->m_pStnodRhs = pStnodElement;
 
-				pStnod = pStnodArray;
+				pStnod = pStopElement;
 				FExpectConsumeToken(pParctx, pLex, TOK(']'));
 			} break;
 		case TOK('('):		// ( )
@@ -4550,7 +4549,7 @@ void CheckTinstructGenerics(ParseContext * pParctx, STNode * pStnodStruct, TypeI
 		return;
 
 #if KEEP_TYPEINFO_DEBUG_STRING
-	pTinstruct->m_strDebug = StrFromTypeInfo(pTinstruct);
+	pTinstruct->m_strDebug = IstrFromTypeInfo(pTinstruct);
 #endif
 
 	auto pStnodParameterList = pStstruct->m_pStnodParameterList;

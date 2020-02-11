@@ -3688,7 +3688,7 @@ InstantiateRequest * PInsreqInstantiateGenericStruct(
 #endif
 
 #if KEEP_TYPEINFO_DEBUG_STRING
-	pTinstructNew->m_istrDebug = StrFromTypeInfo(pTinstructNew);
+	pTinstructNew->m_istrDebug = IstrFromTypeInfo(pTinstructNew);
 #endif
 
 	if (!pTinstructNew->FHasGenericParams() || s_fTypecheckPartialGenericStructs)
@@ -9694,6 +9694,74 @@ TcretDebug TcretCheckMemberLookup(STNode * pStnod, TypeCheckContext * pTcctx, Ty
 	return TCRET_Continue;
 }
 
+TcretDebug TcretCheckArrayElement(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
+{
+	auto pStop = PStnodRtiCast<STOperator *>(pStnod);
+	if (!MOE_FVERIFY(pStop, "expected array element operator"))
+		return TCRET_StoppingError;
+
+	if (pTcsentTop->m_nState < pStop->CPStnodChild())
+	{
+		(void) PTcsentPush(pTcctx, &pTcsentTop, pStop->PStnodChild(pTcsentTop->m_nState));
+		++pTcsentTop->m_nState;
+		return TCRET_Continue;
+	}
+
+	auto pSymtab = pTcsentTop->m_pSymtab;
+
+	auto pStnodLhs = pStop->m_pStnodLhs;
+	auto pTinLhs = PTinPromoteUntypedDefault(pTcctx, pSymtab, pStnodLhs);
+
+	pTinLhs = PTinAfterRValueAssignment(pTcctx, pStnodLhs->m_lexsp, pTinLhs, pTcsentTop->m_pSymtab, pTinLhs);
+	FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pTinLhs, pStnodLhs);
+
+	STNode * pStnodIndex = pStop->m_pStnodRhs;
+	if (!MOE_FVERIFY(pStnodLhs && pStnodLhs->m_pTin, "Array element LHS has no type") ||
+		!MOE_FVERIFY(pStnodIndex && pStnodIndex->m_pTin, "Array index has no type"))
+		return TCRET_StoppingError;
+
+	switch (pTinLhs->m_tink)
+	{
+	case TINK_Array:
+		{
+			auto pTinary = PTinDerivedCast<TypeInfoArray *>(pTinLhs);
+			pStop->m_pTin = pTinary->m_pTin;
+		} break;
+	case TINK_Pointer:
+		{
+			auto pTinptr = PTinDerivedCast<TypeInfoPointer *>(pTinLhs);
+			pStop->m_pTin = pTinptr->m_pTin;
+		} break;
+	default: 
+		auto istrLhs = IstrFromTypeInfo(pTinLhs);
+		EmitError(pTcctx, pStop->m_lexsp, ERRID_NoArrayOperator, "%s cannot be indexed as an array", istrLhs.PChz());
+		return TCRET_StoppingError;
+	}
+
+	auto pTinIndex = PTinPromoteUntypedDefault(pTcctx, pSymtab, pStnodIndex);
+
+	// pass pTin as pTinDst - we aren't assigning it to a different type
+	pTinIndex = PTinAfterRValueAssignment(pTcctx, pStnodIndex->m_lexsp, pTinIndex, pSymtab, pTinIndex);
+	if (pTinIndex->m_tink == TINK_Enum)
+	{
+		auto pTinenum = PTinRtiCast<TypeInfoEnum *>(pTinIndex);
+		pTinIndex = pTinenum->m_pTinLoose;
+	}
+
+	auto pTinnIndex = PTinRtiCast<TypeInfoNumeric *>(pTinIndex);
+	if (!pTinnIndex || !FIsInteger(pTinnIndex->m_numk))
+	{
+		auto istrTinIndex = IstrFromTypeInfo(pTinIndex);
+		EmitError(pTcctx, pStop->m_lexsp, ERRID_BadArrayIndex, "Cannot convert %s to integer for array index", istrTinIndex.PChz());
+	}
+
+	FinalizeLiteralType(pTcctx, pTcsentTop->m_pSymtab, pTinIndex, pStnodIndex);
+	
+	pStop->m_strees = STREES_TypeChecked;
+	PopTcsent(pTcctx, &pTcsentTop, pStop);
+	return TCRET_Continue;
+}
+
 TcretDebug TcretCheckList(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
 {
 	while (pTcsentTop->m_nState < pStnod->CPStnodChild() && !pStnod->PStnodChild(pTcsentTop->m_nState))
@@ -9863,6 +9931,10 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 
 		case PARK_MemberLookup:
 			tcret = TcretCheckMemberLookup(pStnod, pTcctx, pTcsentTop);
+			CONTINUE_OR_BREAK(tcret);
+
+		case PARK_ArrayElement:
+			tcret = TcretCheckArrayElement(pStnod, pTcctx, pTcsentTop);
 			CONTINUE_OR_BREAK(tcret);
 
 		case PARK_ArrayDecl:

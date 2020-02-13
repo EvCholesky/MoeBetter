@@ -39,6 +39,7 @@ static bool FCanImplicitCast(TypeInfo * pTinSrc, TypeInfo * pTinDst);
 TypeInfo * PTinQualifyAfterAssignment(TypeInfo * pTin, SymbolTable * pSymtab, TypeInfo * pTinDst);
 TypeInfo * PTinAfterRValueAssignment(TypeCheckContext * pTcwork, const LexSpan & lexsp, TypeInfo * pTin, SymbolTable * pSymtab, TypeInfo * pTinDst);
 SymbolTable * PSymtabFromType(TypeCheckContext * pTcwork, TypeInfo * pTin, const LexSpan & lexsp);
+STValue * PStvalGetFolded(STNode * pStnod);
 
 using namespace Moe;
 
@@ -1176,7 +1177,6 @@ bool FLiteralsAreSame(STNode * pStnodA, STNode * pStnodB)
 
 	if (pTinlitA->m_litty.m_litk == LITK_Compound)
 	{
-#if MOEB_LATER
 		if (pTinlitA->m_pTinSource != pTinlitB->m_pTinSource)
 			return false;
 
@@ -1201,9 +1201,6 @@ bool FLiteralsAreSame(STNode * pStnodA, STNode * pStnodB)
 		}
 
 		return true;
-#else
-		return false;
-#endif
 	}
 
 	STValue * pStvalA = PStnodRtiCast<STValue *>(pStnodA);
@@ -5344,7 +5341,7 @@ static inline TypeInfo * PTinPromoteUntypedCommon(
 		return pSymtab->PTinqualWrap(pTinFinalized, FQUALK_Const);
 	}
 
-	const STValue * pStval = PStnodRtiCast<STValue *>(pStnodLit);
+	const STValue * pStval = PStvalGetFolded(pStnodLit);
 	if (!MOE_FVERIFY(pStval, "literal without value"))
 		return nullptr;
 
@@ -5485,7 +5482,7 @@ inline TypeInfo * PTinPromoteUntypedTightest(
 				return pSymtab->PTinqualBuiltinConst(BuiltIn::g_istrF32);
 			}
 
-			const STValue * pStval = PStnodRtiCast<STValue *>(pStnodLit);
+			const STValue * pStval = PStvalGetFolded(pStnodLit);
 			bool fDestIsSigned = pTinnDst && pTinnDst->m_numk == NUMK_SignedInt;
 			bool fIsValNegative = pStval->m_stvalk == STVALK_SignedInt && pStval->m_nSigned < 0;
 
@@ -7114,14 +7111,13 @@ void ResolveSpoofTypedef(
 	OnTypeResolve(pTcctx, pSym);
 }
 
-void SpoofLiteralArray(TypeCheckContext * pTcctx, SymbolTable * pSymtab, STNode * pStnodArray, int cElement, TypeInfo * pTinElement)
+void SpoofLiteralArray(TypeCheckContext * pTcctx, SymbolTable * pSymtab, STDecl * pStdeclArray, int cElement, TypeInfo * pTinElement)
 {
-#if MOEB_LATER
-	auto pStdeclArray = PStnodRtiCast<CSTDecl *>(pStnodArray);
-	auto pSym = pStnodArray->PSym();
+	auto pSym = pStdeclArray->PSym();
 	if (!MOE_FVERIFY(pStdeclArray && pSym, "bad spoofed literal array"))
 		return;
 
+	// BB - need unique allocation for array types
 	TypeInfoArray * pTinary = MOE_NEW(pSymtab->m_pAlloc, TypeInfoArray) TypeInfoArray();
 
 	pTinary->m_pTin = pTinElement;
@@ -7130,25 +7126,15 @@ void SpoofLiteralArray(TypeCheckContext * pTcctx, SymbolTable * pSymtab, STNode 
 	pSymtab->AddManagedTin(pTinary);
 	pTinary = pSymtab->PTinMakeUnique(pTinary);
 
-	TypeInfoLiteral * pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
-	pSymtab->AddManagedTin(pTinlit);
-	pTinlit->m_c = cElement;
-	pTinlit->m_litty.m_litk = LITK_Compound;
-	pTinlit->m_pTinSource = pTinary;
-	pTinlit->m_pStnodDefinition = pStnodArray;
+	auto pTinlit = pSymtab->PTinlitAllocCompound(pTinary, pStdeclArray, cElement);
+	pStdeclArray->m_pTin = pTinlit;
 
-	pStnodArray->m_pTin = pTinlit;
-	pSym->m_pTin = pTinlit;
-
-	CSTNode * pStnodList = MOE_NEW(pSymtab->m_pAlloc, CSTNode) CSTNode(pSymtab->m_pAlloc, pStnodArray->m_lexsp);
+	auto pStnodList = PStnodAllocAfterParse(pSymtab->m_pAlloc, PARK_ExpressionList, pStdeclArray->m_lexsp);
 	pStnodList->m_park = PARK_ExpressionList;
 	pStnodList->m_pTin = pTinlit;
 
-	MOE_ASSERT(pStdeclArray->m_iStnodInit == -1, "expected empty array");
-	pStdeclArray->m_iStnodInit = pStnodArray->IAppendChild(pStnodList);
-#else
-	MOE_ASSERT(false, "need to support spoofing literal array");
-#endif
+	MOE_ASSERT(pStdeclArray->m_pStnodInit == nullptr, "expected empty array");
+	pStdeclArray->m_pStnodInit = pStnodList;
 }
 
 void AddEnumNameValuePair(
@@ -7166,7 +7152,7 @@ void AddEnumNameValuePair(
 	auto pStvalValue = PStvalAllocAfterParse(pAlloc, PARK_Literal, lexsp);
 	pStvalValue->m_pTin = pTinValue; // finalized literal version of enum.loose type
 
-	auto pStvalInit = PStnodRtiCast<STValue *>(pStdeclConstant->m_pStnodInit);
+	auto pStvalInit = PStvalGetFolded(pStdeclConstant->m_pStnodInit);
 	if (MOE_FVERIFY(pStvalInit, "expected value"))
 	{
 		pStvalValue->CopyValues(pStvalInit);
@@ -7184,6 +7170,32 @@ void AddEnumNameValuePair(
 	}
 
 	parypStnodNames->Append(pStvalName);
+}
+
+STValue * PStvalGetFolded(STNode * pStnod)
+{
+	// this is either a value node or an operation with a value computed and stored in STOperator.m_pStnodResult
+	
+	switch (pStnod->Stexk())
+	{
+	case STEXK_Operator:
+		{
+			auto pStop = (STOperator*)pStnod;
+			STValue * pStval = PStnodRtiCast<STValue *>(pStop->m_pStnodResult);
+
+			MOE_ASSERT(pStval, "expected constant value");
+			return pStval;
+		}
+
+	case STEXK_Value:
+		return (STValue*)pStnod;
+
+	default: 
+		MOE_ASSERT(false, "unexpected node type '%s', expected folded constant value", PChzFromStexk(pStnod->Stexk()));
+		break;
+	}
+
+	return nullptr;
 }
 
 TCRET TcretCheckEnumDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckStackEntry * pTcsentTop)
@@ -7298,7 +7310,7 @@ TCRET TcretCheckEnumDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckSta
 				continue;
 			}
 
-			auto pStvalConstant = PStnodRtiCast<STValue *>(pStdeclConstant->m_pStnodInit);
+			auto pStvalConstant = PStvalGetFolded(pStdeclConstant->m_pStnodInit);
 			if (!MOE_FVERIFY(pStvalConstant, "PARK_EnumConstant should be a value"))
 				continue;
 
@@ -7381,8 +7393,8 @@ TCRET TcretCheckEnumDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckSta
 	}
 	else
 	{
-		STNode * pStnodNames = mpEnumimpPStdecl[ENUMIMP_Names];
-		STNode * pStnodValues = mpEnumimpPStdecl[ENUMIMP_Values];
+		STDecl * pStdeclNames = mpEnumimpPStdecl[ENUMIMP_Names];
+		STDecl * pStdeclValues = mpEnumimpPStdecl[ENUMIMP_Values];
 
 		int cBitLoose = 64;
 		NUMK numkLoose = NUMK_SignedInt;
@@ -7400,12 +7412,10 @@ TCRET TcretCheckEnumDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckSta
 		auto pTinU8 = pSymtab->PTinBuiltin(BuiltIn::g_istrU8);
 		TypeInfo * pTinString = pSymtab->PTinptrAllocate(pSymtab->PTinqualWrap(pTinU8, FQUALK_Const));
 
-		SpoofLiteralArray(pTcctx, pSymtab, pStnodNames, cStnodChild - cStnodChildImplicit, pTinString);
-		auto pStdeclNames = PStnodDerivedCast<STDecl *>(pStnodNames);
+		SpoofLiteralArray(pTcctx, pSymtab, pStdeclNames, cStnodChild - cStnodChildImplicit, pTinString);
 		auto pStnodNameList = pStdeclNames->m_pStnodInit;
 
-		SpoofLiteralArray(pTcctx, pSymtab, pStnodValues, cStnodChild - cStnodChildImplicit, pTinenum->m_pTinLoose);
-		auto pStdeclValues = PStnodDerivedCast<STDecl *>(pStnodValues);
+		SpoofLiteralArray(pTcctx, pSymtab, pStdeclValues, cStnodChild - cStnodChildImplicit, pTinenum->m_pTinLoose);
 		auto pStnodValueList = pStdeclValues->m_pStnodInit;
 		CDynAry<STNode *> arypStnodNames(pTcctx->m_pAlloc, BK_TypeCheck, cStnodChild);
 		CDynAry<STNode *> arypStnodValues(pTcctx->m_pAlloc, BK_TypeCheck, cStnodChild);
@@ -7427,7 +7437,14 @@ TCRET TcretCheckEnumDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckSta
 			{
 				TypeInfo * pTinInit = pStdeclMember->m_pTin;
 
+				// pStnodInit's type will be null if the code didn't specify an initial value
+				if (!pStnodInit->m_pTin)
+				{
+					pStnodInit->m_pTin = pTinInit;
+				}
+
 				pTinInit = PTinPromoteUntypedRvalueTightest(pTcctx, pSymtab, pStnodInit, pTinenum->m_pTinLoose);
+
 				if (!FCanImplicitCast(pTinInit, pTinenum->m_pTinLoose))
 				{
 					EmitError(pTcctx, pStnodInit->m_lexsp, ERRID_InitTypeMismatch, 
@@ -7439,7 +7456,7 @@ TCRET TcretCheckEnumDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckSta
 
 			auto pTinecon = pTinenum->m_aryTinecon.AppendNew();
 
-			auto pStvalMember = PStnodDerivedCast<STValue *>(pStdeclMember->m_pStnodInit);
+			auto pStvalMember = PStvalGetFolded(pStdeclMember->m_pStnodInit);
 			pTinecon->m_bintValue = BintFromStval(pStvalMember);
 
 			STNode * pStnodIdent = (pStdeclMember) ? pStdeclMember->m_pStnodIdentifier : nullptr;
@@ -7453,8 +7470,8 @@ TCRET TcretCheckEnumDef(STNode * pStnod, TypeCheckContext * pTcctx, TypeCheckSta
 
 			AddEnumNameValuePair(pTcctx, pSymtab, pStnod->m_lexsp, &arypStnodNames, &arypStnodValues, pStdeclMember, pTinlitValue, pTinlitName);
 		}
-		pStnodNameList->SetChildArray(arypStnodNames.A(), int(arypStnodNames.C()));
-		pStnodValueList->SetChildArray(arypStnodValues.A(), int(arypStnodValues.C()));
+		pStnodNameList->CopyChildArray(pTcctx->m_pAlloc, arypStnodNames.A(), int(arypStnodNames.C()));
+		pStnodValueList->CopyChildArray(pTcctx->m_pAlloc, arypStnodValues.A(), int(arypStnodValues.C()));
 	}
 
 	Symbol * pSymEnum = nullptr;
@@ -7522,8 +7539,7 @@ TCRET TcretCheckEnumConstant(STNode * pStnod, TypeCheckContext * pTcctx, TypeChe
 			return TCRET_StoppingError;
 		}
 
-		auto pStvalInit = PStnodDerivedCast<STValue *>(pStnodInit);
-		//pStnod->m_pStval = PStvalCopy(pTcctx->m_pAlloc, pStnodInit->m_pStval);
+		auto pStvalInit = PStvalGetFolded(pStnodInit);
 		if (pStvalInit)
 		{
 			pTinenum->m_bintLatest = BintFromStval(pStvalInit);
@@ -8827,7 +8843,7 @@ TcretDebug TcretCheckUnaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeChe
 	}
 
 	auto pStop = PStnodRtiCast<STOperator*>(pStnod);
-	if (MOE_FVERIFY(pStop, "expected unary operator"))
+	if (!MOE_FVERIFY(pStop, "expected unary operator"))
 		return TCRET_StoppingError;
 
 	STNode * pStnodOperand = pStnod->PStnodChild(0);
@@ -9860,7 +9876,7 @@ TcretDebug TcretCheckTypeArgument(STNode * pStnod, TypeCheckContext * pTcctx, Ty
 
 TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 {
-	#define CONTINUE_OR_BREAK(tcret) if (tcret != TCRET_Continue) return tcret; break;
+	#define CONTINUE_OR_RETURN(tcret) if (tcret != TCRET_Continue) return tcret; break;
 
 	TCRET tcret;
 
@@ -9874,48 +9890,48 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 		{
 		case PARK_ProcedureDefinition:
 			tcret = TcretCheckProcedureDef(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_StructDefinition:
 			tcret = TcretCheckStructDef(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_EnumDefinition:
 			tcret = TcretCheckEnumDef(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_EnumConstant:
 			tcret = TcretCheckEnumConstant(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_Decl:
 			tcret = TcretCheckDecl(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_ConstantDecl:
 			tcret = TcretCheckConstantDecl(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_Identifier:
 			tcret = TcretCheckIdentifier(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_Literal:
 			tcret = TcretCheckLiteral(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_CompoundLiteral:
 			tcret = TcretCheckCompoundLiteral(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_ReservedWord:
 			tcret = TcretCheckReservedWord(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_PostfixUnaryOp:
 		case PARK_UnaryOp:
 			tcret = TcretCheckUnaryOp(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_AdditiveOp:
 		case PARK_MultiplicativeOp:
@@ -9923,19 +9939,19 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 		case PARK_RelationalOp:
 		case PARK_LogicalAndOrOp:
 			tcret = TcretCheckBinaryOp(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_AssignmentOp:
 			tcret = TcretCheckAssignmentOp(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_MemberLookup:
 			tcret = TcretCheckMemberLookup(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_ArrayElement:
 			tcret = TcretCheckArrayElement(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_ArrayDecl:
 		case PARK_ReferenceDecl:
@@ -9944,11 +9960,11 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 		case PARK_List:
 		case PARK_ExpressionList:
 			tcret = TcretCheckList(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_TypeArgument:
 			tcret = TcretCheckTypeArgument(pStnod, pTcctx, pTcsentTop);
-			CONTINUE_OR_BREAK(tcret);
+			CONTINUE_OR_RETURN(tcret);
 
 		case PARK_Uninitializer:
 		case PARK_Nop:
@@ -9963,6 +9979,12 @@ TcretDebug TcretTypeCheckSubtree(TypeCheckContext * pTcctx)
 			break;
 		}
 	}
+
+	if (tcret == TCRET_StoppingError)
+	{
+		return tcret;
+	}
+
 	return TCRET_Complete;
 
 	#undef CONTINUE_OR_BREAK
@@ -10217,6 +10239,8 @@ JobRef PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, Worksp
 	auto pJobTc = PJobAllocate(pComp, pTcjd, pJobSource);
 	pJobTc->m_pFnUpdate = JobretExecuteTypeCheckJob;
 	pJobTc->m_pFnCleanup = CleanupTypeCheckJob;
+	pJobTc->m_jobInfo.m_pChzName = "TypeInfo";
+	pJobTc->m_jobInfo.m_lexsp = pEntry->m_pStnod->m_lexsp;
 
 	TypeCheckContext * pTcctx = &pTcjd->m_tcctx;
 	pTcctx->m_pJobTc = pJobTc;

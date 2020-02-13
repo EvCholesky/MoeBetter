@@ -6,6 +6,10 @@
        <Item Name="m_pChz">m_pChz</Item>
       </Expand>
   </Type>
+  <Type Name="BigInt">
+      <DisplayString Condition="m_fIsNegative == true">{{ -{m_nAbs} }}</DisplayString>
+      <DisplayString Condition="m_fIsNegative == false">{{ {m_nAbs} }}</DisplayString>
+  </Type>
   <Type Name="TypeInfoNumeric">
       <DisplayString Condition="m_numk == 0">{{ f{m_cBit} }}</DisplayString>
       <DisplayString Condition="m_numk == 1">{{ u{m_cBit} }}</DisplayString>
@@ -19,11 +23,15 @@
       <DisplayString Condition="m_istrDesc.m_pChz!=nullptr&amp;&amp;m_istrDesc.m_pChz[0]!=0">{{ proc={m_istrDebug.m_pChz,s} }}</DisplayString>
   </Type>
   <Type Name="TypeInfoStruct">
-      <DisplayString Condition="m_istrDesc.m_pChz==nullptr||m_istrDesc.m_pChz[0]==0">{{ proc={m_istrName.m_pChz,s} cField={m_aryTypemembField.m_c} }}</DisplayString>
-      <DisplayString Condition="m_istrDesc.m_pChz!=nullptr&amp;&amp;m_istrDesc.m_pChz[0]!=0">{{ proc={m_istrDesc.m_pChz,s} cField={m_aryTypemembField.m_c} }}</DisplayString>
+      <DisplayString Condition="m_istrDesc.m_pChz==nullptr||m_istrDesc.m_pChz[0]==0">{{ struct={m_istrName.m_pChz,s} cField={m_aryTypemembField.m_c} }}</DisplayString>
+      <DisplayString Condition="m_istrDesc.m_pChz!=nullptr&amp;&amp;m_istrDesc.m_pChz[0]!=0">{{ struct={m_istrDesc.m_pChz,s} cField={m_aryTypemembField.m_c} }}</DisplayString>
   </Type>
   <Type Name="TypeInfoArray">
       <DisplayString>{{ m_aryk={m_aryk} m_pTin={m_pTin} }}</DisplayString>
+  </Type>
+  <Type Name="TypeInfoEnum">
+      <DisplayString Condition="m_enumk == 0">{{ {m_istrName.m_pChz,s}min={m_bintMin} max={m_bintMax}}}}</DisplayString>
+      <DisplayString Condition="m_enumk == 1">{{ Flags{m_istrName.m_pChz,s} min={m_bintMin} max={m_bintMax}}}}</DisplayString>
   </Type>
   <Type Name="TypeInfoQualifier">
       <DisplayString>{{ qualk={m_qualk} }}</DisplayString>
@@ -41,6 +49,7 @@
        <Item Name="pTinproc" Condition="m_tink == 3">(TypeInfoProcedure*)this</Item>
        <Item Name="pTinstruct" Condition="m_tink == 5">(TypeInfoStruct*)this</Item>
        <Item Name="pTinary" Condition="m_tink == 6">(TypeInfoArray*)this</Item>
+       <Item Name="pTinenum" Condition="m_tink == 9">(TypeInfoEnum*)this</Item>
        <Item Name="pTinqual" Condition="m_tink == 10">(TypeInfoQualifier*)this</Item>
        <Item Name="pTinlit" Condition="m_tink == 14">(TypeInfoLiteral*)this</Item>
        <Item Name="pTinanc" Condition="m_tink == 15">(TypeInfoAnchor*)this</Item>
@@ -81,7 +90,8 @@
     <DisplayString Condition="m_stvalk==0">{{ m_g={m_g} }}</DisplayString>
     <DisplayString Condition="m_stvalk==1">{{ m_nSigned={m_nSigned} }}</DisplayString>
     <DisplayString Condition="m_stvalk==2">{{ m_nUnsigned={m_nUnsigned} }}</DisplayString>
-    <DisplayString Condition="m_stvalk==3">{{ m_istrValue={m_istrValue.m_pChz,s} }}</DisplayString>
+    <DisplayString Condition="m_stvalk==4">{{ bool={m_nUnsigned} }}</DisplayString>
+    <DisplayString Condition="m_stvalk==5">{{ m_istrValue={m_istrValue.m_pChz,s} }}</DisplayString>
     </Type>
   <Type Name="STOperator">
   </Type>

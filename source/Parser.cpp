@@ -4834,7 +4834,7 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 		{
 			FExpectConsumeToken(pParctx, pLex, TOK('('));
 
-			auto pStproc = PStnodAlloc<STProc>(pParctx->m_pAlloc, PARK_ProcedureDefinition, pLex, LexSpan(pLex));
+			auto pStproc = PStnodAlloc<STProc>(pParctx->m_pAlloc, PARK_ProcedureDefinition, pLex, pStvalIdent->m_lexsp);
 			pStproc->m_grfstnod.AddFlags(FSTNOD_EntryPoint);
 
 			pStproc->m_pStnodName = pStvalIdent;
@@ -5043,7 +5043,7 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 		else if (istrRword == RWord::g_istrEnum || istrRword == RWord::g_istrFlagEnum)
 		{
 			LexSpan lexsp(pLex);
-			auto pStenum = PStnodAlloc<STEnum>(pParctx->m_pAlloc, PARK_EnumDefinition, pLex, LexSpan(pLex));
+			auto pStenum = PStnodAlloc<STEnum>(pParctx->m_pAlloc, PARK_EnumDefinition, pLex, pStvalIdent->m_lexsp);
 
 			pStenum->m_pStnodIdentifier = pStvalIdent;
 			pStenum->m_enumk = (istrRword == RWord::g_istrFlagEnum) ? ENUMK_FlagEnum : ENUMK_Basic;
@@ -5107,7 +5107,7 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 		}
 		else if (istrRword == RWord::g_istrStruct)
 		{
-			auto pStstruct = PStnodAlloc<STStruct>(pParctx->m_pAlloc, PARK_StructDefinition, pLex, LexSpan(pLex));
+			auto pStstruct = PStnodAlloc<STStruct>(pParctx->m_pAlloc, PARK_StructDefinition, pLex, pStvalIdent->m_lexsp);
 			pStstruct->m_pStnodIdentifier = pStvalIdent;
 
 			SymbolTable * pSymtabParent = pParctx->m_pSymtab;
@@ -5901,6 +5901,8 @@ JobRef PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChz
 	pJob->m_pFnUpdate = JobretExecuteParseJob;
 	pJob->m_pFnCleanup = CleanupParseJob;
 	pJob->m_comphaseDesired = comphase;
+	pJob->m_jobInfo.m_pChzName = "Parser";
+
 	pParctx->m_pJobParse = pJob;
 
 	JobRef pJobReturn = pJob;

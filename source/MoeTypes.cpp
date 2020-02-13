@@ -329,10 +329,46 @@ size_t CBFree(const StringBuffer & strbuf)
 	return strbuf.m_cBMax - (strbuf.m_pChzAppend - strbuf.m_pChzBegin) - 1; // -1 because pChzAppend points at the null term, need to count it.
 }
 
-size_t	CBCopyChz(const char * pChzSource, char * aCoDest, size_t cBDest)
+size_t CBCopyChz(const char * pChzSource, char * aCoDest, size_t cBDest)
 {
 	StringBuffer strbuf(aCoDest, cBDest);
 	AppendChz(&strbuf, pChzSource);
+	return strbuf.m_pChzAppend - strbuf.m_pChzBegin + 1;
+}
+
+size_t CBCopyChzExpandTabs(const char * pChzSource, size_t cCh, char * aCoDest, size_t cBDest, int cSpacePerTab)
+{
+	StringBuffer strbuf(aCoDest, cBDest);
+
+	if (!MOE_FVERIFY(pChzSource && FIsValid(strbuf), "Null pointer passed to CCoCopy"))
+		return 0;
+
+	char * pChzDest = strbuf.m_pChzAppend;
+	char * pChzDestEnd = &strbuf.m_pChzBegin[strbuf.m_cBMax-1];
+	const char * pChzSourceEnd  = &pChzSource[cCh];
+	for ( ; (*pChzSource != '\0') & (pChzSource != pChzSourceEnd) & (pChzDest != pChzDestEnd); ++pChzSource)
+	{
+		if (*pChzSource == '\t')
+		{
+			size_t dCh = pChzDest - strbuf.m_pChzBegin;
+			dCh = (dCh + cSpacePerTab) & ~(cSpacePerTab-1);
+
+			char * pChzDestTab = &strbuf.m_pChzBegin[dCh];
+			for ( ; pChzDest != pChzDestEnd && pChzDest != pChzDestTab; ++pChzDest)
+			{
+				*pChzDest = ' ';
+			}
+		}
+		else
+		{
+			*pChzDest = *pChzSource;
+			++pChzDest;
+		}
+	}
+
+	strbuf.m_pChzAppend = pChzDest;
+	EnsureTerminated(&strbuf, '\0');
+
 	return strbuf.m_pChzAppend - strbuf.m_pChzBegin + 1;
 }
 

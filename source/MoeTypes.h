@@ -482,6 +482,7 @@ inline bool FIsValid(const StringBuffer & strbuf)
 
 size_t  CBFree(const StringBuffer & strbuf);
 size_t	CBCopyChz(const char * pChzSource, char * aCoDest, size_t cBDest);
+size_t	CBCopyChzExpandTabs(const char * pChzSource, size_t cCh, char * aCoDest, size_t cBDest, int cSpacePerTab);
 void	AppendChz(StringBuffer * pStrbuf, const char * pChzSource);
 void	AppendToCch(StringBuffer * pStrbuf, char ch, size_t cCh);
 void	FormatChz(StringBuffer * pStrbuf, const char * pChzFormat, ...);

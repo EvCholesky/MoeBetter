@@ -219,6 +219,18 @@ void FinishJob(Workspace * pWork, Job * pJob)
 	}
 }
 
+bool FIsJobADescendent(Job * pJobDescend, Job * pJobAncestor)
+{
+	Job * pJobIt = pJobDescend;
+	while (pJobIt)
+	{
+		if (pJobIt == pJobAncestor)
+			return true;
+		pJobIt = pJobIt->m_pJobParent.m_pJob;
+	}
+	return true;
+}
+
 void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJobWait)
 {
 	// wait until the job has completed. in the meantime, work on any other job.
@@ -227,7 +239,45 @@ void WaitForJob(Compilation * pComp, Workspace * pWork, Job * pJobWait)
 	{
 		if (pComp->m_arypJobQueued.FIsEmpty())
 		{
-			printf("ERROR: circular job dependencies!\n");
+			// brute force find the jobs or symbols we're waiting on. We need a better way to find this.
+			bool fWasReported = false;
+			const Symbol ** ppSym;
+			JobPrereqSet * pJps;
+			Moe::CHash<const Symbol *, JobPrereqSet>::CIterator iterJps(&pWork->m_hashPSymJps);
+			while (pJps = iterJps.Next(&ppSym))
+			{
+				bool fIsDependent = false;
+				JobRef * ppJobMax = pJps->m_arypJob.PMac();
+				for (JobRef * ppJobIt = pJps->m_arypJob.A(); ppJobIt != ppJobMax; ++ppJobIt)
+				{
+					if (FIsJobADescendent(ppJobIt->m_pJob, pJobWait))
+					{
+						fIsDependent = true;
+						break;
+					}
+				}
+
+				if (fIsDependent)
+				{
+					for (JobRef * ppJobIt = pJps->m_arypJob.A(); ppJobIt != ppJobMax; ++ppJobIt)
+					{
+						FinishJob(pWork, ppJobIt->m_pJob);
+					}
+					pJps->m_arypJob.Clear();
+
+					LexSpan lexsp = ((*ppSym)->m_pStnodDefinition) ? (*ppSym)->m_pStnodDefinition->m_lexsp : LexSpan();
+					EmitError(pWork, lexsp, ERRID_CircularDepend, 
+						"circular reference to unresolved symbol '%s'", (*ppSym)->m_istrName.PChz());
+					fWasReported = true;	
+				}
+			}
+
+			if (!fWasReported)
+			{
+				EmitError(pWork, pJobWait->m_jobInfo.m_lexsp, ERRID_CircularDepend, 
+					"circular dependency with job '%s'", 
+					((pJobWait->m_jobInfo.m_pChzName) ? pJobWait->m_jobInfo.m_pChzName : "unnamed"));
+			}
 			return;
 		}
 

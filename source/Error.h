@@ -37,6 +37,7 @@ enum ERRID
 	ERRID_MissingEntryPoint			= 2,
 	ERRID_FailedLoadingDLL			= 3,
 	ERRID_UnhandledRWord			= 4,
+	ERRID_CircularDepend			= 5,
 
 	ERRID_ParserMin					= 1000,
 	ERRID_EnumRepeat				= 1001,
@@ -279,7 +280,6 @@ void EmitWarning(TypeCheckContext * pTcwork, const LexSpan & lexsp, ERRID errid,
 
 void EmitError(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
 void EmitError(ErrorManager * pErrman, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);
-void EmitError(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
 void EmitError(Workspace * pWork, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);
 void EmitError(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pChz, va_list ap);
 void EmitError(ParseContext * pParctx, const LexSpan & lexsp, ERRID errid, const char * pChz, ...);

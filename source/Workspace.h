@@ -189,6 +189,7 @@ enum FCCOL // Console color
 	GRFCCOL_FgAllColor			= FCCOL_FgRed | FCCOL_FgGreen | FCCOL_FgBlue,
 	GRFCCOL_FgAll				= GRFCCOL_FgAllColor | FCCOL_FgIntense,
 	GRFCCOL_BgAllColor			= FCCOL_BgRed | FCCOL_BgGreen | FCCOL_BgBlue,
+	GRFCCOL_BgBlack				= FCCOL_None,
 	GRFCCOL_BgAll				= GRFCCOL_BgAllColor | FCCOL_BgIntense,
 };
 

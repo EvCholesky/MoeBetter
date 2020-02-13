@@ -148,10 +148,15 @@ enum JOBRET
 	JOBRET_Complete,
 };
 
+struct JobInfo
+{
+	const char *	m_pChzName;
+	LexSpan			m_lexsp;
+};
+
 typedef JOBRET (*PFnJobUpdate)(Compilation * pComp, Workspace * pWork, Job *);
 typedef void (*PFnJobCleanup)(Workspace * pWork, Job *);
 
-// desired end phase for this job and it's outputs
 enum COMPHASE
 {
 	COMPHASE_Parse,
@@ -219,6 +224,7 @@ struct Job // tag = job
 	
 	PFnJobUpdate				m_pFnUpdate;
 	PFnJobCleanup				m_pFnCleanup;
+	JobInfo						m_jobInfo;
 	void *						m_pVData;
 	Moe::Alloc *				m_pAlloc;
 

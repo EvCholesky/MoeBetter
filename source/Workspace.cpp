@@ -160,6 +160,9 @@ void PrintErrorLine(Error * pError, const char * pChzPrefix, const LexSpan & lex
 	}
 	else
 	{
+		ConsoleColorAmbit ccolamb;
+		SetConsoleTextColor(GRFCCOL_FgIntenseRed);
+
 		printf("Internal %s ", pChzPrefix);
 	}
 
@@ -649,11 +652,13 @@ void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
 		printf(MOE_S64FMT "%s", iLine, s_pChzMargin);
 	}
 
-	size_t cB = textspan.m_pChzPost - textspan.m_pChzPre;
+	static const int s_cSpacePerTab = 4;
+	size_t cB = (textspan.m_pChzPost - textspan.m_pChzPre) * s_cSpacePerTab;
 	char * aCh = (char *)pWork->m_pAlloc->MOE_ALLOC(cB, 1);
 
-	size_t cBPre = textspan.m_pChzBegin - textspan.m_pChzPre;
-	CBCopyChz(textspan.m_pChzPre, aCh, cBPre+1);
+	size_t cChPre = textspan.m_pChzBegin - textspan.m_pChzPre;
+	cChPre = CBCopyChzExpandTabs(textspan.m_pChzPre, cChPre, aCh, cB, s_cSpacePerTab) - 1;
+
 	printf("%s", aCh);
 
 	size_t cBSpan = textspan.m_pChzEnd - textspan.m_pChzBegin;
@@ -661,12 +666,12 @@ void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
 		ConsoleColorAmbit ccolamb;
 		ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseWhite);
 
-		CBCopyChz(textspan.m_pChzBegin, aCh, cBSpan+1);
+		cBSpan = CBCopyChzExpandTabs(textspan.m_pChzBegin, cBSpan, aCh, cB, s_cSpacePerTab);
 		printf("%s", aCh);
 	}
 
 	size_t cBPost = textspan.m_pChzPost - textspan.m_pChzEnd;
-	CBCopyChz(textspan.m_pChzEnd, aCh, cBPost+1);
+	CBCopyChzExpandTabs(textspan.m_pChzEnd, cBPost, aCh, cB, s_cSpacePerTab);
 	printf("%s\n", aCh);
 
 	pWork->m_pAlloc->MOE_FREE(aCh);
@@ -676,11 +681,12 @@ void PrintErrorTextSpan(Workspace * pWork, const LexSpan & lexsp)
 
 		ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseWhite);
 
-		printf("%*s%s%*s", cDigit, "", s_pChzMargin, (int)cBPre, "");
+		static const int s_cSpacePerTab = 3;
+		printf("%*s%s%*s", cDigit, "", s_pChzMargin, (int)cChPre, "");
 
 		ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseRed);
 
-		for (int iCh = 0; iCh < moeMax<size_t>(1, cBSpan); ++iCh)
+		for (int iCh = 0; iCh < moeMax<size_t>(1, cBSpan-1); ++iCh)
 		{
 			printf("^");
 		}

@@ -87,6 +87,7 @@ void ClearUnitTestStrings()
 
 extern bool FTestLexing();
 extern bool FTestUnicode();
+void PrintTestError(const char * pChzIn, const char * pChzOut, const char * pChzExpected);
 
 static const int s_cErridOptionMax = 4; //max error ids per option
 
@@ -800,6 +801,477 @@ void PrintHighlightMatch(const char * pChzPrint, const char * pChzMatch, GRFCCOL
 	}
 }
 
+static int FIsWhitespace(int ch)
+{
+   return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\f';
+}
+
+struct CompareLexer // tag = cmplex
+{
+						CompareLexer(const char * pChz, StringEditBuffer * pSeb)
+						:m_tok(TOK_Nil)
+						,m_istr()
+						,m_pChzCur(nullptr)
+						,m_pChzNext(pChz)
+						,m_pSeb(pSeb)
+							{ LexNextToken(); }
+
+	void				LexNextToken();
+
+	TOK					m_tok;		// lexer->token is the token ID, which is unicode code point for a single-char token, 
+	Moe::InString		m_istr;
+	const char *		m_pChzCur;
+	const char *		m_pChzNext;
+	StringEditBuffer *	m_pSeb;
+};
+
+void CompareLexer::LexNextToken()
+{
+	while (FIsWhitespace(*m_pChzNext))
+	{
+		m_pChzNext = m_pChzNext + 1;
+	}
+
+	m_pChzCur = m_pChzNext;
+
+	if (*m_pChzNext == '\0')
+	{
+		m_tok = TOK_Eof;
+	}
+	else if (*m_pChzNext == '(' || *m_pChzNext == ')' )
+	{
+		m_tok = TOK(*m_pChzNext);
+		++m_pChzNext;
+	}
+	else
+	{
+		while (*m_pChzNext != '\0' && !FIsWhitespace(*m_pChzNext) && *m_pChzNext != '(' && *m_pChzNext != ')')
+		{
+			++m_pChzNext;
+		}
+
+		m_istr = IstrInternCopy(m_pChzCur, m_pChzNext);
+		m_tok = TOK_Identifier;
+	}
+}
+
+size_t CBSkipToEndOfSExp(CompareLexer * pCmplex)
+{
+	MOE_ASSERT(pCmplex->m_tok == TOK('('), "expected opening paren");
+	const char * pChzBegin = pCmplex->m_pChzCur;
+	
+	int cParens = 1;
+	while (cParens > 0)
+	{
+		pCmplex->LexNextToken();
+
+		if (pCmplex->m_tok == TOK_Eof)
+		{
+			break;
+		}
+		else if (pCmplex->m_tok == TOK('('))
+		{
+			++cParens;
+		}
+		else if (pCmplex->m_tok == TOK(')'))
+		{
+			--cParens;
+		}
+	}
+
+	size_t cB = pCmplex->m_pChzNext - pChzBegin + 1; // +1 to be CB (vs cCh)
+	pCmplex->LexNextToken();
+	pCmplex->m_pSeb->AppendCh(pChzBegin, cB);
+	pCmplex->m_pSeb->AppendCh("", 1);
+	return cB;
+}
+
+void BuildComparisonStrings(const char * pChzA, const char * pChzB, StringEditBuffer * pSebA, StringEditBuffer * pSebB)
+{
+	CompareLexer cmplexA = CompareLexer(pChzA, pSebA);
+	CompareLexer cmplexB = CompareLexer(pChzB, pSebB);
+	char aChz[2] = " ";
+	
+	const char * pChzSeparator = "";
+	while (cmplexA.m_tok != TOK_Eof && cmplexB.m_tok != TOK_Eof)
+	{
+		if (cmplexA.m_tok == cmplexB.m_tok)
+		{
+			switch(cmplexA.m_tok)
+			{
+			case TOK_Identifier:
+				{
+					pSebA->AppendChz(pChzSeparator);
+					pSebB->AppendChz(pChzSeparator);
+					pChzSeparator = " ";
+
+					bool fIsAWild = (cmplexA.m_pChzCur[0] == '*' && cmplexA.m_pChzCur[1] == '*');
+					bool fIsBWild = (cmplexB.m_pChzCur[0] == '*' && cmplexB.m_pChzCur[1] == '*');
+
+					auto istrA = (fIsAWild) ? cmplexB.m_istr : cmplexA.m_istr;
+					auto istrB = (fIsBWild) ? cmplexA.m_istr : cmplexB.m_istr;
+
+					size_t cChMax = moeMax(CCh(istrA.PChz()), CCh(istrB.PChz()));
+					pSebA->AppendChzWithPad(istrA.PChz(), ' ', cChMax);
+					pSebB->AppendChzWithPad(istrB.PChz(), ' ', cChMax);
+				} break;
+			case TOK('('):
+				pSebA->AppendChz(pChzSeparator);
+				pSebB->AppendChz(pChzSeparator);
+				pChzSeparator = "";
+				// fallthrough
+			case TOK(')'):
+				{
+					aChz[0] = char(cmplexA.m_tok);
+					pSebA->AppendChz(aChz);
+					pSebB->AppendChz(aChz);
+				} break;
+			default:
+				MOE_ASSERT(false, "unexpected token");
+				break;
+			}
+
+			cmplexA.LexNextToken();
+			cmplexB.LexNextToken();
+		}
+		else if (cmplexA.m_tok == TOK_Identifier || cmplexB.m_tok == TOK_Identifier)
+		{
+			pSebA->AppendChz(pChzSeparator);
+			pSebB->AppendChz(pChzSeparator);
+			pChzSeparator = " ";
+
+			if (cmplexA.m_tok == TOK_Identifier)
+			{
+				pSebB->AppendChzWithPad("", ' ', CCh(cmplexA.m_istr.PChz()));
+				pSebA->AppendChz(cmplexA.m_istr.PChz());
+				cmplexA.LexNextToken();
+			}
+			else // cmplexB.m_tok == TOK_Identifier
+			{
+				pSebA->AppendChzWithPad("", ' ', CCh(cmplexB.m_istr.PChz()));
+				pSebB->AppendChz(cmplexB.m_istr.PChz());
+				cmplexB.LexNextToken();
+			}
+		}
+		else if (cmplexA.m_tok == TOK('(') || cmplexB.m_tok == TOK('('))
+		{
+			pSebA->AppendChz(pChzSeparator);
+			pSebB->AppendChz(pChzSeparator);
+			pChzSeparator = " ";
+
+			// skip to end of block
+			if (cmplexA.m_tok == TOK('('))
+			{
+				size_t cB = CBSkipToEndOfSExp(&cmplexA);
+				pSebB->AppendChzWithPad("", ' ', cB-1);
+			}
+			else 
+			{
+				size_t cB = CBSkipToEndOfSExp(&cmplexB);
+				pSebA->AppendChzWithPad("", ' ', cB-1);
+			}
+		}
+	}
+
+	// copy remnants
+	if (cmplexA.m_tok != TOK_Eof)
+	{
+		pSebA->AppendChz(cmplexA.m_pChzCur);
+	}
+
+	if (cmplexB.m_tok != TOK_Eof)
+	{
+		pSebB->AppendChz(cmplexB.m_pChzCur);
+	}
+}
+
+#if 0
+bool FConsumeChar(char ch, const char ** ppChz, StringEditBuffer * pSeb)
+{
+	if (**ppChz != ch)
+		return false;
+
+	++(*ppChz);
+	pSeb->AppendCh(&ch, 2);
+	return true;
+}
+
+int CWhitespaceConsume(const char ** ppChz, StringEditBuffer * pSeb)
+{
+	int cWhitespace = 0;
+	while (FIsWhitespace(**ppChz))
+	{
+		pSeb->AppendCh(*ppChz, 2);
+		++(*ppChz);
+		++cWhitespace;
+	}
+	return cWhitespace;
+}
+
+int CChConsumeToken(const char ** ppChz, StringEditBuffer * pSeb, bool * pFIsWildcard)
+{
+	const char * pChz = *ppChz;
+	const char * pChzIt = pChz;
+	while (*pChzIt != '\0' && *pChzIt != '(' && *pChzIt != ')' && !FIsWhitespace(*pChzIt))
+	{
+		++pChzIt;
+	}
+
+	bool fIsWildcard = (pChz[0] == '*' && pChz[1] == '*');
+	*pFIsWildcard = fIsWildcard;
+
+	*ppChz = pChzIt;
+
+	return int(pChzIt - pChz);
+}
+
+void AppendCharCopy(StringEditBuffer * pSeb, const char * pChz, int cCh)
+{
+	auto pChzIt = pChz;
+	for (int iCh = 0; iCh < cCh; ++iCh)
+	{
+		pSeb->AppendCh(pChzIt, 2);
+		++pChzIt;
+
+		if (*pChzIt == '\0')
+			pChzIt = pChz;
+	}
+}
+
+void CopyRemainingTokens(StringEditBuffer * pSebSelf, const char ** ppChzOther, StringEditBuffer * pSebOther, char chTerm = '\0')
+{
+	const char * pChzIt = *ppChzOther;
+	while (*pChzIt != '\0' && *pChzIt != chTerm)
+		++pChzIt;
+
+	int cCh = int(pChzIt - *ppChzOther);
+	pSebOther->AppendCh(*ppChzOther, cCh+1);
+	AppendCharCopy(pSebSelf, " ", cCh);
+	*ppChzOther = pChzIt;
+}
+
+void MatchWhitespace(const char ** ppChzA, StringEditBuffer * pSebA, const char ** ppChzB, StringEditBuffer * pSebB) 
+{
+	int nWhitespaceA = CWhitespaceConsume(ppChzA, pSebA);
+	int nWhitespaceB = CWhitespaceConsume(ppChzB, pSebB);
+
+	if (nWhitespaceA > nWhitespaceB)
+	{
+		AppendCharCopy(pSebB, " ", nWhitespaceA - nWhitespaceB);
+	}
+	else if (nWhitespaceA < nWhitespaceB)
+	{
+		AppendCharCopy(pSebA, " ", nWhitespaceB - nWhitespaceA);
+	}
+}
+
+
+void BuildComparisonStringsOld(const char ** ppChzA, const char ** ppChzB, StringEditBuffer * pSebA, StringEditBuffer * pSebB)
+{
+	// Take two strings containing a set of SExpression elements and space them out for element-by-element string comparison
+	// Also converts the wildcard "**" to match any expression element
+
+	while (1)
+	{
+		if ( **ppChzA == '\0')
+		{
+			CopyRemainingTokens(pSebA, ppChzB, pSebB);
+			break;
+		}
+
+		if ( **ppChzB == '\0')
+		{
+			CopyRemainingTokens(pSebB, ppChzA, pSebA);
+			break;
+		}
+
+//# the close paren case should only copy to the closing paren
+//# it's acting like this is the null terminator so it copies the rest of the string and then adds the paren so we get an extra space.
+		if ( **ppChzA == ')' )
+		{
+			CopyRemainingTokens(pSebA, ppChzB, pSebB, ')');
+			break;
+		}
+
+		if ( **ppChzB == ')' )
+		{
+			CopyRemainingTokens(pSebB, ppChzA, pSebA, ')');
+			break;
+		}
+
+		MatchWhitespace(ppChzA, pSebA, ppChzB, pSebB);
+
+		bool fIsOpenA = FConsumeChar('(', ppChzA, pSebA);
+		bool fIsOpenB = FConsumeChar('(', ppChzB, pSebB);
+		if (fIsOpenA && fIsOpenB)
+		{
+			BuildComparisonStringsOld(ppChzA, ppChzB, pSebA, pSebB);
+
+			bool fIsCloseA = FConsumeChar(')', ppChzA, pSebA);
+			bool fIsCloseB = FConsumeChar(')', ppChzB, pSebB);
+			if (fIsCloseA && !fIsCloseB)
+			{
+				pSebB->AppendChz(" ");
+			}
+			else if (!fIsCloseA && fIsCloseB)
+			{
+				pSebA->AppendChz(" ");
+			}
+		}
+		else if (fIsOpenA)
+		{
+			pSebB->AppendChz(" ");
+		}
+		else if (fIsOpenB)
+		{
+			pSebA->AppendChz(" ");
+		}
+
+		// Consume a token
+
+		const char * pChzA = *ppChzA;
+		const char * pChzB = *ppChzB;
+		bool fAIsWildcard;
+		bool fBIsWildcard;
+
+		int cChTokenA = CChConsumeToken(ppChzA, pSebA, &fAIsWildcard);
+		int cChTokenB = CChConsumeToken(ppChzB, pSebB, &fBIsWildcard);
+
+		if (fAIsWildcard || fBIsWildcard)
+		{
+			pSebA->AppendChz("**");
+			pSebB->AppendChz("**");
+		}
+		else
+		{
+			pSebA->AppendCh(pChzA, cChTokenA+1);
+			pSebA->AppendCh("", 1);
+			pSebB->AppendCh(pChzB, cChTokenB+1);
+			pSebB->AppendCh("", 1);
+
+			if (cChTokenA > cChTokenB)
+			{
+				AppendCharCopy(pSebB, " ", cChTokenA - cChTokenB);
+			}
+			else if (cChTokenA < cChTokenB)
+			{
+				AppendCharCopy(pSebA, " ", cChTokenB - cChTokenA);
+			}
+		}
+
+		MatchWhitespace(ppChzA, pSebA, ppChzB, pSebB);
+	}
+}
+#endif
+
+bool FCheckSExpressionResult(Alloc * pAlloc, const char * pChzIn, const char * pChzOut, const char * pChzExpected)
+{
+	StringEditBuffer sebOut(pAlloc);
+	StringEditBuffer sebExp(pAlloc);
+
+	BuildComparisonStrings(pChzOut, pChzExpected, &sebOut, &sebExp);
+
+	if (!FAreChzEqual(sebOut.PChz(), sebExp.PChz()))
+	{
+		PrintTestError(pChzIn, sebOut.PChz(), sebExp.PChz());
+		return false;
+	}
+	return true;
+}
+
+#if 0
+bool FCheckSExpressionResultOld(Alloc * pAlloc, const char * pChzIn, const char * pChzOut, const char * pChzExpected)
+{
+	StringEditBuffer sebOut(pAlloc);
+	StringEditBuffer sebExp(pAlloc);
+	StringEditBuffer sebLine(pAlloc);
+
+	bool fIsWholeMatch = true;
+	auto pChOut = pChzOut;
+	auto pChExp = pChzExpected;
+	while (*pChOut != '\0' && *pChExp != '\0')
+	{
+		if (*pChExp == '#' && *(pChExp+1) == '#')
+		{
+			// match until next word break character
+			pChExp += 2;
+
+			auto pChIt = pChOut;	
+			while (*pChIt != ')' && !FIsWhitespace(*pChIt))
+			{
+				++pChIt;	
+			}
+
+			sebOut.AppendCh(pChOut, pChIt - pChOut);
+			pChOut += (pChIt - pChOut);
+
+			for (int iCh = 0; iCh < (pChIt - pChOut); ++iCh)
+			{
+				sebExp.AppendChz("#");
+				sebLine.AppendChz(" ");
+			}
+		}
+
+		auto cBOut = CBCodepoint(pChOut);
+		auto cBExp = CBCodepoint(pChExp);
+		bool fAreSame = cBOut == cBExp;
+		if (fAreSame)
+		{
+			for (int iB = 0; iB < cBOut; ++iB)
+			{
+				fAreSame &= pChOut[iB] == pChExp[iB];
+			}
+		}
+
+		if (fAreSame)
+		{
+			sebOut.AppendCh(pChOut, cBOut);
+			sebExp.AppendCh(pChExp, cBExp);
+			sebLine.AppendChz(" ");
+
+			++pChOut;	
+			++pChExp;	
+		}
+		else
+		{
+			fIsWholeMatch = false;
+			auto pChzOutIt = pChOut;	
+			while (*pChzOutIt != ')' && *pChzOutIt != '\0' && !FIsWhitespace(*pChzOutIt))
+			{
+				++pChzOutIt;	
+			}
+
+			auto pChzExpIt = pChExp;	
+			while (*pChzExpIt != ')' && *pChzExpIt != '\0' && !FIsWhitespace(*pChzExpIt))
+			{
+				++pChzExpIt;	
+			}
+
+			sebOut.AppendCh(pChOut, (pChzOutIt - pChOut));
+			sebExp.AppendCh(pChExp, (pChzExpIt - pChExp));
+			sebLine.AppendChz("^");
+			pChOut += (pChzOutIt - pChOut);
+			pChExp += (pChzExpIt - pChExp);
+		}
+	}
+
+	if (!fIsWholeMatch)
+	{
+		ConsoleColorAmbit ccolamb;
+		GRFCCOL grfccolWhite = GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0);
+
+		printf("in : %s\n", pChzIn);
+		printf("out: ");
+		PrintHighlightMatch(sebOut.PChz(), sebExp.PChz(), ccolamb.m_grfccol, grfccolWhite);
+		printf("\nexp: ");
+		PrintHighlightMatch(sebExp.PChz(), sebOut.PChz(), ccolamb.m_grfccol, grfccolWhite);
+		printf("\n");
+	}
+
+	return fIsWholeMatch;
+}
+#endif
+
 void PrintTestError(const char * pChzIn, const char * pChzOut, const char * pChzExpected)
 {
 	ConsoleColorAmbit ccolamb;
@@ -902,31 +1374,34 @@ TESTRES TestresRunUnitTest(
 	const char * pChzTypeCheckExpected,
 	const char * pChzValuesExpected,
 	const char * pChzBytecodeExpected,
-	CDynAry<ErrorCount> * paryErrcExpected)
+	CDynAry<ErrorCount> * paryErrcExpected, 
+	ERREP errep)
 {
 	//if (pChzPrereq && pChzPrereq[0] != '\0')
 	//	printf("(%s): %s\n%s ", pUtest->m_strName.m_pChz, pChzPrereq, pChzIn);
 	//else
-	printf("(%s): %s ", pUtest->m_istrName.m_pChz, pChzIn);
-
-	if (paryErrcExpected)
+	if (errep == ERREP_ReportErrors)
 	{
-		auto pErrcMax = paryErrcExpected->PMac();
+		printf("(%s): %s ", pUtest->m_istrName.m_pChz, pChzIn);
 
-		const char * pChzSpacer = "";
-		for (auto pErrc = paryErrcExpected->A(); pErrc != pErrcMax; ++pErrc)
+		if (paryErrcExpected)
 		{
-			printf("%sErrid(%d)", pChzSpacer, pErrc->m_errid);
-			pChzSpacer = ", ";
+			auto pErrcMax = paryErrcExpected->PMac();
+
+			const char * pChzSpacer = "";
+			for (auto pErrc = paryErrcExpected->A(); pErrc != pErrcMax; ++pErrc)
+			{
+				printf("%sErrid(%d)", pChzSpacer, pErrc->m_errid);
+				pChzSpacer = ", ";
+			}
 		}
+		printf("\n");
 	}
-	printf("\n");
 
 	ErrorManager errmanTest(pWorkParent->m_pErrman->m_aryErrid.m_pAlloc);
 	Workspace work(pWorkParent->m_pAlloc, &errmanTest);
 	work.m_grfunt = pWorkParent->m_grfunt;
 	errmanTest.m_paryErrcExpected = paryErrcExpected;
-	work.CopyUnitTestFiles(pWorkParent);
 
 #ifdef MOE_TRACK_ALLOCATION
 	u8 aBAltrac[1024 * 100];
@@ -944,6 +1419,8 @@ TESTRES TestresRunUnitTest(
 	{
 		Compilation comp(work.m_pAlloc);
 		BeginWorkspace(&work, &comp);
+
+		work.CopyUnitTestFiles(pWorkParent);
 
 		sebFilename.AppendChz(pUtest->m_istrName.m_pChz);
 		pFile = work.PFileEnsure(IstrInternCopy(sebFilename.PChz()), Workspace::FILEK_Source);
@@ -988,50 +1465,46 @@ TESTRES TestresRunUnitTest(
 	{
 		if (!FIsEmptyString(pChzParseExpected))
 		{
+
 			WriteSExpressionForEntries(&work, pCh, pChMax, SEWK_Parse, FSEW_None);
 
-			if (!FAreChzEqual(aCh, pChzParseExpected))
+			if (!FCheckSExpressionResult(work.m_pAlloc, pChzIn, aCh, pChzParseExpected))
 			{
 				// print error location
 				printf("PARSE ERROR during test for '%s'\n", pUtest->m_istrName.m_pChz);
-				PrintTestError(pChzIn, aCh, pChzParseExpected);
 				testres = TESTRES_ParseMismatch;
 			}
 		}
 	}
 
-	/*
+	
 	if (testres == TESTRES_Success && !work.m_pErrman->FHasHiddenErrors())
 	{
 		// Type Check
+		/*
 		PerformTypeCheck(work.m_pAlloc, work.m_pErrman, work.m_pSymtab, &work.m_blistEntry, &work.m_arypEntryChecked, work.m_grfunt);
 		if (work.m_pErrman->FHasErrors())
 		{
 			printf("Unexpected error during type check test %s\n", pUtest->m_istrName.m_pChz);
 			printf("input = \"%s\"\n", pChzIn);
 			testres = TESTRES_SourceError;
-		}
+		}*/
 
 		fHasExpectedErr = FCheckForExpectedErrors(&errmanTest, ERRID_TypeCheckMin, ERRID_TypeCheckMax, &testres);
 
 		if (!fHasExpectedErr && testres == TESTRES_Success && !FIsEmptyString(pChzTypeCheckExpected))
 		{
-			WriteSExpressionForEntries(&work, pCh, pChMax, FDBGSTR_Type | FSEW_LiteralSize | FSEW_NoWhitespace);
+			WriteSExpressionForEntries(&work, pCh, pChMax, SEWK_TypeInfo, FSEW_LiteralSize | FSEW_NoWhitespace);
 
-			size_t cB = CBChz(pChzTypeCheckExpected);
-			char * aChExpected = (char *)work.m_pAlloc->MOE_ALLOC(cB, 1);
-			SwapDoubleHashForPlatformBits(pChzTypeCheckExpected, aChExpected, cB);
-
-			if (!FAreChzEqual(aCh, aChExpected))
+			if (!FCheckSExpressionResult(work.m_pAlloc, pChzIn, aCh, pChzTypeCheckExpected))
 			{
 				// print error location
 				printf("TYPE CHECK ERROR during test for '%s'\n", pUtest->m_istrName.m_pChz);
-				PrintTestError(pChzIn, aCh, aChExpected);
 				testres = TESTRES_TypeCheckMismatch;
 			}
-			work.m_pAlloc->MOE_DELETE(aChExpected);
 		}
 
+		/*
 		if (!fHasExpectedErr && testres == TESTRES_Success && !FIsEmptyString(pChzValuesExpected))
 		{
 			WriteSExpressionForEntries(&work, pCh, pChMax, FDBGSTR_Values);
@@ -1043,9 +1516,9 @@ TESTRES TestresRunUnitTest(
 				PrintTestError(pChzIn, aCh, pChzValuesExpected);
 				testres = TESTRES_TypeCheckMismatch;
 			}
-		}
+		}*/
 	}
-
+/*
 	if (testres == TESTRES_Success && !work.m_pErrman->FHasHiddenErrors())
 	{
 
@@ -1142,7 +1615,7 @@ TESTRES TestresRunUnitTest(
 }
 
 
-void TestPermutation(TestContext * pTesctx, Permutation * pPerm, UnitTest * pUtest)
+void TestPermutation(TestContext * pTesctx, Permutation * pPerm, UnitTest * pUtest, int * pCPermutation)
 {
 	auto pSub = pTesctx->m_arySubStack.AppendNew();
 	pSub->m_istrVar = pPerm->m_istrVar;
@@ -1193,7 +1666,7 @@ void TestPermutation(TestContext * pTesctx, Permutation * pPerm, UnitTest * pUte
 			auto ppPermChildMax = pPerm->m_arypPermChild.PMac();
 			for (auto ppPermChild = pPerm->m_arypPermChild.A(); ppPermChild != ppPermChildMax; ++ppPermChild)
 			{
-				TestPermutation(pTesctx, *ppPermChild, pUtest);
+				TestPermutation(pTesctx, *ppPermChild, pUtest, pCPermutation);
 			}
 		}
 		else
@@ -1224,6 +1697,8 @@ void TestPermutation(TestContext * pTesctx, Permutation * pPerm, UnitTest * pUte
 				auto pChzValues = PChzAllocateSubstitution(pTesctx, pPerm->m_lexsp, pUtest->m_pChzValues, pTesctx->m_arySubStack);
 				auto pChzBytecode = PChzAllocateSubstitution(pTesctx, pPerm->m_lexsp, pUtest->m_pChzBytecode, pTesctx->m_arySubStack);
 
+				*pCPermutation += 1;
+
 				if (!pChzInput || !pChzParse || !pChzTypeCheck || !pChzValues)
 				{
 					printf("... skipping test due to errors\n");
@@ -1242,7 +1717,27 @@ void TestPermutation(TestContext * pTesctx, Permutation * pPerm, UnitTest * pUte
 								pChzTypeCheck,
 								pChzValues,
 								pChzBytecode,
-								&aryErrcExpected);
+								&aryErrcExpected,
+								ERREP_HideErrors);
+
+					// run the test again in verbose mode if it failed
+					if (testres != TESTRES_Success)
+					{
+						TESTRES testresRetry = TestresRunUnitTest(
+												pTesctx->m_pWork,
+												pUtest,
+												pTesctx->m_grfcompile,
+												pChzPrereq,
+												pChzInput,
+												pChzParse,
+												pChzTypeCheck,
+												pChzValues,
+												pChzBytecode,
+												&aryErrcExpected,
+												ERREP_ReportErrors);
+						MOE_ASSERT(testresRetry == testres, "test results changed over two attempts");
+					}
+
 					++pTesctx->m_mpTestresCResult[testres];
 				}
 
@@ -1584,6 +2079,8 @@ void ParseAndTestMoetestFile(Moe::Alloc * pAlloc, ErrorManager * pErrman, Lexer 
 			continue;
 		}
 
+		int cPermutation = 0;
+		int cPermutationSuccess = 0;
 		if (pUtest->m_arypPerm.FIsEmpty())
 		{
 			// no permutations, just test it as is.
@@ -1598,16 +2095,60 @@ void ParseAndTestMoetestFile(Moe::Alloc * pAlloc, ErrorManager * pErrman, Lexer 
 						pUtest->m_pChzTypeCheck,
 						pUtest->m_pChzValues,
 						pUtest->m_pChzBytecode,
-						nullptr);
+						nullptr,
+						ERREP_HideErrors);
+
+			++cPermutation;
+
+			if (testres == TESTRES_Success)
+			{
+				++cPermutationSuccess;
+			}
+			else
+			{
+				TESTRES testresRetry = TestresRunUnitTest(
+										tesctx.m_pWork, 
+										pUtest, 
+										tesctx.m_grfcompile,
+										pUtest->m_pChzPrereq,
+										pUtest->m_pChzInput,
+										pUtest->m_pChzParse,
+										pUtest->m_pChzTypeCheck,
+										pUtest->m_pChzValues,
+										pUtest->m_pChzBytecode,
+										nullptr,
+										ERREP_ReportErrors);
+				MOE_ASSERT(testresRetry == testres, "test results changed after retry");
+			}
 			++tesctx.m_mpTestresCResult[testres];
-			continue;
+		}
+		else
+		{
+			auto cSuccessPrev = tesctx.m_mpTestresCResult[TESTRES_Success];
+
+			auto ppPermMax = pUtest->m_arypPerm.PMac();
+			for (auto ppPerm = pUtest->m_arypPerm.A(); ppPerm != ppPermMax; ++ppPerm)
+			{
+				TestPermutation(&tesctx, *ppPerm, pUtest, &cPermutation);
+			}
+
+			cPermutationSuccess += tesctx.m_mpTestresCResult[TESTRES_Success] - cSuccessPrev;
 		}
 
-		auto ppPermMax = pUtest->m_arypPerm.PMac();
-		for (auto ppPerm = pUtest->m_arypPerm.A(); ppPerm != ppPermMax; ++ppPerm)
+		printf("%s ", pUtest->m_istrName.PChz());
+		if (cPermutation == cPermutationSuccess)
 		{
-			TestPermutation(&tesctx, *ppPerm, pUtest);
+			ConsoleColorAmbit ccolamb;
+			ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseYellow);
+			printf("Passed. (%d / %d permutations)", cPermutationSuccess, cPermutation);
 		}
+		else
+		{
+			ConsoleColorAmbit ccolamb;
+			ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseRed);
+			printf("Failed. (%d / %d permutations)", cPermutationSuccess, cPermutation);
+		}
+		printf("\n");
 	}
 
 	int cTests = 0;

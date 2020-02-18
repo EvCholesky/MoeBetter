@@ -373,13 +373,11 @@ inline bool FIsIdentifier(STNode * pStnod, InString istr)
 
 void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFSEW grfsew)
 {
-	AppendChz(pStrbuf, ":");
-
 	if (pTin == nullptr)
 	{
 		if (park != PARK_Nil)
 		{
-			FormatChz(pStrbuf, "null(%s)", PChzAbbrevFromPark(park));
+			FormatChz(pStrbuf, "null_%s", PChzAbbrevFromPark(park));
 		}
 		else
 		{
@@ -428,6 +426,7 @@ void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK
 		{
 			auto pTinlit = (TypeInfoLiteral *)pTin;
 
+			AppendChz(pStrbuf, "Literal");
 			if (pTinlit->m_litty.m_litk == LITK_Enum)
 			{
 				WriteTypeInfoSExpression(pStrbuf, pTinlit->m_pTinSource, PARK_Nil, grfsew);
@@ -436,7 +435,7 @@ void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK
 			else if (!grfsew.FIsSet(FSEW_LiteralSize))
 			{
 				AppendChz(pStrbuf, PChzFromLitk(pTinlit->m_litty.m_litk));
-				AppendChz(pStrbuf, " ");
+				AppendChz(pStrbuf, "_");
 
 				if (pTinlit->m_litty.m_litk == LITK_Compound && pTinlit->m_pTinSource)
 				{
@@ -446,7 +445,6 @@ void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK
 				}
 			}
 			
-			AppendChz(pStrbuf, "Literal");
 			return;
 		}
 	case TINK_Anchor:
@@ -869,6 +867,17 @@ void WriteAstName(Moe::StringBuffer * pStrbuf, STNode * pStnod)
 	}
 }
 
+const char * PChzTypeFromNumk(NUMK numk)
+{
+	switch (numk)
+	{
+		case NUMK_Float:		return "float";
+		case NUMK_SignedInt:	return "s";
+		case NUMK_UnsignedInt:	return "u";
+		default:				return "err";
+	}
+}
+
 void WriteStnodFromSewk(StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, GRFSEW grfsew)
 {
 	switch(sewk)
@@ -896,6 +905,7 @@ void WriteStnodFromSewk(StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, GRFS
 			}
 			else
 			{
+				AppendChz(pStrbuf, ":");
 				WriteTypeInfoSExpression(pStrbuf, pStnod->m_pTin, pStnod->m_park, grfsew);
 			}
 		} break;
@@ -909,11 +919,13 @@ void WriteStnodFromSewk(StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, GRFS
 		{
 			const LiteralType & litty = ((TypeInfoLiteral *)pStnod->m_pTin)->m_litty;
 
-			FormatChz(pStrbuf, ":%s", PChzFromLitk(litty.m_litk));
-
-			if (litty.m_cBit >= 0)
+			if (litty.m_litk == LITK_Numeric && litty.m_cBit >= 0)
 			{
-				FormatChz(pStrbuf, "%d", litty.m_cBit);
+				FormatChz(pStrbuf, ":%s%d", PChzTypeFromNumk(litty.m_numk), litty.m_cBit);
+			}
+			else
+			{
+				FormatChz(pStrbuf, ":%s", PChzFromLitk(litty.m_litk));
 			}
 		}
 		grfsew.Clear(FSEW_LiteralSize);
@@ -955,7 +967,6 @@ void WriteSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, G
 	{
 		if (MOE_FVERIFY(CBFree(*pStrbuf) > 1, "debug string overflow"))
 		{
-			*pStrbuf->m_pChzAppend++ = ',';
 			*pStrbuf->m_pChzAppend++ = ' ';
 		}
 		if (MOE_FVERIFY(CBFree(*pStrbuf) > 0, "debug string overflow"))
@@ -979,6 +990,7 @@ InString IstrSExpression(TypeInfo * pTin, GRFSEW grfsew)
 	char aCh[1024];
 	Moe::StringBuffer strbuf(aCh, MOE_DIM(aCh));
 
+	AppendChz(&strbuf, ":");
 	WriteTypeInfoSExpression(&strbuf, pTin, PARK_Nil);
 	return IstrInternCopy(aCh);
 }
@@ -3458,7 +3470,7 @@ STNode * PStnodHandleExpressionRHS(
 		return pStnodLhs;
 	}
 
-	STOperator * pStopExp = PStnodAlloc<STOperator>(pParctx->m_pAlloc, parkExpression, pLex, LexSpan(pLex));
+	STOperator * pStopExp = PStnodAlloc<STOperator>(pParctx->m_pAlloc, parkExpression, pLex, lexsp);
 	pStopExp->m_tok = tokExpression;
 	pStopExp->m_pStnodLhs = pStnodLhs;
 	pStopExp->m_pStnodRhs = pStnodRhs;

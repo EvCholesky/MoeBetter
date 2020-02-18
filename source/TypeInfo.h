@@ -201,6 +201,7 @@ enum NUMK
 	MOE_MAX_MIN_NIL(NUMK)
 };
 
+const char * PChzTypeFromNumk(NUMK numk);
 inline bool FIsSigned(NUMK numk)
 	{ return numk == NUMK_Float || numk == NUMK_SignedInt; }
 inline bool FIsInteger(NUMK numk)

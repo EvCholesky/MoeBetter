@@ -5376,7 +5376,7 @@ TypeInfo * PTinPromoteUntypedDefault(
 			bool fIsSigned = FIsSigned(litty.m_numk);
 			if (fIsSigned == false)
 			{
-				const STValue * pStval = PStnodRtiCast<STValue *>(pStnodLit);
+				const STValue * pStval = PStvalGetFolded(pStnodLit);
 				s64 nUnsigned = NUnsignedLiteralCast(pTcctx, pStval);
 				fIsSigned = (nUnsigned < LLONG_MAX);
 			}
@@ -9108,8 +9108,8 @@ inline bool FComputeBinaryOpOnLiterals(
 	TypeInfo * pTinLhs = pStnodLhs->m_pTin;
 	TypeInfo * pTinRhs = pStnodRhs->m_pTin;
 
-	STValue * pStvalLhs = PStnodRtiCast<STValue*>(pStnodLhs);
-	STValue * pStvalRhs = PStnodRtiCast<STValue*>(pStnodRhs);
+	STValue * pStvalLhs = PStvalGetFolded(pStnodLhs);
+	STValue * pStvalRhs = PStvalGetFolded(pStnodRhs);
 	if ((pTinLhs->m_tink != TINK_Literal) | (pTinRhs->m_tink != TINK_Literal) |
 		(pStvalLhs == nullptr) | (pStvalRhs == nullptr))
 		return false;
@@ -9266,7 +9266,7 @@ TcretDebug TcretCheckBinaryOp(STNode * pStnod, TypeCheckContext * pTcctx, TypeCh
 	}
 
 	auto pStop = PStnodRtiCast<STOperator*>(pStnod);
-	if (MOE_FVERIFY(pStop, "expected binary operator"))
+	if (!MOE_FVERIFY(pStop, "expected binary operator"))
 		return TCRET_StoppingError;
 
 	STNode * pStnodLhs = pStop->m_pStnodLhs;

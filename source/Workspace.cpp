@@ -59,9 +59,8 @@ ErrorManager::ErrorManager(Alloc * pAlloc)
 :m_pWork(nullptr)
 ,m_aryErrid(pAlloc, BK_Workspace, 0)
 ,m_paryErrcExpected(nullptr)
-,m_arypGenmapContext(pAlloc, BK_Workspace, 64)
+,m_arypGenmapContext(pAlloc, BK_Workspace, 0)
 { 
-
 }
 
 bool ErrorManager::FHasHiddenErrors()
@@ -715,7 +714,7 @@ Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 ,m_arypEntryChecked(pAlloc, Moe::BK_Workspace, 0) 
 //,m_arypValManaged(pAlloc, Moe::BK_WorkspaceVal, 0)
 ,m_arypGenmapManaged(pAlloc, Moe::BK_Workspace, 0)
-,m_arypFile(pAlloc, Moe::BK_WorkspaceFile, 200)
+,m_arypFile(pAlloc, Moe::BK_WorkspaceFile, 0)
 ,m_pChzObjectFilename(nullptr)
 ,m_pSymtab(nullptr)
 ,m_pTyper(nullptr)
@@ -730,6 +729,14 @@ Workspace::Workspace(Moe::Alloc * pAlloc, ErrorManager * pErrman)
 ,m_grfunt(GRFUNT_Default)
 {
 	m_pErrman->SetWorkspace(this);
+
+	for (int filek = Workspace::FILEK_Min; filek < Workspace::FILEK_Max; ++filek)
+	{
+		m_mpFilekPHashHvIPFile[filek] = 
+			MOE_NEW_BK_SUB(pAlloc, BK_Workspace, 1, Workspace::HashHvIPFile) Workspace::HashHvIPFile(pAlloc, Moe::BK_Workspace, 0);
+
+		m_mpFilekPHashHvIPFile[filek]->Clear(0);
+	}
 }
 
 WorkspaceEntry * Workspace::PEntryAppend(STNode * pStnod, SymbolTable * pSymtab)
@@ -839,8 +846,6 @@ void BeginWorkspace(Workspace * pWork, Compilation * pComp)
 	pWork->m_arypEntryChecked.Clear();
 	pWork->m_blistEntry.Clear();
 
-
-
 #if MOEB_LATER
 	MOE_ASSERT(pWork->m_arypValManaged.C() == 0, "Unexpected managed values in workspace");
 #endif
@@ -858,12 +863,6 @@ void BeginWorkspace(Workspace * pWork, Compilation * pComp)
 	pWork->m_unset.Clear(0);
 	pWork->m_unsetTin.Clear(0);
 	pWork->m_pGenreg = MOE_NEW_BK_SUB(pAlloc, BK_Workspace, 0, GenericRegistry) GenericRegistry(pAlloc);
-
-	for (int filek = Workspace::FILEK_Min; filek < Workspace::FILEK_Max; ++filek)
-	{
-		pWork->m_mpFilekPHashHvIPFile[filek] = 
-			MOE_NEW_BK_SUB(pAlloc, BK_Workspace, 1, Workspace::HashHvIPFile) Workspace::HashHvIPFile(pAlloc, Moe::BK_Workspace);
-	}
 	
 	pWork->m_pTyper = MOE_NEW(pAlloc, TypeRegistry) TypeRegistry(pAlloc);
 	pWork->m_pSymtab = PSymtabNew(pAlloc, nullptr, IstrIntern("global"), pWork->m_pTyper, &pWork->m_unsetTin);
@@ -973,8 +972,8 @@ void EndWorkspace(Workspace * pWork)
 		if (!pWork->m_mpFilekPHashHvIPFile[filek])
 			continue;
 
-		pWork->m_pAlloc->MOE_DELETE(pWork->m_mpFilekPHashHvIPFile[filek]);
-		pWork->m_mpFilekPHashHvIPFile[filek] = nullptr;
+		pWork->m_mpFilekPHashHvIPFile[filek]->Clear(0);
+		pWork->m_mpFilekPHashHvIPFile[filek]->Clear(0);
 	}
 
 	pWork->m_pAlloc->MOE_DELETE(pWork->m_pTyper);
@@ -1011,6 +1010,15 @@ void EndWorkspace(Workspace * pWork)
 		printf("\nWARNING: %s. (%zu -> %zu)\n", pChzWarn, pWork->m_cbFreePrev, cbFreePost);
 		printf("----------------------------------------------------------------------\n");
 		pAlloc->PrintAllocations();
+	}
+
+	for (int filek = Workspace::FILEK_Min; filek < Workspace::FILEK_Max; ++filek)
+	{
+		if (!pWork->m_mpFilekPHashHvIPFile[filek])
+			continue;
+
+		pWork->m_pAlloc->MOE_DELETE(pWork->m_mpFilekPHashHvIPFile[filek]);
+		pWork->m_mpFilekPHashHvIPFile[filek] = nullptr;
 	}
 }
 

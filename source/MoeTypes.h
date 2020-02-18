@@ -446,6 +446,7 @@ struct StringEditBuffer // tag = seb
 	void		PrependChz(const char * pChz);
 	void		AppendCh(const char * pChz, size_t cB);
 	void		AppendChz(const char * pChz);
+	void		AppendChzWithPad(const char * pChz, char ch, size_t cChPad);
 	size_t		CBAppendCodepoint(const char * pChz)
 					{
 						auto cB = CBCodepoint(pChz);

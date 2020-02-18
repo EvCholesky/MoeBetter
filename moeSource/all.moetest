@@ -44,35 +44,44 @@ test builtin uniqueNames
 // Operator precedence:
 test OperatorPrecedence
 	input "n: = false || true && 0 ?rel 123 ?add 456 ?mul 789 ?shift 2"
-	parse "(decl, n, null, (op||, false, (op&&, true, (op?rel, 0, (op?add, 123, (op?mul, 456, (op?shift, 789, 2)))))))"
+	parse "(decl n null (op|| false (op&& true (op?rel 0 (op?add 123 (op?mul 456 (op?shift 789 2 **) **) ** ) **) **) **))"
 	{
 		?shift("<<"|">>") + ?mul("*"|"/"|"%"|"&") + ?add("+"|"-"|"|"|"^") + ?rel("<"|">"|"<="|">="|"=="|"!=")
 	}
 
 test OperatorPrecedence2
 	input "n: = 2 ?shift 789 ?mul 456 ?add 123 ?rel 0 && true || false"
-	parse "(decl, n, null, (op||, (op&&, (op?rel, (op?add, (op?mul, (op?shift, 2, 789), 456), 123), 0), true), false))"
+	parse "(decl n null (op|| (op&& (op?rel (op?add (op?mul (op?shift 2 789 **) 456 **) 123 **) 0 **) true **) false **))"
 	{
 		?shift("<<"|">>") + ?mul("*"|"/"|"%"|"&") + ?add("+"|"-"|"|"|"^") + ?rel("<"|">"|"<="|">="|"=="|"!=")
 	}
-	
+
+test OperatorCompareOrder
+	prereq "ack: int; ick: int; guh: int; foo: bool"
+	input "f := (ick ?opD ack ?opC foo) ?opA (123 ?opB guh)"
+	parse "(decl f null (op?opA (op?opC (op?opD ick ack) foo) (op?opB 123 guh)))"
+	//typecheck "(bool f (bool (bool (bool int int) bool) (bool Literal:Int## int)))"
+	{
+		?opA("!="|"==") + ?opB(">="|"<="|">"|"<"|"=="|"!=") + ?opC("=="|"!=") + ?opD(">="|"<="|">"|"<"|"!="|"==")
+	}
+
 // Declaration Tests:
 test DeclareAssign
 	input "v : ?type = ?init"
-	parse "(decl, v, ?type, ?initp)"
-//	typecheck "(?type v ?type Literal:?littype)"
+	parse "(decl v ?type ?initp)"
+	typecheck "(:?type v :?type :Literal:?type)"
 	{
 		?init(2.2?errid(2001)) + ?initp("?init")
 		{
-			?type(int) + ?littype(Int##),
-			?type(s32|u32) + ?littype(Int32),
-			?type(s64|u64) + ?littype(Int64),
+			?type(int),
+			?type(s32|u32),
+			?type(s64|u64),
 		},
 
-		?init(int?errid(2009)) + ?initp("?init") + ?type(int) + ?littype(Int32),	// make sure we can't assign a type as an RVal
-		?init(":s32"?errid(2001)) + ?initp("(typeArg, s32)") + ?type("s32") + ?littype(Int32),
+		?init(int?errid(2009)) + ?initp("?init") + ?type(int),	// make sure we can't assign a type as an RVal
+		?init(":s32"?errid(2001)) + ?initp("(typeArg s32)") + ?type("s32"),
 
-		?littype(Int8) + ?type(u8|s8)
+		?type(u8|s8)
 		{
 			?init(2|1000?errid(2001)) + ?initp("?init"),
 			?init("'\\0'") + ?initp(0),
@@ -82,16 +91,16 @@ test DeclareAssign
 
 test DeclareSigned
 	input "n : s?bits = -1"
-	parse "(decl, n, s?bits, (op-, 1))"
-//	typecheck "(s?bits n s?bits (Literal:Int?bits Literal:Int))"
+	parse "(decl n s?bits (op- 1 null -1))"
+	typecheck "(:s?bits n :s?bits (:Literal:s?bits :Literal:Numeric null :null_lit))"
 	{
 		?bits(8|16|32|64)
 	}
 
 test DeclareHex
 	input "n := ?init"
-	parse "(decl, n, null, ?dec)"
-	//typecheck "(int n Literal:Int64)"
+	parse "(decl n null ?dec)"
+	typecheck "(:int n null :Literal:s64)"
 	{
 		?init(0x0) + ?dec(0),
 		?init(0xFFFF) + ?dec(65535),
@@ -101,9 +110,9 @@ test DeclareHex
 
 test DeclareAssignString
 	input "v : ?type = \"hello world\""
-	parse "(decl, v, ?ptype, \"hello world\")"
-	//typecheck "(?tctype v (?tctype (?tcinit u8)) Literal:String)"
+	parse "(decl v ?ptype \"hello world\")"
+	typecheck "(:?tctype v (:?tctype (:?tcinit :u8)) :Literal:String)"
 	{
-		?type(&const u8) + ?ptype("(refDecl, (const, u8))") + ?tctype("&const.u8") + ?tcinit(const.u8),
-		?type(const&u8) + ?ptype("(const, (refDecl, u8))") + ?tctype("const.&u8") + ?tcinit(&u8),
+		?type(&const u8) + ?ptype("(refDecl (const u8))") + ?tctype("&const.u8") + ?tcinit(const.u8),
+		?type(const&u8) + ?ptype("(const (refDecl u8))") + ?tctype("const.&u8") + ?tcinit(&u8),
 	}

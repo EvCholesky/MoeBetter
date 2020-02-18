@@ -66,7 +66,7 @@ static void GenerateOperatorInfo(TOK tok, const OpTypes * pOptype, OperatorInfo 
 
 	for (int iOperand = 0; iOperand < 2; ++iOperand)
 	{
-		NUMK numk;
+		NUMK numk = NUMK_Nil;
 		TINK tink = apTin[iOperand]->m_tink;
 
 		if (tink == TINK_Literal)

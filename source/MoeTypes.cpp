@@ -119,6 +119,12 @@ public:
 						pEntry->m_cB -= cB;
 					}
 				}
+#if 0
+				else
+				{
+					printf("freeing untracked allocation of %zd bytes\n", cB);
+				}
+#endif
 #endif // MOE_TRACK_ALLOCATION
 			}
 
@@ -692,6 +698,20 @@ void StringEditBuffer::AppendChz(const char * pChz)
 {
 	size_t cBChz = CBChz(pChz);
 	AppendCh(pChz, cBChz);
+}
+
+void StringEditBuffer::AppendChzWithPad(const char * pChz, char ch, size_t cChPad)
+{
+	size_t cChzBegin = CCh(pChz);
+	AppendChz(pChz);
+
+	for (size_t iCh = cChzBegin; iCh < cChPad; ++iCh)
+	{
+		AppendCh(&ch, 2);		
+	}
+
+	// Null termination
+	AppendCh("", 1);		
 }
 
 void StringEditBuffer::Clear()

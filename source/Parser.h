@@ -240,7 +240,7 @@ public:
 											//CSTValue *			m_pStval;		// can this get moved into CSTExExpression - need to stop using it for RWORD
 											//CSTIdentifier *		m_pStident;		// pull it from the source
 											//SSyntaxTreeMap *		m_pStmap;       // moved into STEX classes
-	TypeInfo *				m_pTin;
+	const TypeInfo *		m_pTin;
 	SymbolTable *			m_pSymtab;
 	SymbolBase *			m_pSymbase;
 
@@ -293,10 +293,14 @@ public:
 							,m_pStnodBody(nullptr)
 							,m_pStnodForeignAlias(nullptr)
 							,m_pStnodParentScope(nullptr)
+							,m_procattrib()
 								{ ; }
 
 	MOE_STNOD_CHILD6(m_pStnodName, m_pStnodParameterList, m_pStnodReturnType, m_pStnodBody, m_pStnodForeignAlias, m_pStnodParentScope );
+
 	GRFSTPROC				m_grfstproc;
+	Moe::CDynAry<GRFPARMQ>	m_mpIptinGrfparmq;
+	ProcedureAttrib			m_procattrib;
 
 	bool					FCheckIsValid(ErrorManager * pErrman);
 };
@@ -348,7 +352,7 @@ public:
 };
 
 
-inline TypeInfo * TypeStructMember::PTin()
+inline const TypeInfo * TypeStructMember::PTin() const
 { 
 	return (m_pStdecl) ? m_pStdecl->m_pTin : nullptr; 
 }
@@ -415,11 +419,13 @@ struct STStruct : public STNode
 							,m_pStnodParameterList(nullptr)
 							,m_pStnodBakedParameterList(nullptr)
 							,m_pStnodDeclList(nullptr)
+							,m_grftingen()
 								{ ; }
 
 	MOE_STNOD_CHILD4(m_pStnodIdentifier, m_pStnodParameterList, m_pStnodBakedParameterList, m_pStnodDeclList);
 
 	bool					FCheckIsValid(ErrorManager * pErrman);
+	GRFTINGEN				m_grftingen;
 };
 
 #define AST_ASSERT(PWORK, PSTNOD, PREDICATE, ... ) do { if (!(PREDICATE)) { \
@@ -628,17 +634,17 @@ STDecl * PStdeclAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & 
 STValue * PStvalAllocAfterParse(Moe::Alloc * pAlloc, PARK park, const LexSpan & lexsp);
 
 Moe::InString IstrSExpression(STNode * pTin, SEWK sewk, GRFSEW grfsew = GRFSEW_Default);
-Moe::InString IstrSExpression(TypeInfo * pTin, GRFSEW grfsew = GRFSEW_Default);
+Moe::InString IstrSExpression(const TypeInfo * pTin, GRFSEW grfsew = GRFSEW_Default);
 
 void WriteAstName(Moe::StringBuffer * pStrbuf, STNode * pStnod);
-void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFSEW grfsew = GRFSEW_Default);
+void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, const TypeInfo * pTin, PARK park, GRFSEW grfsew = GRFSEW_Default);
 void WriteSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, GRFSEW grfsew = GRFSEW_Default);
 void WriteSExpressionForEntries(Workspace * pWork, char * pCo, char * pCoMax, SEWK sewk, GRFSEW grfsew);
 void PrintLiteral(Moe::StringBuffer * pStrbuf, STNode * pStnodLit);
 
 Moe::InString IstrFromIdentifier(STNode * pStnod);
 Moe::InString IstrIdentifierFromDecl(STNode * pStnodDecl);
-ERRID ErridCheckOverloadSignature(TOK tok, TypeInfoProcedure * pTinproc, ErrorManager * pErrman, const LexSpan & lexsp);
+ERRID ErridCheckOverloadSignature(TOK tok, const TypeInfoProcedure * pTinproc, ErrorManager * pErrman, const LexSpan & lexsp);
 
 JobRef PJobCreateParse(Compilation * pComp, Workspace * pWork, const char * pChzBody, Moe::InString istrFilename, COMPHASE comphase);
 JobRef PJobCreateTypeCheckRequest(Compilation * pComp, Workspace * pWork, WorkspaceEntry * pEntry, Job * pJobParse);

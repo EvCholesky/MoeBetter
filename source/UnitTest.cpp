@@ -985,186 +985,14 @@ void BuildComparisonStrings(const char * pChzA, const char * pChzB, StringEditBu
 	}
 }
 
-#if 0
-bool FConsumeChar(char ch, const char ** ppChz, StringEditBuffer * pSeb)
-{
-	if (**ppChz != ch)
-		return false;
-
-	++(*ppChz);
-	pSeb->AppendCh(&ch, 2);
-	return true;
-}
-
-int CWhitespaceConsume(const char ** ppChz, StringEditBuffer * pSeb)
-{
-	int cWhitespace = 0;
-	while (FIsWhitespace(**ppChz))
-	{
-		pSeb->AppendCh(*ppChz, 2);
-		++(*ppChz);
-		++cWhitespace;
-	}
-	return cWhitespace;
-}
-
-int CChConsumeToken(const char ** ppChz, StringEditBuffer * pSeb, bool * pFIsWildcard)
-{
-	const char * pChz = *ppChz;
-	const char * pChzIt = pChz;
-	while (*pChzIt != '\0' && *pChzIt != '(' && *pChzIt != ')' && !FIsWhitespace(*pChzIt))
-	{
-		++pChzIt;
-	}
-
-	bool fIsWildcard = (pChz[0] == '*' && pChz[1] == '*');
-	*pFIsWildcard = fIsWildcard;
-
-	*ppChz = pChzIt;
-
-	return int(pChzIt - pChz);
-}
-
-void AppendCharCopy(StringEditBuffer * pSeb, const char * pChz, int cCh)
-{
-	auto pChzIt = pChz;
-	for (int iCh = 0; iCh < cCh; ++iCh)
-	{
-		pSeb->AppendCh(pChzIt, 2);
-		++pChzIt;
-
-		if (*pChzIt == '\0')
-			pChzIt = pChz;
-	}
-}
-
-void CopyRemainingTokens(StringEditBuffer * pSebSelf, const char ** ppChzOther, StringEditBuffer * pSebOther, char chTerm = '\0')
-{
-	const char * pChzIt = *ppChzOther;
-	while (*pChzIt != '\0' && *pChzIt != chTerm)
-		++pChzIt;
-
-	int cCh = int(pChzIt - *ppChzOther);
-	pSebOther->AppendCh(*ppChzOther, cCh+1);
-	AppendCharCopy(pSebSelf, " ", cCh);
-	*ppChzOther = pChzIt;
-}
-
-void MatchWhitespace(const char ** ppChzA, StringEditBuffer * pSebA, const char ** ppChzB, StringEditBuffer * pSebB) 
-{
-	int nWhitespaceA = CWhitespaceConsume(ppChzA, pSebA);
-	int nWhitespaceB = CWhitespaceConsume(ppChzB, pSebB);
-
-	if (nWhitespaceA > nWhitespaceB)
-	{
-		AppendCharCopy(pSebB, " ", nWhitespaceA - nWhitespaceB);
-	}
-	else if (nWhitespaceA < nWhitespaceB)
-	{
-		AppendCharCopy(pSebA, " ", nWhitespaceB - nWhitespaceA);
-	}
-}
-
-
-void BuildComparisonStringsOld(const char ** ppChzA, const char ** ppChzB, StringEditBuffer * pSebA, StringEditBuffer * pSebB)
-{
-	// Take two strings containing a set of SExpression elements and space them out for element-by-element string comparison
-	// Also converts the wildcard "**" to match any expression element
-
-	while (1)
-	{
-		if ( **ppChzA == '\0')
-		{
-			CopyRemainingTokens(pSebA, ppChzB, pSebB);
-			break;
-		}
-
-		if ( **ppChzB == '\0')
-		{
-			CopyRemainingTokens(pSebB, ppChzA, pSebA);
-			break;
-		}
-
-//# the close paren case should only copy to the closing paren
-//# it's acting like this is the null terminator so it copies the rest of the string and then adds the paren so we get an extra space.
-		if ( **ppChzA == ')' )
-		{
-			CopyRemainingTokens(pSebA, ppChzB, pSebB, ')');
-			break;
-		}
-
-		if ( **ppChzB == ')' )
-		{
-			CopyRemainingTokens(pSebB, ppChzA, pSebA, ')');
-			break;
-		}
-
-		MatchWhitespace(ppChzA, pSebA, ppChzB, pSebB);
-
-		bool fIsOpenA = FConsumeChar('(', ppChzA, pSebA);
-		bool fIsOpenB = FConsumeChar('(', ppChzB, pSebB);
-		if (fIsOpenA && fIsOpenB)
-		{
-			BuildComparisonStringsOld(ppChzA, ppChzB, pSebA, pSebB);
-
-			bool fIsCloseA = FConsumeChar(')', ppChzA, pSebA);
-			bool fIsCloseB = FConsumeChar(')', ppChzB, pSebB);
-			if (fIsCloseA && !fIsCloseB)
-			{
-				pSebB->AppendChz(" ");
-			}
-			else if (!fIsCloseA && fIsCloseB)
-			{
-				pSebA->AppendChz(" ");
-			}
-		}
-		else if (fIsOpenA)
-		{
-			pSebB->AppendChz(" ");
-		}
-		else if (fIsOpenB)
-		{
-			pSebA->AppendChz(" ");
-		}
-
-		// Consume a token
-
-		const char * pChzA = *ppChzA;
-		const char * pChzB = *ppChzB;
-		bool fAIsWildcard;
-		bool fBIsWildcard;
-
-		int cChTokenA = CChConsumeToken(ppChzA, pSebA, &fAIsWildcard);
-		int cChTokenB = CChConsumeToken(ppChzB, pSebB, &fBIsWildcard);
-
-		if (fAIsWildcard || fBIsWildcard)
-		{
-			pSebA->AppendChz("**");
-			pSebB->AppendChz("**");
-		}
-		else
-		{
-			pSebA->AppendCh(pChzA, cChTokenA+1);
-			pSebA->AppendCh("", 1);
-			pSebB->AppendCh(pChzB, cChTokenB+1);
-			pSebB->AppendCh("", 1);
-
-			if (cChTokenA > cChTokenB)
-			{
-				AppendCharCopy(pSebB, " ", cChTokenA - cChTokenB);
-			}
-			else if (cChTokenA < cChTokenB)
-			{
-				AppendCharCopy(pSebA, " ", cChTokenB - cChTokenA);
-			}
-		}
-
-		MatchWhitespace(ppChzA, pSebA, ppChzB, pSebB);
-	}
-}
-#endif
-
-bool FCheckSExpressionResult(Alloc * pAlloc, const char * pChzIn, const char * pChzOut, const char * pChzExpected)
+bool FCheckSExpressionResult(
+	Alloc * pAlloc,
+	const char * pChzContext,
+	const char * pChzTestName,
+	const char * pChzIn,
+	const char * pChzOut,
+	const char * pChzExpected, 
+	ERREP errep)
 {
 	StringEditBuffer sebOut(pAlloc);
 	StringEditBuffer sebExp(pAlloc);
@@ -1173,104 +1001,22 @@ bool FCheckSExpressionResult(Alloc * pAlloc, const char * pChzIn, const char * p
 
 	if (!FAreChzEqual(sebOut.PChz(), sebExp.PChz()))
 	{
-		PrintTestError(pChzIn, sebOut.PChz(), sebExp.PChz());
+		if (errep == ERREP_ReportErrors)
+		{
+			{
+				ConsoleColorAmbit ccolamb;
+				ccolamb.SetConsoleForegroundColor(GRFCCOL_FgIntenseRed);
+				printf("%s ERROR for test '%s'", pChzContext, pChzTestName);
+			}
+
+			printf("\n");
+
+			PrintTestError(pChzIn, sebOut.PChz(), sebExp.PChz());
+		}
 		return false;
 	}
 	return true;
 }
-
-#if 0
-bool FCheckSExpressionResultOld(Alloc * pAlloc, const char * pChzIn, const char * pChzOut, const char * pChzExpected)
-{
-	StringEditBuffer sebOut(pAlloc);
-	StringEditBuffer sebExp(pAlloc);
-	StringEditBuffer sebLine(pAlloc);
-
-	bool fIsWholeMatch = true;
-	auto pChOut = pChzOut;
-	auto pChExp = pChzExpected;
-	while (*pChOut != '\0' && *pChExp != '\0')
-	{
-		if (*pChExp == '#' && *(pChExp+1) == '#')
-		{
-			// match until next word break character
-			pChExp += 2;
-
-			auto pChIt = pChOut;	
-			while (*pChIt != ')' && !FIsWhitespace(*pChIt))
-			{
-				++pChIt;	
-			}
-
-			sebOut.AppendCh(pChOut, pChIt - pChOut);
-			pChOut += (pChIt - pChOut);
-
-			for (int iCh = 0; iCh < (pChIt - pChOut); ++iCh)
-			{
-				sebExp.AppendChz("#");
-				sebLine.AppendChz(" ");
-			}
-		}
-
-		auto cBOut = CBCodepoint(pChOut);
-		auto cBExp = CBCodepoint(pChExp);
-		bool fAreSame = cBOut == cBExp;
-		if (fAreSame)
-		{
-			for (int iB = 0; iB < cBOut; ++iB)
-			{
-				fAreSame &= pChOut[iB] == pChExp[iB];
-			}
-		}
-
-		if (fAreSame)
-		{
-			sebOut.AppendCh(pChOut, cBOut);
-			sebExp.AppendCh(pChExp, cBExp);
-			sebLine.AppendChz(" ");
-
-			++pChOut;	
-			++pChExp;	
-		}
-		else
-		{
-			fIsWholeMatch = false;
-			auto pChzOutIt = pChOut;	
-			while (*pChzOutIt != ')' && *pChzOutIt != '\0' && !FIsWhitespace(*pChzOutIt))
-			{
-				++pChzOutIt;	
-			}
-
-			auto pChzExpIt = pChExp;	
-			while (*pChzExpIt != ')' && *pChzExpIt != '\0' && !FIsWhitespace(*pChzExpIt))
-			{
-				++pChzExpIt;	
-			}
-
-			sebOut.AppendCh(pChOut, (pChzOutIt - pChOut));
-			sebExp.AppendCh(pChExp, (pChzExpIt - pChExp));
-			sebLine.AppendChz("^");
-			pChOut += (pChzOutIt - pChOut);
-			pChExp += (pChzExpIt - pChExp);
-		}
-	}
-
-	if (!fIsWholeMatch)
-	{
-		ConsoleColorAmbit ccolamb;
-		GRFCCOL grfccolWhite = GRFCCOL_FgIntenseWhite | (ccolamb.m_grfccol.m_raw & 0xF0);
-
-		printf("in : %s\n", pChzIn);
-		printf("out: ");
-		PrintHighlightMatch(sebOut.PChz(), sebExp.PChz(), ccolamb.m_grfccol, grfccolWhite);
-		printf("\nexp: ");
-		PrintHighlightMatch(sebExp.PChz(), sebOut.PChz(), ccolamb.m_grfccol, grfccolWhite);
-		printf("\n");
-	}
-
-	return fIsWholeMatch;
-}
-#endif
 
 void PrintTestError(const char * pChzIn, const char * pChzOut, const char * pChzExpected)
 {
@@ -1377,27 +1123,6 @@ TESTRES TestresRunUnitTest(
 	CDynAry<ErrorCount> * paryErrcExpected, 
 	ERREP errep)
 {
-	//if (pChzPrereq && pChzPrereq[0] != '\0')
-	//	printf("(%s): %s\n%s ", pUtest->m_strName.m_pChz, pChzPrereq, pChzIn);
-	//else
-	if (errep == ERREP_ReportErrors)
-	{
-		printf("(%s): %s ", pUtest->m_istrName.m_pChz, pChzIn);
-
-		if (paryErrcExpected)
-		{
-			auto pErrcMax = paryErrcExpected->PMac();
-
-			const char * pChzSpacer = "";
-			for (auto pErrc = paryErrcExpected->A(); pErrc != pErrcMax; ++pErrc)
-			{
-				printf("%sErrid(%d)", pChzSpacer, pErrc->m_errid);
-				pChzSpacer = ", ";
-			}
-		}
-		printf("\n");
-	}
-
 	ErrorManager errmanTest(pWorkParent->m_pErrman->m_aryErrid.m_pAlloc);
 	Workspace work(pWorkParent->m_pAlloc, &errmanTest);
 	work.m_grfunt = pWorkParent->m_grfunt;
@@ -1468,10 +1193,8 @@ TESTRES TestresRunUnitTest(
 
 			WriteSExpressionForEntries(&work, pCh, pChMax, SEWK_Parse, FSEW_None);
 
-			if (!FCheckSExpressionResult(work.m_pAlloc, pChzIn, aCh, pChzParseExpected))
+			if (!FCheckSExpressionResult(work.m_pAlloc, "PARSE", pUtest->m_istrName.m_pChz, pChzIn, aCh, pChzParseExpected, errep))
 			{
-				// print error location
-				printf("PARSE ERROR during test for '%s'\n", pUtest->m_istrName.m_pChz);
 				testres = TESTRES_ParseMismatch;
 			}
 		}
@@ -1496,10 +1219,9 @@ TESTRES TestresRunUnitTest(
 		{
 			WriteSExpressionForEntries(&work, pCh, pChMax, SEWK_TypeInfo, FSEW_LiteralSize | FSEW_NoWhitespace);
 
-			if (!FCheckSExpressionResult(work.m_pAlloc, pChzIn, aCh, pChzTypeCheckExpected))
+			if (!FCheckSExpressionResult(work.m_pAlloc, "TYPE CHECK", pUtest->m_istrName.m_pChz, pChzIn, aCh, pChzTypeCheckExpected, errep))
 			{
 				// print error location
-				printf("TYPE CHECK ERROR during test for '%s'\n", pUtest->m_istrName.m_pChz);
 				testres = TESTRES_TypeCheckMismatch;
 			}
 		}
@@ -2157,19 +1879,22 @@ void ParseAndTestMoetestFile(Moe::Alloc * pAlloc, ErrorManager * pErrman, Lexer 
 		cTests += tesctx.m_mpTestresCResult[testres];
 	}
 
-	ConsoleColorAmbit ccolamb;
-	if (tesctx.m_mpTestresCResult[TESTRES_Success] == cTests)
 	{
-		SetConsoleTextColor(GRFCCOL_FgIntenseYellow);
-		printf("\nSUCCESS: ");
-	}
-	else
-	{
-		SetConsoleTextColor(GRFCCOL_FgIntenseRed);
-		printf("\nFailure: ");
-	}
+		ConsoleColorAmbit ccolamb;
+		if (tesctx.m_mpTestresCResult[TESTRES_Success] == cTests)
+		{
+			SetConsoleTextColor(GRFCCOL_FgIntenseYellow);
+			printf("\nSUCCESS: ");
+		}
+		else
+		{
+			SetConsoleTextColor(GRFCCOL_FgIntenseRed);
+			printf("\nFailure: ");
+		}
 
-	printf("%d / %d tests succeeded\n", tesctx.m_mpTestresCResult[TESTRES_Success], cTests);
+		printf("%d / %d tests succeeded", tesctx.m_mpTestresCResult[TESTRES_Success], cTests);
+	}
+	printf("\n");
 }
 
 bool FUnitTestFile(Workspace * pWork, const char * pChzFilenameIn, unsigned grfcompile)

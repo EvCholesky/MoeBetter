@@ -60,7 +60,7 @@ void CreateOpinfo(GPRED gpred, const char * pChzName, OperatorInfo * pOpinfo)
 
 static void GenerateOperatorInfo(TOK tok, const OpTypes * pOptype, OperatorInfo * pOpinfo)
 {
-	TypeInfo * apTin[2] = {PTinStripQualifiers(pOptype->m_pTinLhs), PTinStripQualifiers(pOptype->m_pTinRhs)};
+	const TypeInfo * apTin[2] = {PTinStripQualifiers(pOptype->m_pTinLhs), PTinStripQualifiers(pOptype->m_pTinRhs)};
 	TINK aTink[2];
 	NUMK aNumk[2];
 

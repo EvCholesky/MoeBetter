@@ -60,9 +60,9 @@ struct Anchor		// tag anc
 						}
 
 
-	STNode *		m_pStnodBaked;
-	TypeInfo *		m_pTin;
-	GENK			m_genk;
+	STNode *			m_pStnodBaked;
+	const TypeInfo *	m_pTin;
+	GENK				m_genk;
 };
 
 // A generic map is instructions for instantiating a generic procedure or struct. For a genmap to be complete it must anchor
@@ -70,7 +70,7 @@ struct Anchor		// tag anc
 
 struct GenericMap // tag = genmap
 {
-							GenericMap(Moe::Alloc * pAlloc, const char * pChzPrefix, TypeInfo * pTinOwner)
+							GenericMap(Moe::Alloc * pAlloc, const char * pChzPrefix, const TypeInfo * pTinOwner)
 							:m_istrName()	
 							,m_mpIstrAnc(pAlloc, Moe::BK_TypeCheckGenerics)
 							,m_aryPStnodManaged(pAlloc, Moe::BK_TypeCheckGenerics)
@@ -84,7 +84,7 @@ struct GenericMap // tag = genmap
 									{
 										char aCh[128];
 										Moe::StringBuffer strbuf(aCh, MOE_DIM(aCh));
-										FormatChz(&strbuf, "%s_%s", pTinOwner->m_istrName.m_pChz, pChzPrefix);
+										FormatChz(&strbuf, "%s_%s", pTinOwner->m_istrName.PChz(), pChzPrefix);
 
 										m_istrName = IstrInternCopy(aCh);
 									}
@@ -116,7 +116,7 @@ struct GenericMap // tag = genmap
 									m_aryLexspSrc.Swap(&pGenmapOther->m_aryLexspSrc);
 								}
 
-	Anchor	*				PAncMapType(const Moe::InString & istrName, TypeInfo * pTin);
+	Anchor	*				PAncMapType(const Moe::InString & istrName, const TypeInfo * pTin);
 	Anchor *				PAncMapValue(const Moe::InString & istrName, STNode * pStnodBaked);
 	Anchor *				PAncLookup(const Moe::InString & istr)
 								{ return m_mpIstrAnc.Lookup(istr); }
@@ -240,25 +240,25 @@ ERRID ErridComputeDefinedGenerics(
 	ERREP errep,
 	GRFGENCOMP grfgencomp, 
 	SymbolTable * pSymtab,
-	TypeInfo * pTinRef,
+	const TypeInfo * pTinRef,
 	STNode * pStnodDef,
 	GenericMap * pGenmap);
 
 // FindCanon
 //   given SFoo($DIM=2) instantiated from SFoo($C=$DIM) compute SFoo($C=2)
 
-TypeInfo * PTinFindCanon(TypeCheckContext * pTcwork, TypeInfo * pTin, SymbolTable * pSymtab, ERREP errep);
+const TypeInfo * PTinFindCanon(TypeCheckContext * pTcwork, const TypeInfo * pTin, SymbolTable * pSymtab, ERREP errep);
 void AssertIsCanon(TypeInfo * pTin);
 
 // Create a type by replacing the supplied type anchors, 
 //  Note: resulting type can still contain generic anchors if not fully instantiated, or generic types are substituted.
 //  Note: doesn't instantiate AST for generic type
 //  NOTE: this should always return a canonical type with a trimmed generic map
-TypeInfo * PTinSubstituteGenerics(
+const TypeInfo * PTinSubstituteGenerics(
 	TypeCheckContext * pTcwork,
 	SymbolTable * pSymtab,
 	const LexSpan & lexsp,
-	TypeInfo * pTinUnsub,
+	const TypeInfo * pTinUnsub,
 	GenericMap * pGenmap,
 	ERREP errep);
 

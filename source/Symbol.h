@@ -21,6 +21,7 @@
 struct ErrorManager;
 struct STEnum;
 struct STNode;
+struct STStruct;
 struct TypeInfo;
 struct TypeRegistry;
 struct UniqueNameSet;
@@ -105,7 +106,7 @@ struct Symbol : public SymbolBase	// tag = sym
 	void					AssertIsValid();
 };
 
-TypeInfo * PTinFromSymbol(const Symbol * pSym);
+const TypeInfo * PTinFromSymbol(const Symbol * pSym);
 LexSpan LexspFromSym(const Symbol * pSym);
 
 // symbol path for 'using' aliases (used during codegen to reconstruct offsets)
@@ -142,6 +143,7 @@ protected:
 							,m_pSymtabParent(nullptr)
 							,m_pSymtabNextManaged(nullptr)
 							,m_iNestingDepth(0)
+							,m_scopid(pTyper->ScopidAlloc())
 							,m_nVisitId(0)
 								{ ; }
 
@@ -214,26 +216,44 @@ public:
 								GRFSYMLOOK grfsymlook = FSYMLOOK_Default,
 								SymbolTable ** ppSymtabOut = nullptr);
 
-	TypeInfo *				PTinBuiltin(const Moe::InString & istr);
+	const TypeInfo *		PTinBuiltin(const Moe::InString & istr);
 	TypeInfoQualifier *		PTinqualBuiltinConst(const Moe::InString & istr)
 								{
-									return PTinqualWrap(PTinBuiltin(istr), FQUALK_Const);
+									return PTinqualEnsureIfNotNull(PTinBuiltin(istr), FQUALK_Const);
 								}
 
 	TypeInfoLiteral *		PTinlitFromLitk(LITK litk);
-	TypeInfoLiteral *		PTinlitFromLitk(LITK litk, int cBit, NUMK grfnumkl);
+	TypeInfoLiteral *		PTinlitFromLitk(LITK litk, int cBit, NUMK numk);
 	TypeInfoLiteral *		PTinlitAllocUnfinal(STVALK stvalk);
-	TypeInfoLiteral *		PTinlitCopy(TypeInfoLiteral * pTinlitSrc);
-	TypeInfoLiteral *		PTinlitAllocCompound(TypeInfo * pTinSource, STNode * pStnodDefinition, s64 cElement);
-	TypeInfoPointer *		PTinptrAllocate(TypeInfo * pTinPointedTo, bool fIsImplicitRef = false);
-	TypeInfoQualifier *		PTinqualEnsure(TypeInfo * pTinTarget, GRFQUALK grfqualk);
-	TypeInfoQualifier *		PTinqualWrap(TypeInfo * pTinTarget, GRFQUALK grfqualk);
+	TypeInfoLiteral *		PTinlitAllocate(const TypeInfo * pTinSource, LITK litk, s8 cBit, NUMK numk, bool fIsFinalized, s64 c = -1);
+	TypeInfoLiteral *		PTinlitAllocCompound(const TypeInfo * pTinSource, s64 cElement);
+	TypeInfoLiteral *		PTinlitNull(const TypeInfoPointer	 * pTinSource);
+
+	TypeInfoPointer *		PTinptrAllocate(const TypeInfo * pTinPointedTo, bool fIsImplicitRef = false);
+
+	TypeInfoQualifier *		PTinqualEnsure(const TypeInfo * pTinTarget, GRFQUALK grfqualk);
+	TypeInfoQualifier *		PTinqualEnsureIfNotNull(const TypeInfo * pTinTarget, GRFQUALK grfqualk);
+
 	TypeInfoEnum *			PTinenumAllocate(Moe::InString istrName, int cConstant, ENUMK enumk, STEnum * pStenumDef);
-	TypeInfoProcedure *		PTinprocAllocate(Moe::InString istrName, size_t cParam, size_t cReturn);
-	TypeInfoProcedure *		PTinprocCopy(TypeInfoProcedure * pTinprocSrc);
-	TypeInfoStruct *		PTinstructAllocate(Moe::InString istrName, size_t cField, size_t cGenericParam);
-	TypeInfoArray *			PTinaryCopy(TypeInfoArray * pTinarySrc);
-	TypeInfoArray *			PTinaryCopyWithNewElementType(TypeInfoArray * pTinarySrc, TypeInfo * pTinNew);
+	TypeInfoProcedure *		PTinprocAllocate(Moe::InString istrName, 
+								SCOPID scopid, 
+								const ProcedureAttrib & procattrib, 
+								const Moe::CAry<const TypeInfo *> & arypTinParam,
+								const Moe::CAry<const TypeInfo *> & arypTinReturn,
+								Moe::CAry<GRFPARMQ> * paryGrfparmq = nullptr);
+
+	const TypeInfoStruct *	PTinstructAllocate(
+								Moe::InString istrName, 
+								SCOPID scopid,
+								STNode * pStnodDefinition,
+								const Moe::CAry<TypeStructMember> & aryTypemembField,
+								const StructAttrib & structattrib,
+								const TypeInfoStruct * pTinstructInstFrom = nullptr,
+								GenericMap * pGenmap = nullptr);
+	const TypeInfoStruct *  PTinstructEnsureCanon(const TypeInfoStruct * pTinstruct);
+
+	TypeInfoArray *			PTinaryAllocate(const TypeInfo * pTinElement, ARYK aryk, s64 c, STNode * pStnodBakedDim = nullptr);
+	TypeInfoArray *			PTinaryCopyWithNewElementType(const TypeInfoArray * pTinarySrc, const TypeInfo * pTinNew);
 
 	template <typename T>
 	T *						PTinMakeUnique(T * pTin)
@@ -241,8 +261,8 @@ public:
 									return (T *)m_pTyper->PTinMakeUnique(pTin);
 								}
 
-	void					AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo * pTin, GRFSYM grfsym = FSYM_None);
-	void					AddManagedTin(TypeInfo * pTin);
+	void					AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, const TypeInfo * pTin, GRFSYM grfsym = FSYM_None);
+	void					AddManagedTin(const TypeInfo * pTin);
 	void					AddManagedSymtab(SymbolTable * pSymtab);
 
 	void					PrintDump();
@@ -251,14 +271,14 @@ public:
 	Moe::Alloc *						m_pAlloc;
 	Moe::CHash<Moe::InString, Symbol *>	m_hashIstrPSym;			// All the symbols defined within this scope, a full lookup requires
 																//  walking up the parent list
-	Moe::CHash<Moe::InString, TypeInfo *>	
+	Moe::CHash<Moe::InString, const TypeInfo *>	
 										m_hashIstrPTinBuiltIn;		// Builtin Types declared in this scope
 	Moe::CHash<Moe::InString, STNode *>	
 										m_hashIstrPStnodBuiltIn;	// stub AST nodes for Builtin Types declared in this scope
 																	//  (these exist so that symbols can map to pTin via an AST node, and prevent 
 																	//  having both pSym->m_pStnodDefinition and pSym->m_pTin that must agree on pTin
 
-	Moe::CDynAry<TypeInfo *>			m_arypTinManaged;		// all type info structs that need to be deleted.
+	Moe::CDynAry<const TypeInfo *>		m_arypTinManaged;		// all type info structs that need to be deleted.
 	Moe::CDynAry<GenericMap *>			m_arypGenmapManaged;	// generic mappings used by instantiated generic structs
 	Moe::CDynAry<Symbol *>				m_arypSymGenerics;		// symbol copies for generics, not mapped to an identifier
 	Moe::CDynAry<SUsing>				m_aryUsing;				// symbol tables with members pushed into this table's scope
@@ -272,7 +292,7 @@ public:
 
 	SymbolTable *						m_pSymtabNextManaged;	// next table in the global list
 	s32									m_iNestingDepth;					
-	//SCOPID							m_scopid;				// unique table id, for unique type strings
+	SCOPID								m_scopid;				// unique scope id, for uniqueifying named types (unique = name+scopid)
 	u64									m_nVisitId;				// id to check if this table has been visited during collision check
 };
 

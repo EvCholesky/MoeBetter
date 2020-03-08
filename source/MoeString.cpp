@@ -29,7 +29,7 @@ u32 HvFromPBFVN(const void * pV, size_t cB)
     return hv;
 }
 
-u32 HvConcatPBFVN(u32 hv, const void * pV, size_t cB)
+u32 HvConcatPBFNV(u32 hv, const void * pV, size_t cB)
 {
 	auto pB = (u8*)pV;
 	for (size_t iB=0; iB < cB; ++iB)
@@ -40,7 +40,31 @@ u32 HvConcatPBFVN(u32 hv, const void * pV, size_t cB)
     return hv;
 }
 
-u32 HvFromPChzLowercaseFVN(const char * pV, size_t cB)
+u64 Hv64FromPBFVN(const void * pV, size_t cB)
+{
+	auto pB = (u8*)pV;
+   u64 hv = 0xcbf29ce484222325;
+
+	for (size_t iB=0; iB < cB; ++iB)
+    {
+        hv = (hv * 0x100000001b3) ^ pB[iB];
+    }
+
+    return hv;
+}
+
+u64 Hv64ConcatPBFNV(u64 hv, const void * pV, size_t cB)
+{
+	auto pB = (u8*)pV;
+	for (size_t iB=0; iB < cB; ++iB)
+    {
+        hv = (hv * 0x100000001b3) ^ pB[iB];
+    }
+
+    return hv;
+}
+
+u32 HvFromPChzLowercaseFNV(const char * pV, size_t cB)
 {
 	auto pB = (u8*)pV;
     u32 hv = 2166136261;

@@ -39,9 +39,11 @@
 #if _WIN64
 #define MOE_S64FMT "%lld"
 #define MOE_U64FMT "%llu"
+#define MOE_X64FMT "%llx"
 #else
 #define MOE_S64FMT "%ld"
 #define MOE_U64FMT "%lu"
+#define MOE_X64FMT "%lx"
 #endif
 
 typedef int8_t s8;
@@ -70,6 +72,7 @@ enum TFN
 
 // BB - Messy dependency, defined in MoeString.cpp
 u32 HvFromPBFVN(const void * pV, size_t cB);
+u64 Hv64FromPBFVN(const void * pV, size_t cB);
 
 namespace Moe
 {
@@ -745,7 +748,7 @@ struct Alloc // tag=alloc
 	void				DeleteImpl(T * p, const char * pChzFile, int cLine)
 							{
 								p->~T();
-								FreeImpl(p, pChzFile, cLine);
+								FreeImpl((void*)(p), pChzFile, cLine);
 							}
 
 	void				TrackAlloc(size_t cB, const char * pChzFile, int cLine, BK bk, int subKind, HV * pHv);

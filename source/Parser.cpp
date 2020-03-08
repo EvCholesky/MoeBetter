@@ -371,7 +371,7 @@ inline bool FIsIdentifier(STNode * pStnod, InString istr)
 }
 
 
-void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK park, GRFSEW grfsew)
+void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, const TypeInfo * pTin, PARK park, GRFSEW grfsew)
 {
 	if (pTin == nullptr)
 	{
@@ -392,7 +392,7 @@ void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK
 		{
 			auto pTinqual = (TypeInfoQualifier *)pTin;
 			const char * pChzSpacer = (grfsew.FIsSet(FSEW_NoWhitespace)) ? "." : " ";
-			AppendFlagNames(pStrbuf, pTinqual->m_grfqualk, pChzSpacer);
+			AppendFlagNames(pStrbuf, pTinqual->Grfqualk(), pChzSpacer);
 			AppendChz(pStrbuf, pChzSpacer);
 			WriteTypeInfoSExpression(pStrbuf, pTinqual->m_pTin, park, grfsew);
 			return;
@@ -483,7 +483,7 @@ void WriteTypeInfoSExpression(Moe::StringBuffer * pStrbuf, TypeInfo * pTin, PARK
 				WriteTypeInfoSExpression(pStrbuf, pTinproc->m_arypTinReturns[ipTin], PARK_Nil, grfsew);
 			}
 
-			if (pTinproc->m_grftinproc.FIsSet(FTINPROC_IsForeign))
+			if (pTinproc->FIsForeign())
 			{
 				AppendChz(pStrbuf, " #foreign");
 			}
@@ -985,7 +985,7 @@ void WriteSExpression(Moe::StringBuffer * pStrbuf, STNode * pStnod, SEWK sewk, G
 }
 
 
-InString IstrSExpression(TypeInfo * pTin, GRFSEW grfsew)
+InString IstrSExpression(const TypeInfo * pTin, GRFSEW grfsew)
 {
 	char aCh[1024];
 	Moe::StringBuffer strbuf(aCh, MOE_DIM(aCh));
@@ -1056,6 +1056,7 @@ void WriteSExpressionForEntries(Workspace * pWork, char * pCo, char * pCoMax, SE
 #endif
 }
 
+#if !UNIQUE_TYPE_CLEANUP
 void AppendTypeDescriptor(TypeInfo * pTin, StringEditBuffer * pSeb)
 {
 	if (!pTin->m_istrDesc.FIsEmpty())
@@ -1097,7 +1098,7 @@ void AppendTypeDescriptor(TypeInfo * pTin, StringEditBuffer * pSeb)
 
 			char aCh[64];
 			StringBuffer strbuf(aCh, MOE_DIM(aCh));
-			AppendFlagNames(&strbuf, pTinqual->m_grfqualk, " ");
+			AppendFlagNames(&strbuf, pTinqual->Grfqualk(), " ");
 			pSeb->AppendChz(aCh);
 			pSeb->AppendChz(" ");
 			AppendTypeDescriptor(pTinqual->m_pTin, pSeb);
@@ -1196,6 +1197,7 @@ void AppendTypeDescriptor(TypeInfo * pTin, StringEditBuffer * pSeb)
 
 	pTin->m_istrDesc = IstrInternCopy(&pSeb->PChz()[cBPrefix], pSeb->CB());
 }
+#endif
 
 
 
@@ -1266,7 +1268,7 @@ LexSpan LexspFromSym(const Symbol * pSym)
 	return pSym->m_pStnodDefinition->m_lexsp;
 }
 
-TypeInfo * PTinFromSymbol(const Symbol * pSym)
+const TypeInfo * PTinFromSymbol(const Symbol * pSym)
 {
 	if (!pSym || !pSym->m_pStnodDefinition)
 		return nullptr;
@@ -1354,7 +1356,7 @@ SymbolTable::~SymbolTable()
 	}
 #endif
 
-	for (TypeInfo ** ppTin = m_arypTinManaged.A(); ppTin != m_arypTinManaged.PMac(); ++ppTin)
+	for (const TypeInfo ** ppTin = m_arypTinManaged.A(); ppTin != m_arypTinManaged.PMac(); ++ppTin)
 	{
 		DeleteTypeInfo(m_pAlloc, *ppTin);
 		*ppTin = nullptr;
@@ -1605,19 +1607,42 @@ TypeInfoLiteral * SymbolTable::PTinlitFromLitk(LITK litk, int cBit, NUMK numk)
 
 	return nullptr;
 }
-
-TypeInfoLiteral * SymbolTable::PTinlitAllocCompound(TypeInfo * pTinSource, STNode * pStnodDefinition, s64 cElement)
+ static inline TypeInfoLiteral * PTinlitAllocateCommon(
+	SymbolTable * pSymtab,
+	const TypeInfo * pTinSource,
+	LITK litk,
+	s8 cBit,
+	NUMK numk,
+	bool fIsFinalized,
+	s64 cElement)
 {
-	// BB - this should search for a unique copy first
-	TypeInfoLiteral * pTinlit = MOE_NEW(m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
-	pTinlit->m_litty.m_litk = LITK_Compound;
-	pTinlit->m_pTinSource = pTinSource;
-	pTinlit->m_pStnodDefinition = pStnodDefinition;
-	pTinlit->m_c = cElement;
-	AddManagedTin(pTinlit);
+	Hvdec hvdec = HvdecLiteral(litk, cBit, numk, fIsFinalized, cElement);
+	Hvtype hvtype = HvtypeFromPTinChild(hvdec, pTinSource);
 
-	pTinlit = PTinMakeUnique(pTinlit);
-	return pTinlit;
+	const TypeInfo ** ppTin;
+	if (pSymtab->m_pTyper->m_hashHvtypePTinUnique.InresEnsureKey(hvtype, &ppTin) == INRES_Inserted)
+	{
+		auto pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral(litk, cBit, numk, fIsFinalized, cElement);
+		*ppTin = pTinlit;
+		pSymtab->AddManagedTin(pTinlit);
+	}
+
+	return PTinDerivedCast<TypeInfoLiteral *>(*ppTin);
+}
+
+TypeInfoLiteral * SymbolTable::PTinlitAllocate(const TypeInfo * pTinSource, LITK litk, s8 cBit, NUMK numk, bool fIsFinalized, s64 cElement)
+{
+	return PTinlitAllocateCommon(this, pTinSource, litk, cBit, numk, fIsFinalized, cElement);
+}
+
+TypeInfoLiteral * SymbolTable::PTinlitAllocCompound(const TypeInfo * pTinSource, s64 cElement)
+{
+	return PTinlitAllocateCommon(this, pTinSource, LITK_Compound, -1, NUMK_Nil, true, cElement);
+}
+
+TypeInfoLiteral * SymbolTable::PTinlitNull(const TypeInfoPointer * pTinSource)
+{
+	return PTinlitAllocateCommon(this, pTinSource, LITK_Null, -1, NUMK_Nil, true, -1);
 }
 
 TypeInfoLiteral * SymbolTable::PTinlitAllocUnfinal(STVALK stvalk)
@@ -1693,27 +1718,54 @@ ERRID ErridCheckSymbolCollision(
 	return ERRID_Nil;
 }
 
-TypeInfoQualifier * SymbolTable::PTinqualEnsure(TypeInfo * pTinTarget, GRFQUALK grfqualk)
+TypeInfo const ** TypeRegistry::PPTinEnsureDecorator(const TypeInfo * pTinTarget, Hvdec hvdec)
 {
-	// Note: I should unique'ify these
+	TypeDecoratorSet ** ppTdecset;
+	INRES inres = m_hashPTinPTdecset.InresEnsureKey(pTinTarget, &ppTdecset);
+	if (inres == INRES_Inserted)
+	{
+		*ppTdecset = MOE_NEW(m_pAlloc, TypeDecoratorSet) TypeDecoratorSet(m_pAlloc);
+	}
+
+	auto pTdecset = *ppTdecset;
+
+	const TypeInfo ** ppTin;
+	inres = pTdecset->m_hashHvdescPtin.InresEnsureKey(hvdec, &ppTin);
+	if (inres == INRES_Inserted)
+	{
+		*ppTin = nullptr;
+	}
+
+	return ppTin;
+}
+
+TypeInfoQualifier * SymbolTable::PTinqualEnsure(const TypeInfo * pTinTarget, GRFQUALK grfqualk)
+{
+	// if the target type is already a qualifier type check to see if we need to add new qualifiers after  all
 	if (pTinTarget && pTinTarget->m_tink == TINK_Qualifier)
 	{
 		auto pTinqualPrev = (TypeInfoQualifier *)pTinTarget;
 
-		if (pTinqualPrev->m_grfqualk.FIsSet(grfqualk))
+		if (pTinqualPrev->Grfqualk().FIsSet(grfqualk))
 			return pTinqualPrev;
-		grfqualk |= pTinqualPrev->m_grfqualk;
+		grfqualk |= pTinqualPrev->Grfqualk();
 		pTinTarget = pTinqualPrev->m_pTin;
 	}
 
-	TypeInfoQualifier * pTinqual = MOE_NEW(m_pAlloc, TypeInfoQualifier) TypeInfoQualifier(grfqualk);
-	pTinqual->m_pTin = pTinTarget;
+	TypeInfo const ** ppTin = m_pTyper->PPTinEnsureDecorator(pTinTarget, HvdecQualifier(grfqualk));
+	if (*ppTin)
+	{
+		return PTinDerivedCast<TypeInfoQualifier*>(*ppTin);
+	}
+	
+	TypeInfoQualifier * pTinqual = MOE_NEW(m_pAlloc, TypeInfoQualifier) TypeInfoQualifier(pTinTarget, grfqualk);
+	*ppTin = pTinqual;
 
 	AddManagedTin(pTinqual);
 	return pTinqual;
 }
 
-TypeInfoQualifier * SymbolTable::PTinqualWrap(TypeInfo * pTinTarget, GRFQUALK grfqualk)
+TypeInfoQualifier * SymbolTable::PTinqualEnsureIfNotNull(const TypeInfo * pTinTarget, GRFQUALK grfqualk)
 {
 	if (!pTinTarget)	
 		return nullptr;
@@ -1721,17 +1773,22 @@ TypeInfoQualifier * SymbolTable::PTinqualWrap(TypeInfo * pTinTarget, GRFQUALK gr
 	return PTinqualEnsure(pTinTarget, grfqualk);
 }
 
-TypeInfoPointer * SymbolTable::PTinptrAllocate(TypeInfo * pTinPointedTo, bool fIsImplicitRef)
+TypeInfoPointer * SymbolTable::PTinptrAllocate(const TypeInfo * pTinPointedTo, bool fIsImplicitRef)
 {
-	TypeInfoPointer * pTinptr = MOE_NEW(m_pAlloc, TypeInfoPointer) TypeInfoPointer();
-	pTinptr->m_pTin = pTinPointedTo;
-	pTinptr->m_fIsImplicitRef = fIsImplicitRef;
+	const TypeInfo ** ppTin = m_pTyper->PPTinEnsureDecorator(pTinPointedTo, HvdecPointer(fIsImplicitRef));
+	if (*ppTin)
+	{
+		return PTinDerivedCast<TypeInfoPointer*>(*ppTin);
+	}
+
+	TypeInfoPointer * pTinptr = MOE_NEW(m_pAlloc, TypeInfoPointer) TypeInfoPointer(pTinPointedTo, fIsImplicitRef);
+	*ppTin = pTinptr;
 
 	AddManagedTin(pTinptr);
 	return pTinptr;
 }
 
-void SymbolTable::AddManagedTin(TypeInfo * pTin)
+void SymbolTable::AddManagedTin(const TypeInfo * pTin)
 {
 	m_arypTinManaged.Append(pTin);
 }
@@ -1928,7 +1985,7 @@ Symbol * SymbolTable::PSymLookup(InString istr, const LexSpan & lexsp, GRFSYMLOO
 	return nullptr; 
 }
 
-TypeInfo * SymbolTable::PTinBuiltin(const Moe::InString & istr)
+const TypeInfo * SymbolTable::PTinBuiltin(const Moe::InString & istr)
 {
 	SymbolTable * pSymtabBase = this;
 	while (pSymtabBase->m_pSymtabParent)
@@ -1936,7 +1993,7 @@ TypeInfo * SymbolTable::PTinBuiltin(const Moe::InString & istr)
 		pSymtabBase = pSymtabBase->m_pSymtabParent;
 	}
 
-	TypeInfo ** ppTin = pSymtabBase->m_hashIstrPTinBuiltIn.Lookup(istr);
+	const TypeInfo ** ppTin = pSymtabBase->m_hashIstrPTinBuiltIn.Lookup(istr);
 	if (ppTin)
 		return *ppTin;
 
@@ -1954,125 +2011,164 @@ TypeInfo * SymbolTable::PTinBuiltin(const Moe::InString & istr)
 
 TypeInfoEnum * SymbolTable::PTinenumAllocate(Moe::InString istrName, int cConstant, ENUMK enumk, STEnum * pStenumDef)
 {
+	Hvdec hvdec = HvdecNamed(TINK_Enum, istrName, m_scopid);
+	Hvtype hvtype = HvtypeFromPTinChild(hvdec, nullptr);
+
+	const TypeInfo ** ppTin;
+	if (m_pTyper->m_hashHvtypePTinUnique.InresEnsureKey(hvtype, &ppTin) != INRES_Inserted)
+	{
+		return PTinDerivedCast<TypeInfoEnum *>(*ppTin);
+	}
+
 	size_t cBAlloc = CBAlign(sizeof(TypeInfoEnum), MOE_ALIGN_OF(TypeInfoEnumConstant)) + 
 					cConstant * sizeof(TypeInfoEnumConstant);
 	u8 * pB = (u8 *)m_pAlloc->MOE_ALLOC(cBAlloc, 8);
 
-	TypeInfoEnum * pTinenum = new(pB) TypeInfoEnum(istrName);
+	TypeInfoEnum * pTinenum = new(pB) TypeInfoEnum(istrName, m_scopid);
 	pTinenum->m_enumk = enumk;
 
 	auto aTinecon = (TypeInfoEnumConstant *)PVAlign( pB + sizeof(TypeInfoEnum), MOE_ALIGN_OF(TypeInfoEnumConstant));
 	pTinenum->m_aryTinecon.SetArray(aTinecon, 0, cConstant);
 
 	pTinenum->m_tinstructProduced.m_pStnodStruct = pStenumDef;
+	*ppTin = pTinenum;
 	AddManagedTin(pTinenum);
 
 	return pTinenum;
 }
 
-TypeInfoProcedure * SymbolTable::PTinprocAllocate(Moe::InString istrName, size_t cParam, size_t cReturn)
+TypeInfoProcedure * SymbolTable::PTinprocAllocate(Moe::InString istrName, 
+							SCOPID scopid, 
+							const ProcedureAttrib & procattrib, 
+							const Moe::CAry<const TypeInfo *> & arypTinParam,
+							const Moe::CAry<const TypeInfo *> & arypTinReturn,
+							Moe::CAry<GRFPARMQ> * paryGrfparmq)
 {
+	size_t cParam = arypTinParam.C();
+	size_t cReturn = arypTinReturn.C();
+	MOE_ASSERT(!paryGrfparmq || paryGrfparmq->C() == cParam, "missing parameter flags");
+	Hvdec hvdec = HvdecProcedure(istrName, m_scopid, cParam, cReturn, arypTinParam.A(), arypTinReturn.A(), paryGrfparmq->A(), procattrib);
+	Hvtype hvtype = HvtypeFromPTinChild(hvdec, nullptr);
+
+	const TypeInfo ** ppTin;
+	if (m_pTyper->m_hashHvtypePTinUnique.InresEnsureKey(hvtype, &ppTin) != INRES_Inserted)
+	{
+		return PTinDerivedCast<TypeInfoProcedure *>(*ppTin);
+	}
+
 	size_t cBAlloc = CBAlign(sizeof(TypeInfoProcedure), MOE_ALIGN_OF(TypeInfo *));
 	cBAlloc = cBAlloc +	(cParam + cReturn) * sizeof(TypeInfo *) + (cParam * sizeof(GRFPARMQ));
 
 	u8 * pB = (u8 *)m_pAlloc->MOE_ALLOC(cBAlloc,8);
-	TypeInfoProcedure * pTinproc = new(pB) TypeInfoProcedure(istrName);
-	TypeInfo ** ppTin = (TypeInfo**)PVAlign( pB + sizeof(TypeInfoProcedure), MOE_ALIGN_OF(TypeInfo *));
 
-	pTinproc->m_arypTinParams.SetArray(ppTin, 0, cParam);
-	pTinproc->m_arypTinReturns.SetArray(&ppTin[cParam], 0, cReturn);
+	TypeInfo const ** ppTinParam = (TypeInfo const**)PVAlign( pB + sizeof(TypeInfoProcedure), MOE_ALIGN_OF(TypeInfo *));
+	TypeInfo const ** ppTinReturn = &ppTinParam[cParam];
 
+	CopyAB(arypTinParam.A(), ppTinParam, sizeof(TypeInfo*) * arypTinParam.C());
+	CopyAB(arypTinReturn.A(), ppTinReturn, sizeof(TypeInfo*) * arypTinReturn.C());
 	auto pGrfparmq = (GRFPARMQ*)&ppTin[cParam + cReturn];
-	pTinproc->m_mpIptinGrfparmq.SetArray(pGrfparmq, cParam, cParam);
-	ZeroAB(pTinproc->m_mpIptinGrfparmq.A(), pTinproc->m_mpIptinGrfparmq.C() * sizeof(GRFPARMQ));
 
+	if (paryGrfparmq)
+	{
+		CopyAB(paryGrfparmq->A(), pGrfparmq, sizeof(GRFPARMQ) * cParam);
+	}
+	else
+	{
+		ZeroAB(pGrfparmq, sizeof(GRFPARMQ) * cParam);
+	}
+
+	TypeInfoProcedure * pTinproc = new(pB) TypeInfoProcedure(istrName, m_scopid, cParam, cReturn, ppTinParam, ppTinReturn, pGrfparmq, procattrib);
+	*ppTin = pTinproc;
 	AddManagedTin(pTinproc);
 	return pTinproc;
 }
 
-TypeInfoProcedure * SymbolTable::PTinprocCopy(TypeInfoProcedure * pTinprocSrc)
+const TypeInfoStruct * SymbolTable::PTinstructAllocate(
+		InString istrIdent, 
+		SCOPID scopid,
+		STNode * pStnodDefinition,
+		const Moe::CAry<TypeStructMember> & aryTypememb,
+		const StructAttrib & structattrib,
+		const TypeInfoStruct * pTinstructInstFrom,
+		GenericMap * pGenmap)
 {
-	TypeInfoProcedure * pTinprocNew = PTinprocAllocate(
-										pTinprocSrc->m_istrName,
-										pTinprocSrc->m_arypTinParams.C(),
-										pTinprocSrc->m_arypTinReturns.C());
+	size_t cTypememb = aryTypememb.C();
+	Hvdec hvdec = HvdecStruct(istrIdent, m_scopid, cTypememb, aryTypememb.A(), structattrib);
+	Hvtype hvtype = HvtypeFromPTinChild(hvdec, nullptr);
 
-	pTinprocNew->m_pStnodDefinition = pTinprocSrc->m_pStnodDefinition;
-	pTinprocNew->m_grftinproc = pTinprocSrc->m_grftinproc;
-	pTinprocNew->m_inlinek = pTinprocSrc->m_inlinek;
-	pTinprocNew->m_mcallcon = pTinprocSrc->m_mcallcon;
-
-	pTinprocNew->m_arypTinParams.Append(pTinprocSrc->m_arypTinParams.A(), pTinprocSrc->m_arypTinParams.C());
-	pTinprocNew->m_arypTinReturns.Append(pTinprocSrc->m_arypTinReturns.A(), pTinprocSrc->m_arypTinReturns.C());
-
-	pTinprocNew->m_mpIptinGrfparmq.Clear();
-	pTinprocNew->m_mpIptinGrfparmq.Append(pTinprocSrc->m_mpIptinGrfparmq.A(), pTinprocSrc->m_mpIptinGrfparmq.C());
-	return pTinprocNew;
-}
-
-TypeInfoStruct * SymbolTable::PTinstructAllocate(InString istrIdent, size_t cField, size_t cGenericParam)
-{
+	const TypeInfo ** ppTin;
+	if (m_pTyper->m_hashHvtypePTinUnique.InresEnsureKey(hvtype, &ppTin) != INRES_Inserted)
+	{
+		return PTinDerivedCast<TypeInfoStruct *>(*ppTin);
+	}
 
 	size_t cBAlloc = CBAlign(sizeof(TypeInfoStruct), MOE_ALIGN_OF(TypeStructMember)) + 
-					cField * sizeof(TypeStructMember) + 
-					cGenericParam  * sizeof (TypeInfo *);
+					cTypememb * sizeof(TypeStructMember);
 	u8 * pB = (u8 *)m_pAlloc->MOE_ALLOC(cBAlloc, 8);
 
-	TypeInfoStruct * pTinstruct = new(pB) TypeInfoStruct(istrIdent);
-	AddManagedTin(pTinstruct);
 
 	auto aTypememb = (TypeStructMember*)PVAlign(
 											pB + sizeof(TypeInfoStruct), 
 											MOE_ALIGN_OF(TypeStructMember));
-	pTinstruct->m_aryTypemembField.SetArray(aTypememb, 0, cField);
+	for (int iTypememb = 0; iTypememb < cTypememb; ++iTypememb)
+	{
+		aTypememb[iTypememb] = aryTypememb[iTypememb];
+	}
 
+	TypeInfoStruct * pTinstruct = new(pB) TypeInfoStruct(istrIdent, m_scopid, cTypememb, aTypememb, structattrib);
+	AddManagedTin(pTinstruct);
+
+	pTinstruct->m_pStnodStruct = pStnodDefinition;
+	pTinstruct->m_pTinstructInstFrom = pTinstructInstFrom;
+	pTinstruct->m_pGenmap = pGenmap;
+
+	*ppTin = pTinstruct;
 	return pTinstruct;
 }
 
-TypeInfoArray * SymbolTable::PTinaryCopyWithNewElementType(TypeInfoArray * pTinarySrc, TypeInfo * pTinNew)
+const TypeInfoStruct * SymbolTable::PTinstructEnsureCanon(const TypeInfoStruct * pTinstructPrev)
 {
-	auto pTinaryNew = MOE_NEW(m_pAlloc, TypeInfoArray) TypeInfoArray();
-	*pTinaryNew = *pTinarySrc;
+	if (pTinstructPrev->m_grftin.FIsSet(FTIN_IsCanon))
+	{
+		return pTinstructPrev;
+	}
 
-	pTinarySrc->m_pTin = pTinNew;
-	AddManagedTin(pTinaryNew);
+	StructAttrib structattrib;
+	structattrib.m_grftingen =pTinstructPrev->m_grftingen;
+	structattrib.m_grftin = pTinstructPrev->m_grftin | FTIN_IsCanon;
 
-	// cleanup fields set when made unique
-	pTinaryNew->m_grftin.Clear(FTIN_IsUnique);
-	pTinaryNew->m_istrDesc = InString();
+	return PTinstructAllocate(
+		pTinstructPrev->m_istrName,
+		m_scopid, 
+		pTinstructPrev->m_pStnodStruct,
+		pTinstructPrev->m_aryTypemembField,
+		structattrib,
+		pTinstructPrev->m_pTinstructInstFrom,
+		pTinstructPrev->m_pGenmap);
+}
 
+TypeInfoArray *	SymbolTable::PTinaryAllocate(const TypeInfo * pTinElement, ARYK aryk, s64 c, STNode * pStnodBakedDim)
+{
+	const TypeInfo ** ppTin = m_pTyper->PPTinEnsureDecorator(pTinElement, HvdecArray(aryk, c, pStnodBakedDim));
+	if (*ppTin)
+	{
+		return PTinDerivedCast<TypeInfoArray*>(*ppTin);
+	}
+
+	TypeInfoArray * pTinary = MOE_NEW(m_pAlloc, TypeInfoArray) TypeInfoArray(pTinElement, aryk, c, pStnodBakedDim);
+	*ppTin = pTinary;
+
+	AddManagedTin(pTinary);
+	return pTinary;
+}
+
+TypeInfoArray * SymbolTable::PTinaryCopyWithNewElementType(const TypeInfoArray * pTinarySrc, const TypeInfo * pTinNew)
+{
+	auto pTinaryNew = PTinaryAllocate(pTinNew, pTinarySrc->m_aryk, pTinarySrc->m_c, pTinarySrc->m_pStnodBakedDim);
 	return pTinaryNew;
 }
 
-TypeInfoArray * SymbolTable::PTinaryCopy(TypeInfoArray * pTinarySrc)
-{
-	auto pTinaryNew = MOE_NEW(m_pAlloc, TypeInfoArray) TypeInfoArray();
-	AddManagedTin(pTinaryNew);
-
-	*pTinaryNew = *pTinarySrc;	
-
-	// cleanup fields set when made unique
-	pTinaryNew->m_grftin.Clear(FTIN_IsUnique);
-	pTinaryNew->m_istrDesc = InString();
-
-	return pTinaryNew;
-}
-
-TypeInfoLiteral * SymbolTable::PTinlitCopy(TypeInfoLiteral * pTinlitSrc)
-{
-	auto pTinlitNew = MOE_NEW(m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
-	AddManagedTin(pTinlitNew);
-
-	*pTinlitNew = *pTinlitSrc;
-
-	// cleanup fields set when made unique
-	pTinlitNew->m_grftin.Clear(FTIN_IsUnique);
-	pTinlitNew->m_istrDesc = InString();
-
-	return pTinlitNew;
-}
-
-void SymbolTable::AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo * pTin, GRFSYM grfsym)
+void SymbolTable::AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, const TypeInfo * pTin, GRFSYM grfsym)
 {
 	// NOTE: This function is for built-in types without a lexical order, so we shouldn't be calling it on an ordered table
 	MOE_ASSERT(m_iNestingDepth == 0, "Cannot add built-in types to ordered symbol table.");
@@ -2082,7 +2178,7 @@ void SymbolTable::AddBuiltInType(ErrorManager * pErrman, Lexer * pLex, TypeInfo 
 	if (!MOE_FVERIFY(!istrName.FIsEmpty(), "registering unnamed type"))
 		return;
 
-	TypeInfo ** ppTinValue = nullptr;
+	const TypeInfo ** ppTinValue = nullptr;
 	INRES inres = m_hashIstrPTinBuiltIn.InresEnsureKey(istrName, &ppTinValue);
 	if (inres == INRES_Inserted)
 	{
@@ -2109,7 +2205,8 @@ void AddSimpleBuiltInType(Workspace * pWork, SymbolTable * pSymtab, InString ist
 {
 	TypeInfo * pTin = MOE_NEW(pSymtab->m_pAlloc, TypeInfo) TypeInfo(
 																istrName,
-																tink);
+																tink,
+																HvdecNamed(tink, istrName, pSymtab->m_scopid));
 
 	pSymtab->AddBuiltInType(pWork->m_pErrman, nullptr, pTin, grfsym);
 }
@@ -2126,7 +2223,7 @@ void AddBuiltInAlias(Workspace * pWork, SymbolTable * pSymtab, const char * pChz
 {
 	InString istrNameNew = IstrIntern(pChzNameNew);
 	InString istrNameOld = IstrIntern(pChzNameOld);
-	TypeInfo *	pTinOld = pSymtab->PTinBuiltin(istrNameOld);
+	auto pTinOld = pSymtab->PTinBuiltin(istrNameOld);
 
 	if (MOE_FVERIFY(pTinOld, "bad built in alias") &&
 		MOE_FVERIFY(pTinOld->m_tink == TINK_Numeric, "unsupported built-in alias type"))
@@ -2143,14 +2240,9 @@ void AddBuiltInAlias(Workspace * pWork, SymbolTable * pSymtab, const char * pChz
 void AddBuiltInLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, LITK litk, s8 cBit, NUMK numk)
 {
 	InString istrName = IstrIntern(pChzName);
-	TypeInfoLiteral * pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+	TypeInfoLiteral * pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral(litk, cBit, numk, true, -1);
 	pTinlit->m_istrName = istrName;
 	pSymtab->AddBuiltInType(nullptr, nullptr, pTinlit);
-
-	pTinlit->m_litty.m_litk = litk;
-	pTinlit->m_litty.m_cBit = cBit;
-	pTinlit->m_litty.m_numk = numk;
-	pTinlit->m_fIsFinalized = true;
 
 	Moe::CDynAry<TypeInfoLiteral *> * paryPTinlit = &pSymtab->m_mpLitkArypTinlit[litk];
 	if (!paryPTinlit->m_pAlloc)
@@ -2164,14 +2256,9 @@ void AddBuiltInLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pC
 void AddBuiltInUnfinalLiteral(Workspace * pWork, SymbolTable * pSymtab, const char * pChzName, LITK litk, NUMK numk)
 {
 	InString istrName = IstrIntern(pChzName);
-	TypeInfoLiteral * pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
+	TypeInfoLiteral * pTinlit = MOE_NEW(pSymtab->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral(litk, -1, numk, false, -1);
 	pTinlit->m_istrName = istrName;
 	pSymtab->AddBuiltInType(nullptr, nullptr, pTinlit);
-
-	pTinlit->m_litty.m_litk = litk;
-	pTinlit->m_litty.m_cBit = -1;
-	pTinlit->m_litty.m_numk = numk;
-	pTinlit->m_fIsFinalized = false;
 
 	Moe::CDynAry<TypeInfoLiteral *> * paryPTinlit = &pSymtab->m_mpLitkArypTinlit[litk];
 	if (!paryPTinlit->m_pAlloc)
@@ -2241,7 +2328,7 @@ void SymbolTable::AddBuiltInSymbols(Workspace * pWork)
 	AddBuiltInUnfinalLiteral(pWork, this, "__unfinal_String", LITK_String, NUMK_Nil);
 }
 
-void DeleteTypeInfo(Alloc * pAlloc, TypeInfo * pTin)
+void DeleteTypeInfo(Alloc * pAlloc, const TypeInfo * pTin)
 {
 	pAlloc->MOE_DELETE(pTin);
 }
@@ -4214,7 +4301,7 @@ static bool FOperatorOverloadMustTakeReference(TOK tok)
 	return false;
 }
 
-bool FCheckOverloadSignature(PARK park, TypeInfoProcedure * pTinproc)
+bool FCheckOverloadSignature(PARK park, const TypeInfoProcedure * pTinproc)
 {
 	size_t cReturn = pTinproc->m_arypTinReturns.C();
 	if (cReturn == 1 && pTinproc->m_arypTinReturns[0]->m_tink == TINK_Void)
@@ -4238,7 +4325,7 @@ bool FCheckOverloadSignature(PARK park, TypeInfoProcedure * pTinproc)
 	return false;
 }
 
-ERRID ErridCheckOverloadSignature(TOK tok, TypeInfoProcedure * pTinproc, ErrorManager * pErrman, const LexSpan & lexsp)
+ERRID ErridCheckOverloadSignature(TOK tok, const TypeInfoProcedure * pTinproc, ErrorManager * pErrman, const LexSpan & lexsp)
 {
 	auto pOvinfMax = MOE_PMAC(s_aOvinf);
 	for (auto pOvinf = s_aOvinf; pOvinf != pOvinfMax; ++pOvinf)
@@ -4251,7 +4338,7 @@ ERRID ErridCheckOverloadSignature(TOK tok, TypeInfoProcedure * pTinproc, ErrorMa
 			PARK park = pOvinf->m_aPark[iPark];
 			if (park != PARK_Nil && FCheckOverloadSignature(park, pTinproc))
 			{
-				if (pTinproc->m_grftinproc.FIsSet(FTINPROC_IsCommutative) && !FAllowsCommutative(park))
+				if (pTinproc->FIsCommutative() && !FAllowsCommutative(park))
 				{
 					EmitError(pErrman, lexsp, ERRID_UnknownError, 
 						"'%s' is not allowed when overloading '%s'", RWord::g_pChzCommutative, PChzFromTok(tok));
@@ -4504,7 +4591,7 @@ STNode * PStnodFindChildPark(ParseContext * pParctx, STNode * pStnodRoot, PARK p
 	return nullptr;
 }
 
-void CheckTinprocGenerics(ParseContext * pParctx, STNode * pStnodProc, TypeInfoProcedure * pTinproc)
+void CheckTinprocGenerics(ParseContext * pParctx, STNode * pStnodProc, ProcedureAttrib * pProcattrib, CDynAry<GRFPARMQ> * pmpIptinGrfparmq)
 {
 	auto pStproc = PStnodDerivedCast<STProc *>(pStnodProc);
 	if (!pStproc)
@@ -4516,6 +4603,8 @@ void CheckTinprocGenerics(ParseContext * pParctx, STNode * pStnodProc, TypeInfoP
 		CHash<InString, STNode *> mpIstrPStnod(pParctx->m_pAlloc, BK_Parse);
 
 		int cpStnodParam = pStnodParameterList->m_cpStnodChild;
+		pmpIptinGrfparmq->EnsureSize(cpStnodParam);
+
 		for (int ipStnodParam = 0; ipStnodParam < cpStnodParam; ++ipStnodParam)
 		{
 			auto pStnodParam = pStnodParameterList->PStnodChild(ipStnodParam);
@@ -4526,15 +4615,15 @@ void CheckTinprocGenerics(ParseContext * pParctx, STNode * pStnodProc, TypeInfoP
 			auto pStnodType = pStdecl->m_pStnodType;
 			if (pStdecl->m_fIsBakedConstant)
 			{
-				pTinproc->m_grftingen.AddFlags(FTINGEN_HasBakedValueArgs);
+				pProcattrib->m_grftingen.AddFlags(FTINGEN_HasBakedValueArgs);
 			}
 
-			pTinproc->m_mpIptinGrfparmq[ipStnodParam].AssignFlags(FPARMQ_BakedValue, pStdecl->m_fIsBakedConstant);
-			pTinproc->m_mpIptinGrfparmq[ipStnodParam].AssignFlags(FPARMQ_TypeArgument, pStdecl->m_pStnodIdentifier == nullptr);
+			(*pmpIptinGrfparmq)[ipStnodParam].AssignFlags(FPARMQ_BakedValue, pStdecl->m_fIsBakedConstant);
+			(*pmpIptinGrfparmq)[ipStnodParam].AssignFlags(FPARMQ_TypeArgument, pStdecl->m_pStnodIdentifier == nullptr);
 
 			if (pStnodType)
 			{
-				CheckGenericParams(pParctx, pStnodType, &mpIstrPStnod, &pTinproc->m_grftingen);
+				CheckGenericParams(pParctx, pStnodType, &mpIstrPStnod, &pProcattrib->m_grftingen);
 			}
 		}
 	}
@@ -4554,15 +4643,11 @@ void CheckTinprocGenerics(ParseContext * pParctx, STNode * pStnodProc, TypeInfoP
 	}
 }
 
-void CheckTinstructGenerics(ParseContext * pParctx, STNode * pStnodStruct, TypeInfoStruct * pTinstruct)
+void CheckTinstructGenerics(ParseContext * pParctx, STNode * pStnodStruct, GRFTINGEN * pGrftingen)
 {
 	auto pStstruct = PStnodDerivedCast<STStruct *>(pStnodStruct);
 	if (!pStstruct)
 		return;
-
-#if KEEP_TYPEINFO_DEBUG_STRING
-	pTinstruct->m_strDebug = IstrFromTypeInfo(pTinstruct);
-#endif
 
 	auto pStnodParameterList = pStstruct->m_pStnodParameterList;
 	if (pStnodParameterList)
@@ -4580,12 +4665,12 @@ void CheckTinstructGenerics(ParseContext * pParctx, STNode * pStnodStruct, TypeI
 			auto pStnodType = pStdecl->m_pStnodType;
 			if (pStdecl->m_fIsBakedConstant)
 			{
-				pTinstruct->m_grftingen.AddFlags(FTINGEN_HasBakedValueArgs);
+				pGrftingen->AddFlags(FTINGEN_HasBakedValueArgs);
 			}
 
 			if (pStnodType)
 			{
-				CheckGenericParams(pParctx, pStnodType, &mpIstrPStnod, &pTinstruct->m_grftingen);
+				CheckGenericParams(pParctx, pStnodType, &mpIstrPStnod, pGrftingen);
 			}
 		}
 	}
@@ -4963,11 +5048,10 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 			STNode ** ppStnodReturn = &pStnodReturns;
 			int cStnodReturns = (pStnodReturns == nullptr) ? 0 : 1;
 
-			auto pTinproc = pSymtabParent->PTinprocAllocate(istrName, cStnodParams, cStnodReturns);
-
 			if (istrRword == RWord::g_istrOperator && FOperatorOverloadMustTakeReference(pStvalIdent->m_tok))
 			{
-				pTinproc->m_mpIptinGrfparmq[0].AddFlags(FPARMQ_ImplicitRef);
+				pStproc->m_mpIptinGrfparmq.EnsureSize(1);
+				pStproc->m_mpIptinGrfparmq[0].AddFlags(FPARMQ_ImplicitRef);
 			}
 
 			if (grftinproc.FIsSet(FTINPROC_IsCommutative))
@@ -4980,34 +5064,12 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 				}
 			}
 
-			pTinproc->m_grftinproc = grftinproc;
-			pTinproc->m_pStnodDefinition = pStproc;
-			pTinproc->m_mcallcon = mcallcon;
-			pTinproc->m_inlinek = inlinek;
+			auto pProcattrib = &pStproc->m_procattrib;
+			CheckTinprocGenerics(pParctx, pStproc, pProcattrib, &pStproc->m_mpIptinGrfparmq);
 
-			CheckTinprocGenerics(pParctx, pStproc, pTinproc);
-
-			STNode ** ppStnodParamMax = &ppStnodParams[cStnodParams];
-			for ( ; ppStnodParams != ppStnodParamMax; ++ppStnodParams)
-			{
-				STNode * pStnodParam = *ppStnodParams;
-				if (pStnodParam->m_park == PARK_VariadicArg)
-				{
-					pTinproc->m_grftinproc.AddFlags(FTINPROC_HasVarArgs);
-				}
-				else if (AST_FVERIFY(pParctx->m_pWork, pStnodParam, pStnodParam->m_park == PARK_Decl, "Expected decl"))
-				{
-					pTinproc->m_arypTinParams.Append(pStnodParam->m_pTin);
-				}
-			}
-
-			STNode ** ppStnodReturnMax = &ppStnodReturn[cStnodReturns];
-			for ( ; ppStnodReturn != ppStnodReturnMax; ++ppStnodReturn)
-			{
-				pTinproc->m_arypTinReturns.Append((*ppStnodReturn)->m_pTin);
-			}
-
-			pStproc->m_pTin = pTinproc;
+			pProcattrib->m_grftinproc = grftinproc;
+			pProcattrib->m_mcallcon = mcallcon;
+			pProcattrib->m_inlinek = inlinek;
 
 			if (pStproc->m_pStnodBody != nullptr)
 			{
@@ -5095,11 +5157,13 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 				{
 				case PARK_EnumConstant:
 					{
+#if !UNIQUE_TYPE_CLEANUP // can't allocate type here... we don't know cBit or numk
 						auto pTinlit = MOE_NEW(pSymtabParent->m_pAlloc, TypeInfoLiteral) TypeInfoLiteral();
 						pSymtabParent->AddManagedTin(pTinlit);
 						pTinlit->m_litty.m_litk = LITK_Enum;
 						pTinlit->m_pTinSource = pTinenum;
 						pStnodMember->m_pTin = pTinlit;
+#endif
 					} break;
 				case PARK_CompoundLiteral:
 					{
@@ -5235,55 +5299,12 @@ STNode * PStnodParseDefinition(ParseContext * pParctx, Lexer * pLex)
 			size_t cpStnodParam = (pStnodParameterList) ? pStnodParameterList->CPStnodChild() : 0;
 			auto pSymtab = pParctx->m_pSymtab;
 
-			auto pTinstruct = pSymtab->PTinstructAllocate(istrIdent, cStnodField, cpStnodParam);
-			pTinstruct->m_pStnodStruct = pStstruct;
-
-			for ( ; ppStnodMember != ppStnodMemberMax; ++ppStnodMember)
-			{
-				STNode * pStnodMember = *ppStnodMember;
-				if (pStnodMember->m_park != PARK_Decl)
-					continue;
-
-				auto pStdecl = PStnodRtiCast<STDecl *>(pStnodMember);
-				if (MOE_FVERIFY(pStdecl, "expected stdecl"))
-				{
-					//if (pStdecl->m_iStnodChildMin == -1)	
-					{
-						auto pTypememb = pTinstruct->m_aryTypemembField.AppendNew();
-						pTypememb->m_pStdecl = pStdecl;
-					}
-#ifdef MOEB_LATER
-					else
-					{
-						int iStnodChildMax = pStdecl->m_iStnodChildMax;
-						for (int iStnod = pStdecl->m_iStnodChildMin; iStnod < iStnodChildMax; ++iStnod)
-						{
-							auto pTypememb = pTinstruct->m_aryTypemembField.AppendNew();
-							pTypememb->m_pStnod = pStnodMember->PStnodChild(iStnod);
-						}
-					}
-#endif
-				}
-
-				size_t cTypememb = pTinstruct->m_aryTypemembField.C();
-				for (size_t iTypememb = 0; iTypememb < cTypememb; ++iTypememb)
-				{
-					auto pTypememb = &pTinstruct->m_aryTypemembField[iTypememb];
-
-					auto pStdeclChild = pTypememb->m_pStdecl;
-					auto pStnodMemberIdent = pStdeclChild->m_pStnodIdentifier;
-					pTypememb->m_istrName = IstrFromIdentifier(pStnodMemberIdent);
-				}
-			}
-
 			auto pErrman = pParctx->m_pWork->m_pErrman;
 			GRFSYM grfsym(FSYM_IsType | FSYM_VisibleWhenNested);
 			Symbol * pSymStruct = pSymtabParent->PSymEnsure(pErrman, istrIdent, pStstruct, grfsym, FSHADOW_NoShadowing);
 			pStstruct->m_pSymbase = pSymStruct;
-			//pSymStruct->m_pTin = pTinstruct;
-			pStstruct->m_pTin = pTinstruct;
 
-			CheckTinstructGenerics(pParctx, pStstruct, pTinstruct);
+			CheckTinstructGenerics(pParctx, pStstruct, &pStstruct->m_grftingen);
 
 			FExpectConsumeToken(pParctx, pLex, TOK('}'));
 

@@ -20,15 +20,23 @@
 #include "MoeHash.h"
 #include "MoeString.h"
 
+// changing the way we ensure types are unique, need to keep both versions around as I make sure I don't break anything
+#define UNIQUE_TYPE_CLEANUP 1
+
 // Uniqueness notes
 // Types should be unique from creation, don't create types until we have enough info to ensure uniqueness.
 //  - types aliased by typedef are their own typeinfo and refer to the native type 
 //  - 
 
 struct GenericMap;
+struct ProcedureAttrib;
 struct STDecl;
 struct STNode;
+struct STStruct;
+struct StructAttrib;
+struct TypeInfo;
 struct TypeInfoProcedure;
+struct TypeStructMember;
 
 #define BUILT_IN_TYPE_LIST \
 		BLTIN(Char) STR(char)	\
@@ -122,196 +130,36 @@ enum TINK : s8
 
 const char * PChzFromTink(TINK tink);
 
+// unique scope id used uniquify-ing named types (unique = name+scopid)
+enum SCOPID : s32
+{
+	SCOPID_Min = 0,
+	SCOPID_Nil = -1,
+};
+
+enum LITK : s8
+{
+	LITK_Numeric,
+	LITK_Char,
+	LITK_String,
+	LITK_Bool,
+	LITK_Null,
+	LITK_Enum,
+	LITK_Compound,
+	LITK_Pointer,	// pointer literal in bytecode
+
+	MOE_MAX_MIN_NIL(LITK)
+};
+
 enum FTIN
 {
-	FTIN_IsUnique	= 0x1,
-	FTIN_IsCanon	= 0x2,			// canonical type is unique, derived from the generic root type and is only parameterized by canonical types
+	FTIN_IsCanon	= 0x1,			// canonical type is unique, derived from the generic root type and is only parameterized by canonical types
 
 	FTIN_None		= 0x0,
 	FTIN_All		= 0x3
 };
 
 MOE_DEFINE_GRF(GRFTIN, FTIN, u8);
-
-struct SDataLayout		// tag = dlay
-{
-	s32		m_cBBool;			// byte size of "bool"
-	s32		m_cBInt;			// byte size of "int"
-	s32		m_cBFloat;			// byte size of "float"
-	s32		m_cBPointer;		// byte size of pointer
-	s32		m_cBStackAlign;		// code gen stack alignment
-};
-
-
-
-struct TypeInfo	// tag = tin
-{
-						TypeInfo(const Moe::InString & istrName, TINK tink)
-						:m_tink(tink)
-						,m_grftin(FTIN_None)
-						,m_istrName(istrName)
-						,m_istrDesc()
-#if KEEP_TYPEINFO_DEBUG_STRING
-						,m_istrDebug()
-#endif
-						,m_pTinUnaliased(nullptr)
-							{ ; }
-
-    TINK				m_tink;
-	GRFTIN				m_grftin;
-
-	Moe::InString		m_istrName;				// user facing name 
-	Moe::InString		m_istrDesc;				// unique descriptor used to unique this type 
-
-#if KEEP_TYPEINFO_DEBUG_STRING
-	Moe::InString		m_istrDebug;	
-#endif
-
-	// BB - This shouldn't be embedded in the typeinfo - it won't work for multiple codegen passes
-	//CodeGenValueRef	m_pCgvalDIType;
-	//CodeGenValueRef	m_pCgvalReflectGlobal;	// global variable pointing to the type info struct
-												// const TypeInfo entry in the reflection type table
-
-	TypeInfo *			m_pTinUnaliased;		// native non-aliased source type (ie sSize->s64)
-};
-
-Moe::InString IstrFromTypeInfo(TypeInfo * pTin);
-
-template <typename T>
-T PTinRtiCast(TypeInfo * pTin)
-{
-	if (pTin && pTin->m_tink == Moe::SStripPointer<T>::Type::s_tink)
-		return (T)pTin;
-	return nullptr;
-}
-
-template <typename T>
-T PTinDerivedCast(TypeInfo * pTin)
-{
-	MOE_ASSERT(pTin && pTin->m_tink == Moe::SStripPointer<T>::Type::s_tink, "illegal type info derived cast");
-	return (T)pTin;
-}
-
-enum NUMK
-{
-	NUMK_Float,
-	NUMK_UnsignedInt,
-	NUMK_SignedInt,
-
-	MOE_MAX_MIN_NIL(NUMK)
-};
-
-const char * PChzTypeFromNumk(NUMK numk);
-inline bool FIsSigned(NUMK numk)
-	{ return numk == NUMK_Float || numk == NUMK_SignedInt; }
-inline bool FIsInteger(NUMK numk)
-	{ return numk != NUMK_Float; }
-
-struct TypeInfoNumeric : public TypeInfo // tag = tinn
-{
-	static const TINK s_tink = TINK_Numeric;
-
-			TypeInfoNumeric(const Moe::InString & istrName, u32 cBit, NUMK numk)
-			:TypeInfo(istrName, s_tink)
-			,m_cBit(cBit)
-			,m_numk(numk)
-				{ ; }
-
-	u32		m_cBit;
-	NUMK	m_numk;
-};
-
-struct TypeInfoPointer : public TypeInfo	// tag = tinptr
-{
-	static const TINK s_tink = TINK_Pointer;
-
-						TypeInfoPointer()
-						:TypeInfo(IstrIntern(""), s_tink)
-						,m_pTin(nullptr)
-						,m_fIsImplicitRef(false)
-							{ ; }
-
-	TypeInfo *			m_pTin;
-	bool				m_fIsImplicitRef;
-};
-
-enum QUALK : s8
-{
-	QUALK_Const,		// Read only value, transitive ie. members of an const struct or target of a const ref are const
-						// - implies that the values will not change during program execution,
-						// - unlike c it is NOT safe to upcast to const
-						// - types infered from a const type are not const ( n := 5; '5' is const, n is not)
-
-	QUALK_InArg,		// procedure arguments, variable can't be changed, but not transitive
-						// - non arguments can currently be declared as inarg for testing, but I'm not sure I'll keep that.
-
-	MOE_MAX_MIN_NIL(QUALK)
-};
-
-const char * PChzFromQualk(QUALK qualk);
-
-enum FQUALK
-{
-	FQUALK_Const	= 0x1 << QUALK_Const,
-	FQUALK_InArg	= 0x1 << QUALK_InArg,
-
-	FQUALK_None		= 0x0,
-	FQUALK_All		= FQUALK_Const | FQUALK_InArg
-};
-
-
-MOE_DEFINE_GRF(GRFQUALK, FQUALK, u8);
-
-void AppendFlagNames(Moe::StringBuffer * pStrbuf, GRFQUALK grfqualk, const char * pChzSpacer);
-
-struct TypeInfoQualifier : public TypeInfo // tag == tinqual
-{
-	static const TINK s_tink = TINK_Qualifier;
-
-						TypeInfoQualifier(GRFQUALK grfqualk)
-						:TypeInfo(IstrIntern(""), s_tink)
-						,m_grfqualk(grfqualk)
-							{ ; }
-
-	TypeInfo *			m_pTin;
-	GRFQUALK			m_grfqualk;
-};
-
-TypeInfo * PTinStripQualifiers(TypeInfo * pTin, GRFQUALK * pGrfqualk);
-TypeInfo * PTinStripQualifiers(TypeInfo * pTin);
-
-
-
-enum MCALLCON
-{
-	MCALLCON_CX86		= 0,
-	MCALLCON_StdcallX86	= 1,
-	MCALLCON_X64		= 2,
-
-	MOE_MAX_MIN_NIL(MCALLCON)
-};
-const char * PChzFromMcallcon(MCALLCON callconv);
-
-enum INLINEK
-{
-	INLINEK_AlwaysInline = 0,
-	INLINEK_NoInline	 = 1,
-
-	MOE_MAX_MIN_NIL(INLINEK)
-};
-const char * PChzFromInlinek(INLINEK inlinek);
-
-enum FPARMQ	// Flags for ARGument Qualifiers
-{
-	FPARMQ_ImplicitRef		= 0x1,		// convert LValue argument and pass into procedure's pointer argument
-	FPARMQ_BakedValue		= 0x2,		// baked value parameter, will be dropped during generic specialization.
-	FPARMQ_TypeArgument		= 0x4,		// type only argument, no runtime value - dropped during generic specialization
-
-	FPARMQ_None				= 0x0,
-	FPARMQ_All				= 0x7,
-};
-
-MOE_DEFINE_GRF(GRFPARMQ, FPARMQ, u8);
 
 enum FTINGEN // flags for generic procedures and structures
 {
@@ -340,67 +188,355 @@ enum FTINPROC
 };
 MOE_DEFINE_GRF(GRFTINPROC, FTINPROC, u8);
 
-struct TypeInfoProcedure : public TypeInfo	// tag = 	tinproc
+enum FPARMQ	// Flags for ARGument Qualifiers
 {
-	static const TINK s_tink = TINK_Procedure;
+	FPARMQ_ImplicitRef		= 0x1,		// convert LValue argument and pass into procedure's pointer argument
+	FPARMQ_BakedValue		= 0x2,		// baked value parameter, will be dropped during generic specialization.
+	FPARMQ_TypeArgument		= 0x4,		// type only argument, no runtime value - dropped during generic specialization
 
-						TypeInfoProcedure(const Moe::InString & istrName)
-						:TypeInfo(istrName, s_tink)
-						,m_istrMangled()
-						,m_pStnodDefinition(nullptr)
-						,m_arypTinParams()
-						,m_arypTinReturns()
-						,m_mpIptinGrfparmq()
-						,m_grftingen(FTINGEN_None)
+	FPARMQ_None				= 0x0,
+	FPARMQ_All				= 0x7,
+};
+
+MOE_DEFINE_GRF(GRFPARMQ, FPARMQ, u8);
+
+enum NUMK : s8
+{
+	NUMK_Float,
+	NUMK_UnsignedInt,
+	NUMK_SignedInt,
+
+	MOE_MAX_MIN_NIL(NUMK)
+};
+
+enum QUALK : s8
+{
+	QUALK_Const,		// Read only value, transitive ie. members of an const struct or target of a const ref are const
+						// - implies that the values will not change during program execution,
+						// - unlike c it is NOT safe to upcast to const
+						// - types infered from a const type are not const ( n := 5; '5' is const, n is not)
+
+	QUALK_InArg,		// procedure arguments, variable can't be changed, but not transitive
+						// - non arguments can currently be declared as inarg for testing, but I'm not sure I'll keep that.
+
+	MOE_MAX_MIN_NIL(QUALK)
+};
+
+const char * PChzFromQualk(QUALK qualk);
+
+enum FQUALK
+{
+	FQUALK_Const	= 0x1 << QUALK_Const,
+	FQUALK_InArg	= 0x1 << QUALK_InArg,
+
+	FQUALK_None		= 0x0,
+	FQUALK_All		= FQUALK_Const | FQUALK_InArg
+};
+MOE_DEFINE_GRF(GRFQUALK, FQUALK, u8);
+
+enum ARYK
+{
+    ARYK_Fixed		= 0,	// c-style fixed size array.			aN : [3] int;
+    ARYK_Dynamic	= 1,	// dynamically resizing array.			aN : [..] int;
+    ARYK_Reference	= 2,	// reference to array of either type.	aN : [] int;
+
+	MOE_MAX_MIN_NIL(ARYK)
+};
+const char * PChzFromAryk(ARYK aryk);
+
+struct SDataLayout		// tag = dlay
+{
+	s32		m_cBBool;			// byte size of "bool"
+	s32		m_cBInt;			// byte size of "int"
+	s32		m_cBFloat;			// byte size of "float"
+	s32		m_cBPointer;		// byte size of pointer
+	s32		m_cBStackAlign;		// code gen stack alignment
+};
+
+// hash value for JUST the decorator descriptor, not the child type 
+struct Hvdec
+{
+				Hvdec()
+				:m_hv(0)
+					{ ; }
+
+	explicit	Hvdec(u64 hv)
+				:m_hv(hv)
+					{ ; }
+
+	bool		operator==(const Hvdec & hvdecOther)
+					{ return m_hv == hvdecOther.m_hv; }
+
+	// BB - this is gross and increases the chance of collisions. We need a hash map that works on hv64.
+				operator HV () const
+					{ return HvFromPBFVN(&m_hv, sizeof(m_hv)); }
+
+	u64			m_hv;
+};
+
+Hvdec HvdecLiteral(LITK litk, s8 cBit, NUMK numk, bool fIsFinalized, s64 c);
+Hvdec HvdecNumeric(u32 cBit, NUMK numk);
+Hvdec HvdecPointer(bool fIsImplicitRef);
+Hvdec HvdecQualifier(GRFQUALK grfqualk);
+Hvdec HvdecArray(ARYK aryk, u64 c, STNode * pStnodBakedDim);
+Hvdec HvdecNamed(TINK tink, const Moe::InString & istrName, SCOPID scopid);
+Hvdec HvdecStruct(
+	const Moe::InString & istrName,
+	SCOPID scopid,
+	size_t cTypememb, 
+	const TypeStructMember * pTypememb,
+	const StructAttrib & structattrib);
+
+Hvdec HvdecProcedure(
+	const Moe::InString & istrName,
+	SCOPID scopid,
+	size_t cParam, 
+	size_t cReturn,
+	const TypeInfo * const * ppTinParam,
+	const TypeInfo * const * ppTinReturn,
+	const GRFPARMQ * pGrfparmq,
+	const ProcedureAttrib & procattrib);
+
+// hash value for the entire unique type, the decorator descriptor and the type it decorates
+struct Hvtype
+{
+				Hvtype()
+				:m_hv(0)
+					{ ; }
+
+	explicit	Hvtype(u64 hv)
+				:m_hv(hv)
+					{ ; }
+
+	bool		operator==(const Hvtype & hvtypeOther)
+					{ return m_hv == hvtypeOther.m_hv; }
+
+	// BB - this is gross and increases the chance of collisions. We need a hash map that works on hv64.
+				operator HV () const
+					{ return HvFromPBFVN(&m_hv, sizeof(m_hv)); }
+	u64			m_hv;
+};
+
+inline Hvtype HvtypeFromPTinChild(Hvdec hvdec, const TypeInfo * pTinChild);
+
+
+
+struct TypeInfo	// tag = tin
+{
+						TypeInfo(const Moe::InString & istrName, TINK tink, Hvdec hvdec)
+						:m_tink(tink)
+						,m_grftin(FTIN_None)
+						,m_istrName(istrName)
+#if KEEP_TYPEINFO_DEBUG_STRING
+						,m_istrDebug()
+#endif
+						,m_hvdec(hvdec)
+						,m_pTinUnaliased(nullptr)
+							{ ; }
+
+    TINK				m_tink;
+	GRFTIN				m_grftin;
+
+	Moe::InString		m_istrName;				// user facing name 
+
+#if KEEP_TYPEINFO_DEBUG_STRING
+	Moe::InString		m_istrDebug;	
+#endif
+
+	// BB - This shouldn't be embedded in the typeinfo - it won't work for multiple codegen passes
+	//CodeGenValueRef	m_pCgvalDIType;
+	//CodeGenValueRef	m_pCgvalReflectGlobal;	// global variable pointing to the type info struct
+												// const TypeInfo entry in the reflection type table
+
+	Hvdec				m_hvdec;
+	const TypeInfo *	m_pTinUnaliased;		// native non-aliased source type (ie sSize->s64)
+};
+
+Moe::InString IstrFromTypeInfo(const TypeInfo * pTin);
+
+template <typename T>
+T PTinRtiCast(TypeInfo * pTin)
+{
+	if (pTin && pTin->m_tink == Moe::SStripPointer<T>::Type::s_tink)
+		return (T)pTin;
+	return nullptr;
+}
+
+template <typename T>
+const T PTinRtiCast(const TypeInfo * pTin)
+{
+	if (pTin && pTin->m_tink == Moe::SStripPointer<T>::Type::s_tink)
+		return (const T)pTin;
+	return nullptr;
+}
+
+template <typename T>
+T PTinDerivedCast(TypeInfo * pTin)
+{
+	MOE_ASSERT(pTin && pTin->m_tink == Moe::SStripPointer<T>::Type::s_tink, "illegal type info derived cast");
+	return (T)pTin;
+}
+
+template <typename T>
+const T PTinDerivedCast(const TypeInfo * pTin)
+{
+	MOE_ASSERT(pTin && pTin->m_tink == Moe::SStripPointer<T>::Type::s_tink, "illegal type info derived cast");
+	return (const T)pTin;
+}
+
+const char * PChzTypeFromNumk(NUMK numk);
+inline bool FIsSigned(NUMK numk)
+	{ return numk == NUMK_Float || numk == NUMK_SignedInt; }
+inline bool FIsInteger(NUMK numk)
+	{ return numk != NUMK_Float; }
+
+struct TypeInfoNumeric : public TypeInfo // tag = tinn
+{
+	static const TINK s_tink = TINK_Numeric;
+
+			TypeInfoNumeric(const Moe::InString & istrName, u32 cBit, NUMK numk)
+			:TypeInfo(istrName, s_tink, HvdecNumeric(cBit, numk))
+			,m_cBit(cBit)
+			,m_numk(numk)
+				{ ; }
+
+	u32		m_cBit;
+	NUMK	m_numk;
+};
+
+struct TypeInfoPointer : public TypeInfo	// tag = tinptr
+{
+	static const TINK s_tink = TINK_Pointer;
+
+						TypeInfoPointer(const TypeInfo * pTin, bool fIsImplicitRef)
+						:TypeInfo(IstrIntern(""), s_tink, HvdecPointer(fIsImplicitRef))
+						,m_pTin(pTin)
+						,m_fIsImplicitRef(false)
+							{ ; }
+
+	const TypeInfo *	m_pTin;
+	bool				m_fIsImplicitRef;
+};
+
+void AppendFlagNames(Moe::StringBuffer * pStrbuf, GRFQUALK grfqualk, const char * pChzSpacer);
+
+struct TypeInfoQualifier : public TypeInfo // tag == tinqual
+{
+	static const TINK s_tink = TINK_Qualifier;
+
+						TypeInfoQualifier(const TypeInfo * pTin, GRFQUALK grfqualk)
+						:TypeInfo(IstrIntern(""), s_tink, HvdecQualifier(grfqualk))
+						,m_grfqualk(grfqualk)
+						,m_pTin(pTin)
+							{ ; }
+
+	GRFQUALK			Grfqualk() const 
+							{ return m_grfqualk; }
+
+	const TypeInfo *	m_pTin;
+
+protected:
+	GRFQUALK			m_grfqualk;
+};
+
+const TypeInfo * PTinStripQualifiers(const TypeInfo * pTin, GRFQUALK * pGrfqualk);
+const TypeInfo * PTinStripQualifiers(const TypeInfo * pTin);
+
+
+
+enum MCALLCON
+{
+	MCALLCON_CX86		= 0,
+	MCALLCON_StdcallX86	= 1,
+	MCALLCON_X64		= 2,
+
+	MOE_MAX_MIN_NIL(MCALLCON)
+};
+const char * PChzFromMcallcon(MCALLCON callconv);
+
+enum INLINEK
+{
+	INLINEK_AlwaysInline = 0,
+	INLINEK_NoInline	 = 1,
+
+	MOE_MAX_MIN_NIL(INLINEK)
+};
+const char * PChzFromInlinek(INLINEK inlinek);
+
+struct ProcedureAttrib
+{
+						ProcedureAttrib()
+						:m_grftingen(FTINGEN_None)
 						,m_grftinproc(FTINPROC_None)
 						,m_inlinek(INLINEK_Nil)
 						,m_mcallcon(MCALLCON_Nil)
 							{ ; }
 
+	GRFTINGEN			m_grftingen;
+	GRFTINPROC			m_grftinproc;
+	INLINEK				m_inlinek;
+	MCALLCON			m_mcallcon;
+};
+
+struct TypeInfoProcedure : public TypeInfo	// tag = 	tinproc
+{
+	static const TINK s_tink = TINK_Procedure;
+
+						TypeInfoProcedure(
+							const Moe::InString & istrName, 
+							SCOPID scopid, 
+							size_t cParam,
+							size_t cReturn,
+							TypeInfo const ** ppTinParam,
+							TypeInfo const ** ppTinReturn,
+							GRFPARMQ * pGrfparmq,
+							ProcedureAttrib procattrib)
+						:TypeInfo(istrName, s_tink, HvdecProcedure(istrName, scopid, cParam, cReturn, ppTinParam, ppTinReturn, pGrfparmq, procattrib))
+						,m_istrMangled()
+						,m_pStnodDefinition(nullptr)
+						,m_arypTinParams()
+						,m_arypTinReturns()
+						,m_mpIptinGrfparmq()
+						,m_scopid(scopid)
+						,m_procattrib()
+							{
+								m_arypTinParams.SetArray(ppTinParam, cParam, cParam);
+								m_arypTinReturns.SetArray(ppTinReturn, cReturn, cReturn);
+								m_mpIptinGrfparmq.SetArray(pGrfparmq, cParam, cParam);
+							}
+
 	bool				FHasVarArgs() const
-							{ return m_grftinproc.FIsSet(FTINPROC_HasVarArgs); }
+							{ return m_procattrib.m_grftinproc.FIsSet(FTINPROC_HasVarArgs); }
 	bool				FIsForeign() const
-							{ return m_grftinproc.FIsSet(FTINPROC_IsForeign); }
+							{ return m_procattrib.m_grftinproc.FIsSet(FTINPROC_IsForeign); }
+	bool				FIsCommutative() const
+							{ return m_procattrib.m_grftinproc.FIsSet(FTINPROC_IsCommutative); }
 	bool				FHasGenericArgs() const
-							{ return m_grftingen.FIsAnySet(FTINGEN_HasGenericArgs); }
+							{ return m_procattrib.m_grftingen.FIsAnySet(FTINGEN_HasGenericArgs); }
+	bool				FHasBakedValueArgs() const
+							{ return m_procattrib.m_grftingen.FIsAnySet(FTINGEN_HasBakedValueArgs); }
 
-	Moe::InString				m_istrMangled;
-	STNode *					m_pStnodDefinition;
-	Moe::CAllocAry<TypeInfo *>	m_arypTinParams;
-	Moe::CAllocAry<TypeInfo *>	m_arypTinReturns;
-	Moe::CAllocAry<GRFPARMQ>	m_mpIptinGrfparmq;
+	Moe::InString						m_istrMangled;
+	STNode *							m_pStnodDefinition;
+	Moe::CAllocAry<const TypeInfo *>	m_arypTinParams;
+	Moe::CAllocAry<const TypeInfo *>	m_arypTinReturns;
+	Moe::CAllocAry<GRFPARMQ>			m_mpIptinGrfparmq;
 
-	GRFTINGEN					m_grftingen;
-	GRFTINPROC					m_grftinproc;
-	INLINEK						m_inlinek;
-	MCALLCON					m_mcallcon;
+	SCOPID								m_scopid;
+	ProcedureAttrib						m_procattrib;
 };
 
 struct TypeInfoAnchor : public TypeInfo // tag = tinanc
 {
 	static const TINK s_tink = TINK_Anchor;
-						TypeInfoAnchor(const Moe::InString & istrName)
-						:TypeInfo(istrName, s_tink)
+						TypeInfoAnchor(const Moe::InString & istrName, SCOPID scopid)
+						:TypeInfo(istrName, s_tink, HvdecNamed(s_tink, istrName, scopid))
 						,m_pStnodDefinition(nullptr)
 							{ ; }
 
 	STNode *			m_pStnodDefinition;
 };
 
-
-enum LITK
-{
-	LITK_Numeric,
-	LITK_Char,
-	LITK_String,
-	LITK_Bool,
-	LITK_Null,
-	LITK_Enum,
-	LITK_Compound,
-	LITK_Pointer,	// pointer literal in bytecode
-
-	MOE_MAX_MIN_NIL(LITK)
-};
 
 const char * PChzFromLitk(LITK litk);
 
@@ -446,66 +582,86 @@ struct TypeInfoLiteral : public TypeInfo // tag = tinlit
 {
 	static const TINK s_tink = TINK_Literal;
 
-						TypeInfoLiteral()
-						:TypeInfo(IstrIntern(""), s_tink)
-						,m_c(-1)
+						TypeInfoLiteral(LITK litk, s8 cBit, NUMK numk, bool fIsFinalized, s64 c)
+						:TypeInfo(IstrIntern(""), s_tink, HvdecLiteral(litk, cBit, numk, fIsFinalized, c))
+						,m_c(c)
 						,m_pTinSource(nullptr)
-						,m_fIsFinalized(false)
-						,m_litty()
-						,m_pStnodDefinition(nullptr)
+						,m_fIsFinalized(fIsFinalized)
+						,m_litty(litk, cBit, numk)
 							{ ; }
 	
 	s64					m_c;
-	TypeInfo *			m_pTinSource;		// source type (for finalized null pointers or enum literals)
+	const TypeInfo *	m_pTinSource;		// source type (for finalized null pointers or enum literals)
 	bool				m_fIsFinalized;		// literals are finalized once they are assigned to a concrete (or default) type
 	LiteralType			m_litty;
+
+#if !UNIQUE_TYPE_CLEANUP
 	STNode *			m_pStnodDefinition;	// (needed for array literal values)
+#endif
 };
 
 struct TypeStructMember	// tag = typememb
 {
-					TypeStructMember()
-					:m_istrName()
-					,m_pStdecl(nullptr)
-					,m_dBOffset(-1)
-						{ ;}
+						TypeStructMember()
+						:m_istrName()
+						,m_pStdecl(nullptr)
+						,m_dBOffset(-1)
+							{ ;}
 
-	TypeInfo *		PTin();
+	const TypeInfo *	PTin() const;
 
-	Moe::InString	m_istrName;
-	STDecl *		m_pStdecl;		// syntax tree node for this member
-	s32				m_dBOffset;		// for bytecode GEP
+	Moe::InString		m_istrName;
+	STDecl *			m_pStdecl;		// syntax tree node for this member
+	s32					m_dBOffset;		// for bytecode GEP
+};
+
+struct StructAttrib
+{
+						StructAttrib()
+						:m_grftin(FTIN_None)
+						,m_grftingen(FTINGEN_None)
+							{ ; }
+
+	GRFTIN				m_grftin;
+	GRFTINGEN			m_grftingen;
 };
 
 struct TypeInfoStruct : public TypeInfo	// tag = tinstruct
 {
 	static const TINK s_tink = TINK_Struct;
 
-										TypeInfoStruct(const Moe::InString & istrName)
-										:TypeInfo(istrName, s_tink)
+										TypeInfoStruct(
+											const Moe::InString & istrName, 
+											SCOPID scopid, 
+											size_t cTypememb,
+											TypeStructMember const * pTypememb,
+											const StructAttrib & structattrib)
+										:TypeInfo(istrName, s_tink, HvdecStruct(istrName, scopid, cTypememb, pTypememb, structattrib))
 										,m_pStnodStruct(nullptr)
 										,m_pGenmap(nullptr)
 										,m_pTinstructInstFrom(nullptr)
 										,m_aryTypemembField()
 										,m_pTinprocInit(nullptr)
-										,m_grftingen(FTINGEN_None)
+										,m_grftingen(structattrib.m_grftingen)
+										,m_scopid(scopid)
 										,m_cB(-1)
 										,m_cBAlign(-1)
-											{ ; }
+											{ m_grftin = structattrib.m_grftin; }
 	
 	bool								FHasGenericParams() const
 											{ return m_grftingen.FIsAnySet(FTINGEN_HasGenericArgs); }
 
-	STNode *							m_pStnodStruct;			// node that defined this struct (or struct instantiation)
+	STNode *							m_pStnodStruct;		// node that defined this struct (or struct instantiation)
 
 	GenericMap *						m_pGenmap;				// generic mapping this was instantiated with	
-	TypeInfoStruct *					m_pTinstructInstFrom;	// generic base that this struct was instantiated from
+	const TypeInfoStruct *				m_pTinstructInstFrom;	// generic base that this struct was instantiated from
 																//   null if not generic or root generic definition
 
 	Moe::CAllocAry<TypeStructMember>	m_aryTypemembField;
-	TypeInfoProcedure *					m_pTinprocInit;			// procedure used when cginitk == CGINITK_InitializerProc
+	const TypeInfoProcedure *			m_pTinprocInit;			// procedure used when cginitk == CGINITK_InitializerProc
 
 	GRFTINGEN							m_grftingen;
+	SCOPID								m_scopid;
 	s64									m_cB;
 	s64									m_cBAlign;
 };
@@ -528,17 +684,17 @@ struct TypeInfoEnum : public TypeInfo	// tag = tinenum
 {
 	static const TINK s_tink = TINK_Enum;
 
-						TypeInfoEnum(const Moe::InString & istrName)
-						:TypeInfo(istrName, s_tink)
+						TypeInfoEnum(const Moe::InString & istrName, SCOPID scopid)
+						:TypeInfo(istrName, s_tink, HvdecNamed(s_tink, istrName, scopid))
 						,m_pTinLoose(nullptr)
 						,m_enumk(ENUMK_Basic)
 						,m_bintMin()
 						,m_bintMax()
 						,m_bintLatest()
-						,m_tinstructProduced(istrName)
+						,m_tinstructProduced(istrName, scopid, 0, nullptr, StructAttrib())
 							{ ; }
 
-	TypeInfo *			m_pTinLoose;
+	const TypeInfo *	m_pTinLoose;
 	ENUMK				m_enumk;
 	BigInt				m_bintMin;
 	BigInt				m_bintMax;
@@ -548,16 +704,6 @@ struct TypeInfoEnum : public TypeInfo	// tag = tinenum
 	Moe::CAllocAry<TypeInfoEnumConstant>	
 						m_aryTinecon;
 };
-
-enum ARYK
-{
-    ARYK_Fixed		= 0,	// c-style fixed size array.			aN : [3] int;
-    ARYK_Dynamic	= 1,	// dynamically resizing array.			aN : [..] int;
-    ARYK_Reference	= 2,	// reference to array of either type.	aN : [] int;
-
-	MOE_MAX_MIN_NIL(ARYK)
-};
-const char * PChzFromAryk(ARYK aryk);
 
 enum ARYMEMB
 {
@@ -574,37 +720,54 @@ struct TypeInfoArray : public TypeInfo	// tag = tinary
 {
 	static const TINK s_tink = TINK_Array;
 
-					TypeInfoArray()
-					:TypeInfo(IstrIntern(""), s_tink)
-					,m_pTin(nullptr)
+					TypeInfoArray(const TypeInfo * pTinElement, ARYK aryk, s64 c, STNode * pStnodBakedDim)
+					:TypeInfo(IstrIntern(""), s_tink, HvdecArray(aryk, c, pStnodBakedDim))
+					,m_pTin(pTinElement)
 					,m_pTinstructImplicit(nullptr)
 					,m_c(0)
 					,m_aryk(ARYK_Fixed)
 					,m_pStnodBakedDim(nullptr)
 					{ ; }
 
-	TypeInfo *			m_pTin;
+	const TypeInfo *	m_pTin;
 	TypeInfoStruct *	m_pTinstructImplicit;
 	s64					m_c;
 	STNode *			m_pStnodBakedDim; // workaround for arrays with unspecialized baked constant
 	ARYK				m_aryk;
 };
 
-void DeleteTypeInfo(Moe::Alloc * pAlloc, TypeInfo * pTin);
-bool FTypesAreSame(TypeInfo * pTinLhs, TypeInfo * pTinRhs);
+void DeleteTypeInfo(Moe::Alloc * pAlloc, const TypeInfo * pTin);
+bool FTypesAreSame(const TypeInfo * pTinLhs, const TypeInfo * pTinRhs);
 
+// Type Decorator Set
+//  one per decorated type, ie. one instance for Foo struct that maps to Foo*, const Foo, [3] Foo, etc
+struct TypeDecoratorSet // tag = tdecset
+{
+							TypeDecoratorSet(Moe::Alloc * pAlloc)
+							:m_hashHvdescPtin(pAlloc, Moe::BK_TypeRegistry, 16)
+								{ ; }
 
-struct TypeRegistry // tag treg
+	Moe::CHash<Hvdec, const TypeInfo *>		m_hashHvdescPtin;		// map from tdesc to decorating type
+};
+
+struct TypeRegistry // tag typer
 {
 							TypeRegistry(Moe::Alloc * pAlloc);
 							~TypeRegistry()
 								{ Clear(); }
 
 	void					Clear();
-	TypeInfo *				PTinMakeUnique(TypeInfo * pTin);
+	const TypeInfo *		PTinMakeUnique(const TypeInfo * pTin);
 
-	Moe::Alloc *						m_pAlloc;
-	Moe::CHash<u64, TypeInfo *>			m_hashHvPTinUnique;
+	TypeInfo const **		PPTinEnsureDecorator(const TypeInfo * pTin, Hvdec hvdesc);
+	SCOPID					ScopidAlloc()
+								{ m_scopidNext = SCOPID(m_scopidNext + 1); return m_scopidNext; }
+
+	Moe::Alloc *							m_pAlloc;
+	SCOPID									m_scopidNext;		// global id for symbol tables, used in for unique types strings
+	Moe::CHash<Hvtype, const TypeInfo *>	m_hashHvtypePTinUnique;
+	Moe::CHash<const TypeInfo *, TypeDecoratorSet *>	
+											m_hashPTinPTdecset;
 };
 
 struct OpTypes // tag = optype
@@ -616,7 +779,7 @@ struct OpTypes // tag = optype
 				,m_pTinprocOverload(nullptr)
 					{ ; }
 
-				OpTypes(TypeInfo * pTinLhs, TypeInfo * pTinRhs, TypeInfo * pTinResult)
+				OpTypes(const TypeInfo * pTinLhs, const TypeInfo * pTinRhs, const TypeInfo * pTinResult)
 				:m_pTinLhs(pTinLhs)
 				,m_pTinRhs(pTinRhs)
 				,m_pTinResult(pTinResult)
@@ -626,8 +789,8 @@ struct OpTypes // tag = optype
 				bool FIsValid() const
 					{ return m_pTinResult != nullptr; }
 
-	TypeInfo *				m_pTinLhs;
-	TypeInfo *				m_pTinRhs;
-	TypeInfo *				m_pTinResult;
-	TypeInfoProcedure *		m_pTinprocOverload;
+	const TypeInfo *				m_pTinLhs;
+	const TypeInfo *				m_pTinRhs;
+	const TypeInfo *				m_pTinResult;
+	const TypeInfoProcedure *		m_pTinprocOverload;
 };

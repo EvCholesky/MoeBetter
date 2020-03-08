@@ -20,8 +20,10 @@
 #include "MoeTypes.h"
 
 u32 HvFromPBFVN(const void * pV, size_t cB);
-u32 HvConcatPBFVN(u32 hv, const void * pV, size_t cB);
-u32 HvFromPChzLowercaseFVN(const char * pV, size_t cB);
+u32 HvConcatPBFNV(u32 hv, const void * pV, size_t cB);
+u64 Hv64FromPBFVN(const void * pV, size_t cB);
+u64 Hv64ConcatPBFNV(u64 hv, const void * pV, size_t cB);
+u32 HvFromPChzLowercaseFNV(const char * pV, size_t cB);
 
 namespace Moe
 {
@@ -47,7 +49,7 @@ namespace Moe
 							if (cB == 0)
 								cB = CBChz(pChz)-1;
 
-							return HvConcatPBFVN(hv, pChz, cB);
+							return HvConcatPBFNV(hv, pChz, cB);
 						}
 
 	inline u32		HvFromPChzLowercase(const char * pChz, size_t cB = 0)
@@ -57,7 +59,7 @@ namespace Moe
 							if (cB == 0)
 								cB = CBChz(pChz)-1;
 
-							return HvFromPChzLowercaseFVN(pChz, cB);
+							return HvFromPChzLowercaseFNV(pChz, cB);
 						}
 
 	// Interned string class 
